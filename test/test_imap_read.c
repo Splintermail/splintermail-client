@@ -42,7 +42,7 @@ static derr_t assert_calls_equal(
 
     if(dstr_cmp(&exp->buf, &got->buf) != 0){
         TRACE(&e, "expected buf: '%x'\nbut got buf:  '%x'\n",
-                FD(&exp->buf), FD(&got->buf));
+                FD(exp->buf), FD(got->buf));
         pass = false;
     }
 
@@ -75,8 +75,8 @@ static void found_cmd(calls_made_t *calls, imap_cmd_t *cmd){
             FMT(
                 &calls->buf,
                 "ERROR:%x %x\r\n",
-                cmd->tag ? FD(&cmd->tag->dstr) : FS("*"),
-                FD(&cmd->arg.error->dstr)
+                FD(cmd->tag ? cmd->tag->dstr : DSTR_LIT("*")),
+                FD(cmd->arg.error->dstr)
             ),
         done);
     }
@@ -164,7 +164,7 @@ static derr_t do_test(
         DROP_VAR(&calls.error);
         calls.buf.len = 0;
         // feed in the input
-        LOG_DEBUG("\x1b[32mfeeding \"%x\"\x1b[m\n", FD_DBG(&cases[i].in));
+        LOG_DEBUG("\x1b[32mfeeding \"%x\"\x1b[m\n", FD_DBG(cases[i].in));
         derr_t e2;
         link_t out = {0};
         // make a copy of in, so that it's safe to zeroize passwords
@@ -213,7 +213,7 @@ static derr_t do_test(
             }
         }
         PROP_VAR_GO(&e, &e2, show_case);
-        LOG_DEBUG("\x1b[32mfed \"%x\"\x1b[m\n", FD_DBG(&buf_in));
+        LOG_DEBUG("\x1b[32mfed \"%x\"\x1b[m\n", FD_DBG(buf_in));
         // check that there were no errors
         PROP_VAR_GO(&e, &calls.error, show_case);
         // check that the right calls were made
@@ -227,12 +227,12 @@ static derr_t do_test(
         PROP_GO(&e, assert_calls_equal(&exp, &calls), show_case);
         // check that we zeroized correctly
         dstr_t exp_in = cases[i].zin.data ? cases[i].zin : cases[i].in;
-        EXPECT_D3_GO(&e, "in-after-read", &buf_in, &exp_in, show_case);
-        LOG_DEBUG("checked '%x'\n", FD(&cases[i].in));
+        EXPECT_D3_GO(&e, "in-after-read", buf_in, exp_in, show_case);
+        LOG_DEBUG("checked '%x'\n", FD(cases[i].in));
         continue;
 
     show_case:
-        TRACE(&e, "failure with input:\n%x(end input)\n", FD(&cases[i].in));
+        TRACE(&e, "failure with input:\n%x(end input)\n", FD(cases[i].in));
         goto cu_reader;
     }
 

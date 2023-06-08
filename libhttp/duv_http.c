@@ -459,7 +459,7 @@ static void req_hdr_cb(
                 E_RESPONSE,
                 "unsupported Transfer-Encoding: %x",
                 done,
-                FD_DBG(&hdr.value)
+                FD_DBG(hdr.value)
             );
         }
         // validate
@@ -544,7 +544,7 @@ static void req_advance_write(duv_http_req_t *req, bool *completed){
     unsigned int nbufs = (*completed && req->body.len) ? 2 : 1;
     if(req->http->log_requests){
         for(unsigned int i = 0; i < nbufs; i++){
-            LOG_INFO("\x1b[32m%x\x1b[m", FD(&bufs[i]));
+            LOG_INFO("\x1b[32m%x\x1b[m", FD(bufs[i]));
             fflush(stdout);
         }
     }
@@ -964,7 +964,7 @@ rstream_i *duv_http_req(
         req->tls = true;
     }else{
         ORIG_GO(&req->e,
-            E_PARAM, "invalid schema: '%x'\n", fail, FD_DBG(&scheme)
+            E_PARAM, "invalid schema: '%x'\n", fail, FD_DBG(scheme)
         );
     }
 

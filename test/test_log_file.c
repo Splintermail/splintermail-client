@@ -93,7 +93,7 @@ static derr_t test_log_file(void){
 
     // start with a temp directory
     PROP_GO(&e, mkdir_temp("log_file", &tmp), cu);
-    string_builder_t dirpath = SB(FD(&tmp));
+    string_builder_t dirpath = SBD(tmp);
 
     jsw_ainit(&msgs, jsw_cmp_msg_key, msg_jsw_get_msg_key);
     jsw_ainit(&expunged, jsw_cmp_msg_key, expunge_jsw_get_msg_key);
@@ -233,7 +233,7 @@ static derr_t test_log_file(void){
     // Verify that compaction is working.
 
     // count lines in file
-    string_builder_t path = sb_append(&dirpath, FS(".cache"));
+    string_builder_t path = sb_append(&dirpath, SBS(".cache"));
     PROP_GO(&e, dstr_new(&filebuf, 4096), cu);
     PROP_GO(&e, dstr_read_path(&path, &filebuf), cu);
     size_t nlines = dstr_count2(filebuf, DSTR_LIT("\n"));

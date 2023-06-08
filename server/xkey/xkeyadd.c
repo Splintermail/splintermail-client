@@ -16,8 +16,8 @@
 
 static derr_t add_key(
     const char *sock,
-    const dstr_t *uuid,
-    const dstr_t *pubkey,
+    const dstr_t uuid,
+    const dstr_t pubkey,
     dstr_t *fpr
 ){
     derr_t e = E_OK;
@@ -78,7 +78,7 @@ bool cmd_xkeyadd(struct client_command_context *cmd){
         fsid.len = MIN(fsid.size, strlen(client->user->username));
         memcpy(fsid.data, client->user->username, fsid.len);
     }
-    IF_PROP(&e, to_uuid(&fsid, &uuid) ){
+    IF_PROP(&e, to_uuid(fsid, &uuid) ){
         DUMP(e);
         DROP_VAR(&e);
         client_send_command_error(
@@ -94,7 +94,7 @@ bool cmd_xkeyadd(struct client_command_context *cmd){
     }
 
     DSTR_VAR(fpr, SMSQL_FPR_SIZE);
-    derr_t e2 = add_key(sock, &uuid, &pubkey, &fpr);
+    derr_t e2 = add_key(sock, uuid, pubkey, &fpr);
     CATCH(e2, E_USERMSG){
         // assume this is the "too many keys" issue and not the "invalid key"
         // (since it is only our client who uses this command)
@@ -103,14 +103,14 @@ bool cmd_xkeyadd(struct client_command_context *cmd){
         consume_e_usermsg(&e2, &buf);
         client_send_tagline(cmd, buf.data);
     }else CATCH(e2, E_ANY){
-        badbadbad_alert(&DSTR_LIT("error in cmd_xkeyadd()"), &e2.msg);
+        badbadbad_alert(DSTR_LIT("error in cmd_xkeyadd()"), e2.msg);
         DUMP(e2);
         DROP_VAR(&e2);
         client_send_command_error(cmd, "internal server failure");
     }else{
         // success case
         DSTR_VAR(buf, SMSQL_FPR_SIZE + 32);
-        DROP_CMD( FMT(&buf, "OK [XKEYADD %x] key added", FD(&fpr)) );
+        DROP_CMD( FMT(&buf, "OK [XKEYADD %x] key added", FD(fpr)) );
         client_send_tagline(cmd, buf.data);
     }
 

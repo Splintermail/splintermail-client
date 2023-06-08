@@ -11,11 +11,6 @@
 
 #include "test/test_utils.h"
 
-static char cslash = '/';
-static dstr_t slash = {
-    .data = &cslash, .len = 1, .size = 1, .fixed_size = true
-};
-
 bool looked_good;
 dstr_t reason_log;
 
@@ -30,7 +25,7 @@ static const char *strend(const char *s, const char *ending){
 #define EXPECT_ADDR(e, name, spec, str) do { \
     dstr_t __got = dstr_from_off(dstr_off_extend(spec.scheme, spec.port)); \
     dstr_t __exp = dstr_from_cstr(str); \
-    EXPECT_D(e, name, &__got, &__exp); \
+    EXPECT_D(e, name, __got, __exp); \
 } while(0)
 
 // libcitm/citm.h
@@ -57,7 +52,7 @@ derr_t uv_citm(
     EXPECT_S(&e, "cert", strend(cert, citm_args->cert), citm_args->cert);
     EXPECT_ADDR(&e, "remote", remote, citm_args->remote);
     DSTR_VAR(buf, 128);
-    PROP(&e, FMT(&buf, "%x", FSB(&maildir_root, &slash)) );
+    PROP(&e, FMT(&buf, "%x", FSB(maildir_root)) );
     EXPECT_S(&e,
         "maildir_root",
         strend(buf.data, citm_args->maildir_root),
@@ -148,7 +143,7 @@ static derr_t fake_access_path(
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, fake_access(*path, mode, ret), cu);
 
@@ -287,9 +282,9 @@ derr_t register_api_token(
     if(RTA->port && RTA->port != port)
         UH_OH("RTA port exp '%x' but got '%x'\n", FU(RTA->port), FU(port));
     if(RTA->user && dstr_cmp(RTA->user, user) != 0)
-        UH_OH("RTA user exp '%x' but got '%x'\n", FD(RTA->user), FD(user));
+        UH_OH("RTA user exp '%x' but got '%x'\n", FD(*RTA->user), FD(*user));
     if(RTA->pass && dstr_cmp(RTA->pass, pass) != 0)
-        UH_OH("RTA pass exp '%x' but got '%x'\n", FD(RTA->pass), FD(pass));
+        UH_OH("RTA pass exp '%x' but got '%x'\n", FD(*RTA->pass), FD(*pass));
     if(RTA->creds_path && strcmp(RTA->creds_path, creds_path) != 0)
         UH_OH("RTA creds_path exp '%x' but got '%x'\n", FS(RTA->creds_path), FS(creds_path));
     register_token_called = true;
@@ -307,7 +302,7 @@ derr_t register_api_token_path(
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, register_api_token(host, port, user, pass, path->data), cu);
 
@@ -335,22 +330,22 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
     if(APA->port && APA->port != port)
         UH_OH("APA port exp '%x' but got '%x'\n", FU(APA->port), FU(port));
     if(APA->command && dstr_cmp(APA->command, command) != 0)
-        UH_OH("APA command exp '%x' but got '%x'\n", FD(APA->command), FD(command));
+        UH_OH("APA command exp '%x' but got '%x'\n", FD(*APA->command), FD(*command));
     if(APA->arg && dstr_cmp(APA->arg, arg) != 0){
-        UH_OH("APA arg exp '%x' but got '%x'\n", FD(APA->arg), FD(arg));
+        UH_OH("APA arg exp '%x' but got '%x'\n", FD(*APA->arg), FD(*arg));
     }else if(arg)
-        UH_OH("APA expected null arg but got '%x'\n", FD(arg));
+        UH_OH("APA expected null arg but got '%x'\n", FD(*arg));
     if(APA->user){
         dstr_t duser;
         DSTR_WRAP(duser, APA->user, strlen(APA->user), true);
         if(dstr_cmp(&duser, username) != 0)
-            UH_OH("APA username exp '%x' but got '%x'\n", FS(APA->user), FD(username));
+            UH_OH("APA username exp '%x' but got '%x'\n", FS(APA->user), FD(*username));
     }
     if(APA->pass){
         dstr_t dpass;
         DSTR_WRAP(dpass, APA->pass, strlen(APA->pass), true);
         if(dstr_cmp(&dpass, password) != 0)
-            UH_OH("APA password exp '%x' but got '%x'\n", FS(APA->pass), FD(password));
+            UH_OH("APA password exp '%x' but got '%x'\n", FS(APA->pass), FD(*password));
     }
     // load up the inputs from the arg struct
     *code = APA->code;
@@ -380,15 +375,15 @@ derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
     if(ATA->port && ATA->port != port)
         UH_OH("ATA port exp '%x' but got '%x'\n", FU(ATA->port), FU(port));
     if(ATA->command && dstr_cmp(ATA->command, command) != 0)
-        UH_OH("ATA command exp '%x' but got '%x'\n", FD(ATA->command), FD(command));
+        UH_OH("ATA command exp '%x' but got '%x'\n", FD(*ATA->command), FD(*command));
     if(ATA->arg && dstr_cmp(ATA->arg, arg) != 0){
-        UH_OH("ATA arg exp '%x' but got '%x'\n", FD(ATA->arg), FD(arg));
+        UH_OH("ATA arg exp '%x' but got '%x'\n", FD(*ATA->arg), FD(*arg));
     }else if(arg)
-        UH_OH("ATA expected null arg but got '%x'\n", FD(arg));
+        UH_OH("ATA expected null arg but got '%x'\n", FD(*arg));
     if(ATA->token.key != token->key)
         UH_OH("ATA tkn->key exp '%x' but got '%x'\n", FU(ATA->token.key), FU(token->key));
     if(dstr_cmp(&ATA->token.secret, &token->secret) != 0)
-        UH_OH("ATA tkn->secret exp '%x' but got '%x'\n", FD(&ATA->token.secret), FD(&token->secret));
+        UH_OH("ATA tkn->secret exp '%x' but got '%x'\n", FD(ATA->token.secret), FD(token->secret));
     if(ATA->token.nonce != token->nonce)
         UH_OH("ATA tkn->nonce exp '%x' but got '%x'\n", FU(ATA->token.nonce), FU(token->nonce));
     // load up the inputs from the arg struct

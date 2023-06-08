@@ -45,7 +45,7 @@ static derr_t test_get_token_context(void){
         DSTR_VAR(got, 512);
         memset(got.data, 'x', got.size);
         get_token_context(&got, token, 30);
-        EXPECT_DM(&e, "context", &got, &exp);
+        EXPECT_DM(&e, "context", got, exp);
         EXPECT_I(&e, "null termination char", got.data[got.len], '\0');
     }
 
@@ -59,7 +59,7 @@ static derr_t test_get_token_context(void){
         DSTR_VAR(got, 512);
         memset(got.data, 'x', got.size);
         get_token_context(&got, token, 30);
-        EXPECT_DM(&e, "context", &got, &exp);
+        EXPECT_DM(&e, "context", got, exp);
         EXPECT_I(&e, "null termination char", got.data[got.len], '\0');
     }
 
@@ -73,7 +73,7 @@ static derr_t test_get_token_context(void){
         DSTR_VAR(got, 512);
         memset(got.data, 'x', got.size);
         get_token_context(&got, token, 30);
-        EXPECT_DM(&e, "context", &got, &exp);
+        EXPECT_DM(&e, "context", got, exp);
         EXPECT_I(&e, "null termination char", got.data[got.len], '\0');
     }
 
@@ -87,7 +87,7 @@ static derr_t test_get_token_context(void){
         DSTR_VAR(got, 512);
         memset(got.data, 'x', got.size);
         get_token_context(&got, token, 30);
-        EXPECT_DM(&e, "context", &got, &exp);
+        EXPECT_DM(&e, "context", got, exp);
         EXPECT_I(&e, "null termination char", got.data[got.len], '\0');
     }
 
@@ -99,7 +99,7 @@ static derr_t test_get_token_context(void){
         DSTR_VAR(got, 20);
         memset(got.data, 'x', 20);
         get_token_context(&got, token, 30);
-        EXPECT_DM(&e, "context", &got, &exp);
+        EXPECT_DM(&e, "context", got, exp);
         EXPECT_I(&e, "null termination char", got.data[got.len], '\0');
         EXPECT_U(&e, "got.len", got.len, got.size-1);
     }

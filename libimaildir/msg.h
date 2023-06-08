@@ -24,7 +24,7 @@ typedef enum {
     MSG_NOT4ME,
 } msg_state_e;
 
-const dstr_t *msg_state_to_dstr(msg_state_e state);
+dstr_t msg_state_to_dstr(msg_state_e state);
 
 typedef struct {
     bool answered:1;
@@ -269,9 +269,12 @@ derr_t msg_write(const msg_t *msg, dstr_t *out);
 derr_t msg_mod_write(const msg_mod_t *mod, dstr_t *out);
 derr_t msg_expunge_write(const msg_expunge_t *expunge, dstr_t *out);
 
+typedef struct {
+    fmt_i iface;
+    msg_key_t key;
+} _fmt_mk_t;
+
+derr_type_t _fmt_mk(const fmt_i *iface, writer_i *out);
+
 // FMK: "format message key"
-derr_type_t fmthook_fmk(dstr_t *out, const void *arg);
-static inline fmt_t FMK(const msg_key_t *arg){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
-                                     .hook = fmthook_fmk} } };
-}
+#define FMK(key) (&(_fmt_mk_t){ {_fmt_mk}, key }.iface)

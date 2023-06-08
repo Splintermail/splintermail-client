@@ -139,7 +139,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
         EXPECT_NOT_NULL_GO(&e, "imap server read cb", cmd, cu); \
         DSTR_VAR(buf, 1024); \
         PROP_GO(&e, imap_cmd_print(cmd, &buf, &s->exts), cu); \
-        EXPECT_D3_GO(&e, "cmd body", &buf, &DSTR_LIT(text), cu); \
+        EXPECT_D3_GO(&e, "cmd body", buf, DSTR_LIT(text), cu); \
     } while(0)
 
     #define EXPECT_IWRITE_CB(i) \
@@ -155,7 +155,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
         fake_stream_write_done(from); \
     } while(0)
 
-    #define SHOW_STATE FFMT_QUIET(stdout, NULL, \
+    #define SHOW_STATE FFMT_QUIET(stdout, \
         "client_wants_read:%x\n" \
         "client_wants_write:%x\n" \
         "server_wants_read:%x\n" \
@@ -191,7 +191,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
         "* OK [CAPABILITY IMAP4rev1 IDLE STARTTLS LOGINDISABLED] "
         "greetings, friend!\r\n"
     );
-    EXPECT_D3_GO(&e, "rbuf", &rbuf, &greeting, cu);
+    EXPECT_D3_GO(&e, "rbuf", rbuf, greeting, cu);
 
     // ERROR-type client message
     DSTR_STATIC(errcmd, "yo dawg\r\n");
@@ -212,7 +212,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
 
     EXPECT_READ_CB;
     DSTR_STATIC(errresp, "yo BAD syntax error at input: dawg\\r\\n\r\n");
-    EXPECT_D3_GO(&e, "rbuf", &rbuf, &errresp, cu);
+    EXPECT_D3_GO(&e, "rbuf", rbuf, errresp, cu);
 
     #define CMD_AND_RESP(cmd, resp) do { \
         stream_must_write(c, &write, cmd, 1, write_cb); \
@@ -224,7 +224,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
         PUSH_BYTES(&fs, &fc); \
         ADVANCE_TEST(); \
         EXPECT_READ_CB; \
-        EXPECT_D3_GO(&e, "rbuf", &rbuf, resp, cu); \
+        EXPECT_D3_GO(&e, "rbuf", rbuf, *resp, cu); \
     } while(0)
 
     // PLUS-type client message
@@ -336,7 +336,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
         // expect a plaintext OK response first
         EXPECT_WANT_WRITE("starttls response", &fs, true);
         dstr_t plainresp = fake_stream_pop_write(&fs);
-        EXPECT_D3_GO(&e, "starttls response", &plainresp, &starttlsresp, cu);
+        EXPECT_D3_GO(&e, "starttls response", plainresp, starttlsresp, cu);
         fake_stream_write_done(&fs);
         ADVANCE_TEST();
     }
@@ -380,7 +380,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
 
     EXPECT_IWRITE_CB(1);
     EXPECT_READ_CB;
-    EXPECT_D3_GO(&e, "rbuf", &rbuf, &DSTR_LIT("* OK info\r\n"), cu);
+    EXPECT_D3_GO(&e, "rbuf", rbuf, DSTR_LIT("* OK info\r\n"), cu);
 
     // read the response we just sent
     stream_must_read(c, &read, rbuf, read_cb);
@@ -390,7 +390,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
 
     EXPECT_IWRITE_CB(0);
     EXPECT_READ_CB;
-    EXPECT_D3_GO(&e, "rbuf", &rbuf, &DSTR_LIT("5 OK yo\r\n"), cu);
+    EXPECT_D3_GO(&e, "rbuf", rbuf, DSTR_LIT("5 OK yo\r\n"), cu);
 
     if(do_logout){
         // expect the tls stream to be shutdown now (not the fake stream)

@@ -92,9 +92,9 @@ void qw_engine_free(qw_engine_t *engine){
 }
 
 void _qw_error(
-    qw_engine_t *engine, const char *fmt, const fmt_t *args, size_t nargs
+    qw_engine_t *engine, const char *fmt, const fmt_i **args, size_t nargs
 ){
-    pvt_ffmt_quiet(stderr, NULL, fmt, args, nargs);
+    _fmt_quiet(WF(stderr), fmt, args, nargs);
     longjmp(engine->jmp_env, 1);
 }
 
@@ -271,25 +271,25 @@ qw_func_t *qw_stack_pop_func(qw_engine_t *engine){
 void qw_stack_put_file(qw_env_t env, dstr_t path){
     // null-terminate path
     DSTR_VAR(buf, 4096);
-    derr_type_t etype = FMT_QUIET(&buf, "%x", FD(&path));
+    derr_type_t etype = FMT_QUIET(&buf, "%x", FD(path));
     if(etype) qw_error(env.engine, "filename too long");
 
     // open a file on the engine (where it can be freed as needed)
     env.engine->f = compat_fopen(buf.data, "r");
     if(!env.engine->f){
-        qw_error(env.engine, "fopen(%x): %x", FD(&path), FE(&errno));
+        qw_error(env.engine, "fopen(%x): %x", FD(path), FE(errno));
     }
 
     // get file size
     compat_stat_t s;
     int ret = compat_fstat(compat_fileno(env.engine->f), &s);
     if(ret != 0){
-        qw_error(env.engine, "fstat(%x): %x", FD(&path), FE(&errno));
+        qw_error(env.engine, "fstat(%x): %x", FD(path), FE(errno));
     }
 
     // allocate output string
     if(s.st_size > INT_MAX){
-        qw_error(env.engine, "file too big: %x", FD(&path));
+        qw_error(env.engine, "file too big: %x", FD(path));
     }
     size_t size = (size_t)s.st_size;
     dstr_t *out = qw_stack_put_new_string(env, size);
@@ -297,10 +297,10 @@ void qw_stack_put_file(qw_env_t env, dstr_t path){
     // read file into output string
     size_t nread = fread(out->data, 1, size, env.engine->f);
     if(ferror(env.engine->f)){
-        qw_error(env.engine, "fread(%x): %x", FD(&path), FE(&errno));
+        qw_error(env.engine, "fread(%x): %x", FD(path), FE(errno));
     }
     if(nread != size){
-        qw_error(env.engine, "incomplete fread(%x)", FD(&path));
+        qw_error(env.engine, "incomplete fread(%x)", FD(path));
     }
     out->len = nread;
 

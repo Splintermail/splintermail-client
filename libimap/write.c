@@ -2,7 +2,7 @@
 
 // convenience macros for shorter lines
 #define STATIC_SKIP_FILL(_in) \
-    PROP(&e, raw_skip_fill(sf, &DSTR_LIT(_in)) )
+    PROP(&e, raw_skip_fill(sf, DSTR_LIT(_in)) )
 
 #define LEAD_SP if(sp){ STATIC_SKIP_FILL(" "); }else sp = true
 
@@ -18,25 +18,22 @@ typedef struct {
 } skip_fill_t;
 
 // The base skip_fill.  Skip some bytes, then fill a buffer with what remains.
-static derr_t raw_skip_fill(skip_fill_t *sf, const dstr_t *in){
+static derr_t raw_skip_fill(skip_fill_t *sf, const dstr_t in){
     derr_t e = E_OK;
     if(sf->want > 0){
-        sf->want += in->len;
+        sf->want += in.len;
         return e;
     }
 
     // handle skip
-    size_t skip = MIN(sf->skip, in->len);
+    size_t skip = MIN(sf->skip, in.len);
     sf->skip -= skip;
     sf->passed += skip;
 
     // don't try to write more than what might fit
     size_t space = sf->out->size - sf->out->len;
 
-    dstr_t appendme = {0};
-    if(space > 0){
-        appendme = dstr_sub(in, skip, skip + space);
-    }
+    dstr_t appendme = dstr_sub2(in, skip, skip + space);
 
     if(appendme.len > 0){
         // this can't fail because appendme.len can't exceed space
@@ -47,21 +44,21 @@ static derr_t raw_skip_fill(skip_fill_t *sf, const dstr_t *in){
     sf->passed += appendme.len;
 
     // did we want to pass more bytes?
-    if(skip + space < in->len){
-        sf->want += in->len - skip - space;
+    if(skip + space < in.len){
+        sf->want += in.len - skip - space;
     }
     return e;
 }
 
 // validation should be done at a higher level
-static derr_t quote_esc_skip_fill_noval(skip_fill_t *sf, const dstr_t *in){
+static derr_t quote_esc_skip_fill_noval(skip_fill_t *sf, const dstr_t in){
     // handle skip
-    size_t skip = MIN(sf->skip, in->len);
+    size_t skip = MIN(sf->skip, in.len);
     sf->skip -= skip;
     sf->passed += skip;
 
-    for(size_t i = skip; i < in->len; i++){
-        char c = in->data[i];
+    for(size_t i = skip; i < in.len; i++){
+        char c = in.data[i];
         switch(c){
             case '\\':
                 if(sf->want > 0 || sf->out->len + 2 > sf->out->size){
@@ -92,14 +89,14 @@ static derr_t quote_esc_skip_fill_noval(skip_fill_t *sf, const dstr_t *in){
 }
 
 // anything but \0 \r \n, useful in a few types of responses
-static derr_t text_skip_fill(skip_fill_t *sf, const dstr_t *in){
+static derr_t text_skip_fill(skip_fill_t *sf, const dstr_t in){
     derr_t e = E_OK;
-    for(size_t i = 0; i < in->len; i++){
-        switch(in->data[i]){
+    for(size_t i = 0; i < in.len; i++){
+        switch(in.data[i]){
             case '\r':
             case '\n':
             case '\0':
-                TRACE(&e, "unable to print '%x' in text\n", FC(in->data[i]));
+                TRACE(&e, "unable to print '%x' in text\n", FC(in.data[i]));
                 ORIG(&e, E_PARAM, "invalid text");
         }
     }
@@ -108,16 +105,16 @@ static derr_t text_skip_fill(skip_fill_t *sf, const dstr_t *in){
 }
 
 // anything but ] \0 \r \n, useful in atom-type status-type response codes
-static derr_t st_code_text_skip_fill(skip_fill_t *sf, const dstr_t *in){
+static derr_t st_code_text_skip_fill(skip_fill_t *sf, const dstr_t in){
     derr_t e = E_OK;
-    for(size_t i = 0; i < in->len; i++){
-        switch(in->data[i]){
+    for(size_t i = 0; i < in.len; i++){
+        switch(in.data[i]){
             case '\r':
             case '\n':
             case '\0':
             case ']':
                 TRACE(&e, "unable to print '%x' in status code text\n",
-                        FC(in->data[i]));
+                        FC(in.data[i]));
                 ORIG(&e, E_PARAM, "invalid status code text");
         }
     }
@@ -125,37 +122,37 @@ static derr_t st_code_text_skip_fill(skip_fill_t *sf, const dstr_t *in){
     return e;
 }
 
-static derr_t literal_skip_fill(skip_fill_t *sf, const dstr_t *in){
+static derr_t literal_skip_fill(skip_fill_t *sf, const dstr_t in){
     derr_t e = E_OK;
     // generate the imap literal header
     DSTR_VAR(header, 64);
 
     // use LITERAL+ extension on commands
     const char *fmt = sf->is_cmd ? "{%x+}\r\n" : "{%x}\r\n";
-    PROP(&e, FMT(&header, fmt, FU(in->len)) );
+    PROP(&e, FMT(&header, fmt, FU(in.len)) );
 
-    PROP(&e, raw_skip_fill(sf, &header) );
+    PROP(&e, raw_skip_fill(sf, header) );
     PROP(&e, raw_skip_fill(sf, in) );
     return e;
 }
 
 // validation should be done at a higher level
-static derr_t quoted_skip_fill_noval(skip_fill_t *sf, const dstr_t *in){
+static derr_t quoted_skip_fill_noval(skip_fill_t *sf, const dstr_t in){
     derr_t e = E_OK;
     // opening quote
-    PROP(&e, raw_skip_fill(sf, &DSTR_LIT("\"")) );
+    PROP(&e, raw_skip_fill(sf, DSTR_LIT("\"")) );
     // quote body, with escapes
     PROP(&e, quote_esc_skip_fill_noval(sf, in) );
     // closing quote
-    PROP(&e, raw_skip_fill(sf, &DSTR_LIT("\"")) );
+    PROP(&e, raw_skip_fill(sf, DSTR_LIT("\"")) );
     return e;
 }
 
 // throw an error if something is not quotable
-static derr_t assert_quotable(const dstr_t *val){
+static derr_t assert_quotable(const dstr_t val){
     derr_t e = E_OK;
-    for(size_t i = 0; i < val->len; i++){
-        switch(val->data[i]){
+    for(size_t i = 0; i < val.len; i++){
+        switch(val.data[i]){
             // anything with non-quotable chars must immediately be literal
             case '\r':
             case '\n':
@@ -172,18 +169,18 @@ typedef enum {
     IW_RAW,
 } iw_string_type_t;
 
-static iw_string_type_t classify_astring(const dstr_t *val){
+static iw_string_type_t classify_astring(const dstr_t val){
     // long strings become literals
-    if(val->len > 72){
+    if(val.len > 72){
         return IW_LITERAL;
     }
     // empty strings become qstrings
-    if(val->len == 0){
+    if(val.len == 0){
         return IW_QUOTED;
     }
     bool maybe_atom = true;
-    for(size_t i = 0; i < val->len; i++){
-        switch(val->data[i]){
+    for(size_t i = 0; i < val.len; i++){
+        switch(val.data[i]){
             // anything with non-quotable chars must immediately be literal
             case '\r':
             case '\n':
@@ -201,7 +198,7 @@ static iw_string_type_t classify_astring(const dstr_t *val){
             // case ']': // resp-specials is allowed in ASTRING-CHAR
                 maybe_atom = false; break;
             default:
-                if(val->data[i] < 32 || val->data[i] == 127)
+                if(val.data[i] < 32 || val.data[i] == 127)
                     maybe_atom = false;
         }
     }
@@ -213,7 +210,7 @@ static iw_string_type_t classify_astring(const dstr_t *val){
     return IW_RAW;
 }
 
-static derr_t astring_skip_fill(skip_fill_t *sf, const dstr_t *in){
+static derr_t astring_skip_fill(skip_fill_t *sf, const dstr_t in){
     derr_t e = E_OK;
     iw_string_type_t type = classify_astring(in);
 
@@ -234,21 +231,21 @@ static derr_t astring_skip_fill(skip_fill_t *sf, const dstr_t *in){
 static derr_t mailbox_skip_fill(skip_fill_t *sf, const ie_mailbox_t *m){
     derr_t e = E_OK;
     if(m->inbox){
-        PROP(&e, raw_skip_fill(sf, &DSTR_LIT("INBOX")) );
+        PROP(&e, raw_skip_fill(sf, DSTR_LIT("INBOX")) );
         return e;
     }
 
-    PROP(&e, astring_skip_fill(sf, &m->dstr) );
+    PROP(&e, astring_skip_fill(sf, m->dstr) );
     return e;
 }
 
-static iw_string_type_t classify_string(const dstr_t *val){
+static iw_string_type_t classify_string(const dstr_t val){
     // long strings become literals
-    if(val->len > 72){
+    if(val.len > 72){
         return IW_LITERAL;
     }
-    for(size_t i = 0; i < val->len; i++){
-        switch(val->data[i]){
+    for(size_t i = 0; i < val.len; i++){
+        switch(val.data[i]){
             // anything with non-quotable chars must immediately be literal
             case '\r':
             case '\n':
@@ -259,7 +256,7 @@ static iw_string_type_t classify_string(const dstr_t *val){
     return IW_QUOTED;
 }
 
-static derr_t string_skip_fill(skip_fill_t *sf, const dstr_t *in){
+static derr_t string_skip_fill(skip_fill_t *sf, const dstr_t in){
     derr_t e = E_OK;
     iw_string_type_t type = classify_string(in);
 
@@ -277,15 +274,15 @@ static derr_t nstring_skip_fill(skip_fill_t *sf, const ie_dstr_t *in){
     if(!in){
         STATIC_SKIP_FILL("NIL");
     }else{
-        PROP(&e, string_skip_fill(sf, &in->dstr) );
+        PROP(&e, string_skip_fill(sf, in->dstr) );
     }
     return e;
 }
 
-static derr_t tag_skip_fill(skip_fill_t *sf, const dstr_t *in){
+static derr_t tag_skip_fill(skip_fill_t *sf, const dstr_t in){
     derr_t e = E_OK;
-    for(size_t i = 0; i < in->len; i++){
-        switch(in->data[i]){
+    for(size_t i = 0; i < in.len; i++){
+        switch(in.data[i]){
             // anything with non-astring-chars is invalid (or '+')
             case '(':
             case ')':
@@ -296,13 +293,13 @@ static derr_t tag_skip_fill(skip_fill_t *sf, const dstr_t *in){
             case '"':
             case '\\':
             case '+':
-                TRACE(&e, "unable to print '%x' in tag\n", FC(in->data[i]));
+                TRACE(&e, "unable to print '%x' in tag\n", FC(in.data[i]));
                 ORIG(&e, E_PARAM, "invalid tag");
             default:
                 // CTL characters
-                if(in->data[i] < 32 || in->data[i] == 127){
+                if(in.data[i] < 32 || in.data[i] == 127){
                     TRACE(&e, "unable to print CTL ascii=%x in tag\n",
-                            FI(in->data[i]));
+                            FI(in.data[i]));
                     ORIG(&e, E_PARAM, "invalid tag");
                 }
         }
@@ -311,10 +308,10 @@ static derr_t tag_skip_fill(skip_fill_t *sf, const dstr_t *in){
     return e;
 }
 
-static derr_t atom_skip_fill(skip_fill_t *sf, const dstr_t *in){
+static derr_t atom_skip_fill(skip_fill_t *sf, const dstr_t in){
     derr_t e = E_OK;
-    for(size_t i = 0; i < in->len; i++){
-        switch(in->data[i]){
+    for(size_t i = 0; i < in.len; i++){
+        switch(in.data[i]){
             // anything with non-atom chars is invalid
             case '(':
             case ')':
@@ -325,13 +322,13 @@ static derr_t atom_skip_fill(skip_fill_t *sf, const dstr_t *in){
             case '"':
             case '\\':
             case ']':
-                TRACE(&e, "unable to print '%x' in atom\n", FC(in->data[i]));
+                TRACE(&e, "unable to print '%x' in atom\n", FC(in.data[i]));
                 ORIG(&e, E_PARAM, "invalid atom");
             default:
                 // CTL characters
-                if(in->data[i] < 32 || in->data[i] == 127){
+                if(in.data[i] < 32 || in.data[i] == 127){
                     TRACE(&e, "unable to print CTL ascii=%x in atom\n",
-                            FI(in->data[i]));
+                            FI(in.data[i]));
                     ORIG(&e, E_PARAM, "invalid atom");
                 }
         }
@@ -433,20 +430,20 @@ DSTR_STATIC(oct_dstr, "Oct");
 DSTR_STATIC(nov_dstr, "Nov");
 DSTR_STATIC(dec_dstr, "Dec");
 
-static dstr_t *get_imap_month(int month){
+static dstr_t get_imap_month(int month){
     switch(month){
-        case 1:  return &jan_dstr;
-        case 2:  return &feb_dstr;
-        case 3:  return &mar_dstr;
-        case 4:  return &apr_dstr;
-        case 5:  return &may_dstr;
-        case 6:  return &jun_dstr;
-        case 7:  return &jul_dstr;
-        case 8:  return &aug_dstr;
-        case 9:  return &sep_dstr;
-        case 10:  return &oct_dstr;
-        case 11: return &nov_dstr;
-        default: return &dec_dstr;
+        case 1:  return jan_dstr;
+        case 2:  return feb_dstr;
+        case 3:  return mar_dstr;
+        case 4:  return apr_dstr;
+        case 5:  return may_dstr;
+        case 6:  return jun_dstr;
+        case 7:  return jul_dstr;
+        case 8:  return aug_dstr;
+        case 9:  return sep_dstr;
+        case 10:  return oct_dstr;
+        case 11: return nov_dstr;
+        default: return dec_dstr;
     }
 }
 
@@ -455,7 +452,7 @@ static derr_t date_time_skip_fill(skip_fill_t *sf, imap_time_t time){
     derr_t e = E_OK;
     PROP(&e, validate_time(time) );
 
-    dstr_t *month = get_imap_month(time.month);
+    dstr_t month = get_imap_month(time.month);
     DSTR_VAR(buffer, 256);
     // does use fixed-width day
     PROP(&e, FMT(&buffer, "\"%x%x-%x-%x %x%x:%x%x:%x%x %x%x%x%x%x\"",
@@ -468,7 +465,7 @@ static derr_t date_time_skip_fill(skip_fill_t *sf, imap_time_t time){
         FI(ABS(time.z_hour) / 10), FI(ABS(time.z_hour) % 10),
         FI(time.z_min / 10), FI(time.z_min % 10)) );
 
-    PROP(&e, raw_skip_fill(sf, &buffer) );
+    PROP(&e, raw_skip_fill(sf, buffer) );
     return e;
 }
 
@@ -483,12 +480,12 @@ static derr_t flags_skip_fill(skip_fill_t *sf, ie_flags_t *flags){
     if(flags->draft){    LEAD_SP; STATIC_SKIP_FILL("\\Draft");    }
     for(ie_dstr_t *d = flags->keywords; d != NULL; d = d->next){
         LEAD_SP;
-        PROP(&e, atom_skip_fill(sf, &d->dstr) );
+        PROP(&e, atom_skip_fill(sf, d->dstr) );
     }
     for(ie_dstr_t *d = flags->extensions; d != NULL; d = d->next){
         LEAD_SP;
         STATIC_SKIP_FILL("\\");
-        PROP(&e, atom_skip_fill(sf, &d->dstr) );
+        PROP(&e, atom_skip_fill(sf, d->dstr) );
     }
     return e;
 }
@@ -505,12 +502,12 @@ static derr_t pflags_skip_fill(skip_fill_t *sf, ie_pflags_t *pflags){
     if(pflags->asterisk){ LEAD_SP; STATIC_SKIP_FILL("\\Asterisk"); }
     for(ie_dstr_t *d = pflags->keywords; d != NULL; d = d->next){
         LEAD_SP;
-        PROP(&e, atom_skip_fill(sf, &d->dstr) );
+        PROP(&e, atom_skip_fill(sf, d->dstr) );
     }
     for(ie_dstr_t *d = pflags->extensions; d != NULL; d = d->next){
         LEAD_SP;
         STATIC_SKIP_FILL("\\");
-        PROP(&e, atom_skip_fill(sf, &d->dstr) );
+        PROP(&e, atom_skip_fill(sf, d->dstr) );
     }
     return e;
 }
@@ -527,12 +524,12 @@ static derr_t fflags_skip_fill(skip_fill_t *sf, ie_fflags_t *fflags){
     if(fflags->recent){   LEAD_SP; STATIC_SKIP_FILL("\\Recent");   }
     for(ie_dstr_t *d = fflags->keywords; d != NULL; d = d->next){
         LEAD_SP;
-        PROP(&e, atom_skip_fill(sf, &d->dstr) );
+        PROP(&e, atom_skip_fill(sf, d->dstr) );
     }
     for(ie_dstr_t *d = fflags->extensions; d != NULL; d = d->next){
         LEAD_SP;
         STATIC_SKIP_FILL("\\");
-        PROP(&e, atom_skip_fill(sf, &d->dstr) );
+        PROP(&e, atom_skip_fill(sf, d->dstr) );
     }
     return e;
 }
@@ -561,7 +558,7 @@ static derr_t mflags_skip_fill(skip_fill_t *sf, ie_mflags_t *mflags){
     for(ie_dstr_t *d = mflags->extensions; d != NULL; d = d->next){
         LEAD_SP;
         STATIC_SKIP_FILL("\\");
-        PROP(&e, atom_skip_fill(sf, &d->dstr) );
+        PROP(&e, atom_skip_fill(sf, d->dstr) );
     }
     return e;
 }
@@ -570,7 +567,7 @@ static derr_t num_skip_fill(skip_fill_t *sf, unsigned int num){
     derr_t e = E_OK;
     DSTR_VAR(buf, 32);
     PROP(&e, FMT(&buf, "%x", FU(num)) );
-    PROP(&e, raw_skip_fill(sf, &buf) );
+    PROP(&e, raw_skip_fill(sf, buf) );
     return e;
 }
 
@@ -581,7 +578,7 @@ static derr_t nznum_skip_fill(skip_fill_t *sf, unsigned int num){
     }
     DSTR_VAR(buf, 32);
     PROP(&e, FMT(&buf, "%x", FU(num)) );
-    PROP(&e, raw_skip_fill(sf, &buf) );
+    PROP(&e, raw_skip_fill(sf, buf) );
     return e;
 }
 
@@ -593,7 +590,7 @@ static derr_t modseqnum_skip_fill(skip_fill_t *sf, uint64_t num){
     }
     DSTR_VAR(buf, 32);
     PROP(&e, FMT(&buf, "%x", FU(num)) );
-    PROP(&e, raw_skip_fill(sf, &buf) );
+    PROP(&e, raw_skip_fill(sf, buf) );
     return e;
 }
 
@@ -604,7 +601,7 @@ static derr_t nzmodseqnum_skip_fill(skip_fill_t *sf, uint64_t num){
     }
     DSTR_VAR(buf, 32);
     PROP(&e, FMT(&buf, "%x", FU(num)) );
-    PROP(&e, raw_skip_fill(sf, &buf) );
+    PROP(&e, raw_skip_fill(sf, buf) );
     return e;
 }
 
@@ -731,10 +728,16 @@ static derr_t search_date_skip_fill(skip_fill_t *sf, imap_time_t time){
     }
 
     DSTR_VAR(buffer, 256);
-    PROP(&e, FMT(&buffer, "%x-%x-%x", FI(time.day),
-                FD(get_imap_month(time.month)), FI(time.year)) );
+    PROP(&e,
+        FMT(&buffer,
+            "%x-%x-%x",
+            FI(time.day),
+            FD(get_imap_month(time.month)),
+            FI(time.year)
+        )
+    );
 
-    PROP(&e, raw_skip_fill(sf, &buffer) );
+    PROP(&e, raw_skip_fill(sf, buffer) );
     return e;
 }
 
@@ -791,41 +794,41 @@ static derr_t search_key_skip_fill(skip_fill_t *sf, ie_search_key_t *key){
         // things using param.dstr
         case IE_SEARCH_BCC:
             STATIC_SKIP_FILL("BCC ");
-            PROP(&e, astring_skip_fill(sf, &p.dstr->dstr) );
+            PROP(&e, astring_skip_fill(sf, p.dstr->dstr) );
             break;
         case IE_SEARCH_BODY:
             STATIC_SKIP_FILL("BODY ");
-            PROP(&e, astring_skip_fill(sf, &p.dstr->dstr) );
+            PROP(&e, astring_skip_fill(sf, p.dstr->dstr) );
             break;
         case IE_SEARCH_CC:
             STATIC_SKIP_FILL("CC ");
-            PROP(&e, astring_skip_fill(sf, &p.dstr->dstr) );
+            PROP(&e, astring_skip_fill(sf, p.dstr->dstr) );
             break;
         case IE_SEARCH_FROM:
             STATIC_SKIP_FILL("FROM ");
-            PROP(&e, astring_skip_fill(sf, &p.dstr->dstr) );
+            PROP(&e, astring_skip_fill(sf, p.dstr->dstr) );
             break;
         case IE_SEARCH_KEYWORD:
             STATIC_SKIP_FILL("KEYWORD ");
-            PROP(&e, astring_skip_fill(sf, &p.dstr->dstr) );
+            PROP(&e, astring_skip_fill(sf, p.dstr->dstr) );
             break;
         case IE_SEARCH_TEXT:
             STATIC_SKIP_FILL("TEXT ");
-            PROP(&e, astring_skip_fill(sf, &p.dstr->dstr) );
+            PROP(&e, astring_skip_fill(sf, p.dstr->dstr) );
             break;
         case IE_SEARCH_TO:
             STATIC_SKIP_FILL("TO ");
-            PROP(&e, astring_skip_fill(sf, &p.dstr->dstr) );
+            PROP(&e, astring_skip_fill(sf, p.dstr->dstr) );
             break;
         case IE_SEARCH_UNKEYWORD:
             STATIC_SKIP_FILL("UNKEYWORD ");
-            PROP(&e, astring_skip_fill(sf, &p.dstr->dstr) );
+            PROP(&e, astring_skip_fill(sf, p.dstr->dstr) );
             break;
         // things using param.header
         case IE_SEARCH_HEADER:
             STATIC_SKIP_FILL("HEADER ");
-            PROP(&e, astring_skip_fill(sf, &p.header.name->dstr) );
-            PROP(&e, astring_skip_fill(sf, &p.header.value->dstr) );
+            PROP(&e, astring_skip_fill(sf, p.header.name->dstr) );
+            PROP(&e, astring_skip_fill(sf, p.header.value->dstr) );
             STATIC_SKIP_FILL(" ");
             break;
         // things using param.date
@@ -899,9 +902,10 @@ static derr_t search_key_skip_fill(skip_fill_t *sf, ie_search_key_t *key){
             STATIC_SKIP_FILL("MODSEQ ");
             if(p.modseq.ext != NULL){
                 // entry_name must be quotable
-                PROP(&e, assert_quotable(&p.modseq.ext->entry_name->dstr) );
-                PROP(&e, quoted_skip_fill_noval(sf,
-                            &p.modseq.ext->entry_name->dstr) );
+                PROP(&e, assert_quotable(p.modseq.ext->entry_name->dstr) );
+                PROP(&e,
+                    quoted_skip_fill_noval(sf, p.modseq.ext->entry_name->dstr)
+                );
                 STATIC_SKIP_FILL(" ");
                 switch(p.modseq.ext->entry_type){
                     case IE_ENTRY_PRIV:   STATIC_SKIP_FILL("priv");   break;
@@ -969,7 +973,7 @@ static derr_t fetch_attr_skip_fill(skip_fill_t *sf, ie_fetch_attrs_t *attr){
                     case IE_SECT_HDR_FLDS:
                         STATIC_SKIP_FILL("HEADER.FIELDS (");
                         for(ie_dstr_t *h = sect_txt->headers; h; h = h->next){
-                            PROP(&e, astring_skip_fill(sf, &h->dstr) );
+                            PROP(&e, astring_skip_fill(sf, h->dstr) );
                             if(h->next){
                                 STATIC_SKIP_FILL(" ");
                             }
@@ -979,7 +983,7 @@ static derr_t fetch_attr_skip_fill(skip_fill_t *sf, ie_fetch_attrs_t *attr){
                     case IE_SECT_HDR_FLDS_NOT:
                         STATIC_SKIP_FILL("HEADER.FIELDS.NOT (");
                         for(ie_dstr_t *h = sect_txt->headers; h; h = h->next){
-                            PROP(&e, astring_skip_fill(sf, &h->dstr) );
+                            PROP(&e, astring_skip_fill(sf, h->dstr) );
                             if(h->next){
                                 STATIC_SKIP_FILL(" ");
                             }
@@ -1071,7 +1075,7 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
     // other than the DONE of IDLE or XKEYSYNC, all commands are tagged
     if(cmd->type != IMAP_CMD_IDLE_DONE && cmd->type != IMAP_CMD_XKEYSYNC_DONE){
         // the tag
-        PROP(&e, tag_skip_fill(sf, &cmd->tag->dstr) );
+        PROP(&e, tag_skip_fill(sf, cmd->tag->dstr) );
         // space after tag
         STATIC_SKIP_FILL(" ");
     }
@@ -1100,14 +1104,14 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
 
         case IMAP_CMD_AUTH:
             STATIC_SKIP_FILL("AUTHENTICATE ");
-            PROP(&e, atom_skip_fill(sf, &arg.auth->dstr) );
+            PROP(&e, atom_skip_fill(sf, arg.auth->dstr) );
             break;
 
         case IMAP_CMD_LOGIN:
             STATIC_SKIP_FILL("LOGIN ");
-            PROP(&e, astring_skip_fill(sf, &arg.login->user->dstr) );
+            PROP(&e, astring_skip_fill(sf, arg.login->user->dstr) );
             STATIC_SKIP_FILL(" ");
-            PROP(&e, astring_skip_fill(sf, &arg.login->pass->dstr) );
+            PROP(&e, astring_skip_fill(sf, arg.login->pass->dstr) );
             break;
 
         case IMAP_CMD_SELECT:
@@ -1153,14 +1157,14 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
             STATIC_SKIP_FILL("LIST ");
             PROP(&e, mailbox_skip_fill(sf, arg.list->m) );
             STATIC_SKIP_FILL(" ");
-            PROP(&e, astring_skip_fill(sf, &arg.list->pattern->dstr) );
+            PROP(&e, astring_skip_fill(sf, arg.list->pattern->dstr) );
             break;
 
         case IMAP_CMD_LSUB:
             STATIC_SKIP_FILL("LSUB ");
             PROP(&e, mailbox_skip_fill(sf, arg.lsub->m) );
             STATIC_SKIP_FILL(" ");
-            PROP(&e, astring_skip_fill(sf, &arg.lsub->pattern->dstr) );
+            PROP(&e, astring_skip_fill(sf, arg.lsub->pattern->dstr) );
             break;
 
         case IMAP_CMD_STATUS:
@@ -1177,7 +1181,7 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
                 PROP(&e, date_time_skip_fill(sf, arg.append->time) );
                 STATIC_SKIP_FILL(" ");
             }
-            PROP(&e, literal_skip_fill(sf, &arg.append->content->dstr) );
+            PROP(&e, literal_skip_fill(sf, arg.append->content->dstr) );
             break;
 
         case IMAP_CMD_CHECK:
@@ -1204,7 +1208,7 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
             }
             STATIC_SKIP_FILL("SEARCH ");
             if(arg.search->charset){
-                PROP(&e, astring_skip_fill(sf, &arg.search->charset->dstr) );
+                PROP(&e, astring_skip_fill(sf, arg.search->charset->dstr) );
                 STATIC_SKIP_FILL(" ");
             }
             PROP(&e, search_key_skip_fill(sf, arg.search->search_key) );
@@ -1287,7 +1291,7 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
             STATIC_SKIP_FILL("ENABLE");
             for(ie_dstr_t *d = arg.enable; d != NULL; d = d->next){
                 STATIC_SKIP_FILL(" ");
-                PROP(&e, atom_skip_fill(sf, &d->dstr) );
+                PROP(&e, atom_skip_fill(sf, d->dstr) );
             }
             break;
 
@@ -1309,7 +1313,7 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
                    designed for synchronizing the error through the imap
                    server; it's not something the imap client would send */
                 STATIC_SKIP_FILL("BAD ");
-                PROP(&e, text_skip_fill(sf, &arg.idle_done->dstr) );
+                PROP(&e, text_skip_fill(sf, arg.idle_done->dstr) );
             }else{
                 STATIC_SKIP_FILL("DONE");
             }
@@ -1320,7 +1324,7 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
             STATIC_SKIP_FILL("XKEYSYNC");
             for(ie_dstr_t *d = arg.xkeysync; d != NULL; d = d->next){
                 STATIC_SKIP_FILL(" ");
-                PROP(&e, atom_skip_fill(sf, &d->dstr) );
+                PROP(&e, atom_skip_fill(sf, d->dstr) );
             }
             break;
 
@@ -1332,7 +1336,7 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
         case IMAP_CMD_XKEYADD:
             PROP(&e, extension_assert_on(sf->exts, EXT_XKEY) );
             STATIC_SKIP_FILL("XKEYADD ");
-            PROP(&e, literal_skip_fill(sf, &arg.xkeyadd->dstr) );
+            PROP(&e, literal_skip_fill(sf, arg.xkeyadd->dstr) );
             break;
 
         default:
@@ -1344,10 +1348,13 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
 
     // make sure we progressed further than last time
     if(enforce_output && sf->passed == *skip){
-        TRACE(&e, "failed to print anything from command of type command=%x "
-                "at skip=%x\n", FD(imap_cmd_type_to_dstr(cmd->type)),
-                FU(*skip));
-        ORIG(&e, E_INTERNAL, "failed to print anything from command");
+        ORIG(&e,
+            E_INTERNAL,
+            "failed to print anything from command of type command=%x "
+            "at skip=%x\n",
+            FD(imap_cmd_type_to_dstr(cmd->type)),
+            FU(*skip)
+        );
     }
     // set the outputs
     *skip = sf->passed;
@@ -1397,16 +1404,17 @@ static derr_t st_code_skip_fill(skip_fill_t *sf, ie_st_code_t *code){
         case IE_ST_CODE_CAPA:
             STATIC_SKIP_FILL("CAPABILITY ");
             for(ie_dstr_t *d = code->arg.capa; d != NULL; d = d->next){
-                PROP(&e, atom_skip_fill(sf, &d->dstr) );
+                PROP(&e, atom_skip_fill(sf, d->dstr) );
                 if(d->next){ STATIC_SKIP_FILL(" "); }
             }
             break;
         case IE_ST_CODE_ATOM:
-            PROP(&e, atom_skip_fill(sf, &code->arg.atom.name->dstr) );
+            PROP(&e, atom_skip_fill(sf, code->arg.atom.name->dstr) );
             if(code->arg.atom.text){
                 STATIC_SKIP_FILL(" ");
-                PROP(&e, st_code_text_skip_fill(sf,
-                            &code->arg.atom.text->dstr) );
+                PROP(&e,
+                    st_code_text_skip_fill(sf, code->arg.atom.text->dstr)
+                );
             }
             break;
 
@@ -1462,7 +1470,7 @@ static derr_t st_code_skip_fill(skip_fill_t *sf, ie_st_code_t *code){
 static derr_t st_skip_fill(skip_fill_t *sf, ie_st_resp_t *st){
     derr_t e = E_OK;
     if(st->tag){
-        PROP(&e, tag_skip_fill(sf, &st->tag->dstr) );
+        PROP(&e, tag_skip_fill(sf, st->tag->dstr) );
         STATIC_SKIP_FILL(" ");
     }else{
         STATIC_SKIP_FILL("* ");
@@ -1473,7 +1481,7 @@ static derr_t st_skip_fill(skip_fill_t *sf, ie_st_resp_t *st){
         PROP(&e, st_code_skip_fill(sf, st->code) );
         STATIC_SKIP_FILL(" ");
     }
-    PROP(&e, text_skip_fill(sf, &st->text->dstr) );
+    PROP(&e, text_skip_fill(sf, st->text->dstr) );
     return e;
 }
 
@@ -1501,7 +1509,7 @@ static derr_t list_resp_skip_fill(skip_fill_t *sf, ie_list_resp_t *list){
             break;
         default:
             PROP(&e, FMT(&sep, "%x", FC(list->sep)) );
-            PROP(&e, raw_skip_fill(sf, &sep) );
+            PROP(&e, raw_skip_fill(sf, sep) );
     }
     STATIC_SKIP_FILL("\" ");
     PROP(&e, mailbox_skip_fill(sf, list->m) );
@@ -1630,9 +1638,9 @@ static derr_t body_params_skip_fill(
     STATIC_SKIP_FILL("(");
     for(const mime_param_t *p = params; p; p = p->next){
         LEAD_SP;
-        PROP(&e, string_skip_fill(sf, &p->key->dstr) );
+        PROP(&e, string_skip_fill(sf, p->key->dstr) );
         LEAD_SP;
-        PROP(&e, string_skip_fill(sf, &p->val->dstr) );
+        PROP(&e, string_skip_fill(sf, p->val->dstr) );
     }
     STATIC_SKIP_FILL(")");
 
@@ -1648,7 +1656,7 @@ static derr_t body_disp_skip_fill(skip_fill_t *sf, const ie_body_disp_t *disp){
     }
 
     STATIC_SKIP_FILL("(");
-    PROP(&e, string_skip_fill(sf, &disp->disp->dstr) );
+    PROP(&e, string_skip_fill(sf, disp->disp->dstr) );
     STATIC_SKIP_FILL(" ");
     PROP(&e, body_params_skip_fill(sf, disp->params) );
     STATIC_SKIP_FILL(")");
@@ -1668,7 +1676,7 @@ static derr_t body_lang_skip_fill(skip_fill_t *sf, const ie_dstr_t *lang){
 
     // a single lang
     if(!lang->next){
-        PROP(&e, string_skip_fill(sf, &lang->dstr) );
+        PROP(&e, string_skip_fill(sf, lang->dstr) );
         return e;
     }
 
@@ -1677,7 +1685,7 @@ static derr_t body_lang_skip_fill(skip_fill_t *sf, const ie_dstr_t *lang){
     STATIC_SKIP_FILL("(");
     for(const ie_dstr_t *l = lang; l; l = l->next){
         LEAD_SP;
-        PROP(&e, string_skip_fill(sf, &l->dstr) );
+        PROP(&e, string_skip_fill(sf, l->dstr) );
     }
     STATIC_SKIP_FILL(")");
 
@@ -1693,7 +1701,7 @@ static derr_t body_skip_fill(skip_fill_t *sf, const ie_body_t *body, bool with_e
     // mime_type: all non-multipart types
     if(body->type != IE_BODY_MULTI){
         LEAD_SP;
-        PROP(&e, string_skip_fill(sf, &body->content_type->typestr->dstr) );
+        PROP(&e, string_skip_fill(sf, body->content_type->typestr->dstr) );
     }
 
     // multiparts: only multipart types
@@ -1707,7 +1715,7 @@ static derr_t body_skip_fill(skip_fill_t *sf, const ie_body_t *body, bool with_e
 
     // mime_subtype: all body types
     LEAD_SP;
-    PROP(&e, string_skip_fill(sf, &body->content_type->subtypestr->dstr) );
+    PROP(&e, string_skip_fill(sf, body->content_type->subtypestr->dstr) );
 
     // mime_params: non-multipart=always, multipart=with_ext
     if(with_ext || body->type != IE_BODY_MULTI){
@@ -1726,7 +1734,7 @@ static derr_t body_skip_fill(skip_fill_t *sf, const ie_body_t *body, bool with_e
             STATIC_SKIP_FILL("\"7BIT\"");  // the default value
         }else{
             PROP(&e,
-                string_skip_fill(sf, &body->content_transfer_encoding->dstr)
+                string_skip_fill(sf, body->content_transfer_encoding->dstr)
             );
         }
         LEAD_SP;
@@ -1801,7 +1809,7 @@ static derr_t fetch_resp_extra_skip_fill(skip_fill_t *sf,
                     STATIC_SKIP_FILL("HEADER.FIELDS (");
                     d = extra->sect->sect_txt->headers;
                     for( ; d != NULL; d = d->next){
-                        PROP(&e, astring_skip_fill(sf, &d->dstr) );
+                        PROP(&e, astring_skip_fill(sf, d->dstr) );
                         if(d->next) STATIC_SKIP_FILL(" ");
                     }
                     STATIC_SKIP_FILL(")");
@@ -1810,7 +1818,7 @@ static derr_t fetch_resp_extra_skip_fill(skip_fill_t *sf,
                     STATIC_SKIP_FILL("HEADER.FIELDS.NOT (");
                     d = extra->sect->sect_txt->headers;
                     for( ; d != NULL; d = d->next){
-                        PROP(&e, astring_skip_fill(sf, &d->dstr) );
+                        PROP(&e, astring_skip_fill(sf, d->dstr) );
                         if(d->next) STATIC_SKIP_FILL(" ");
                     }
                     STATIC_SKIP_FILL(")");
@@ -1853,17 +1861,17 @@ static derr_t fetch_resp_skip_fill(skip_fill_t *sf, ie_fetch_resp_t *fetch){
     if(fetch->rfc822){
         LEAD_SP;
         STATIC_SKIP_FILL("RFC822 ");
-        PROP(&e, string_skip_fill(sf, &fetch->rfc822->dstr) );
+        PROP(&e, string_skip_fill(sf, fetch->rfc822->dstr) );
     }
     if(fetch->rfc822_hdr){
         LEAD_SP;
         STATIC_SKIP_FILL("RFC822.HEADER ");
-        PROP(&e, string_skip_fill(sf, &fetch->rfc822_hdr->dstr) );
+        PROP(&e, string_skip_fill(sf, fetch->rfc822_hdr->dstr) );
     }
     if(fetch->rfc822_text){
         LEAD_SP;
         STATIC_SKIP_FILL("RFC822.TEXT ");
-        PROP(&e, string_skip_fill(sf, &fetch->rfc822_text->dstr) );
+        PROP(&e, string_skip_fill(sf, fetch->rfc822_text->dstr) );
     }
     if(fetch->rfc822_size){
         LEAD_SP;
@@ -1924,7 +1932,7 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
                 PROP(&e, st_code_skip_fill(sf, arg.plus->code) );
                 STATIC_SKIP_FILL(" ");
             }
-            PROP(&e, text_skip_fill(sf, &arg.plus->text->dstr) );
+            PROP(&e, text_skip_fill(sf, arg.plus->text->dstr) );
             break;
 
         case IMAP_RESP_STATUS_TYPE:
@@ -1935,7 +1943,7 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
             STATIC_SKIP_FILL("CAPABILITY");
             for(ie_dstr_t *d = arg.capa; d != NULL; d = d->next){
                 STATIC_SKIP_FILL(" ");
-                PROP(&e, atom_skip_fill(sf, &d->dstr) );
+                PROP(&e, atom_skip_fill(sf, d->dstr) );
             }
             break;
 
@@ -1988,7 +1996,7 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
             STATIC_SKIP_FILL("ENABLED");
             for(ie_dstr_t *d = arg.enabled; d != NULL; d = d->next){
                 STATIC_SKIP_FILL(" ");
-                PROP(&e, atom_skip_fill(sf, &d->dstr) );
+                PROP(&e, atom_skip_fill(sf, d->dstr) );
             }
             break;
 
@@ -2008,10 +2016,10 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
                 STATIC_SKIP_FILL("OK");
             }else if(arg.xkeysync->created != NULL){
                 STATIC_SKIP_FILL("CREATED ");
-                PROP(&e, literal_skip_fill(sf, &arg.xkeysync->created->dstr) );
+                PROP(&e, literal_skip_fill(sf, arg.xkeysync->created->dstr) );
             }else{
                 STATIC_SKIP_FILL("DELETED ");
-                PROP(&e, atom_skip_fill(sf, &arg.xkeysync->deleted->dstr) );
+                PROP(&e, atom_skip_fill(sf, arg.xkeysync->deleted->dstr) );
             }
             break;
 
@@ -2025,10 +2033,13 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
 
     // make sure we progressed further than last time
     if(enforce_output && sf->passed == *skip){
-        TRACE(&e, "failed to print anything from response of type response=%x "
-                "at skip=%x\n", FD(imap_resp_type_to_dstr(resp->type)),
-                FU(*skip));
-        ORIG(&e, E_INTERNAL, "failed to print anything from command");
+        ORIG(&e,
+            E_INTERNAL,
+            "failed to print anything from response of type response=%x "
+            "at skip=%x\n",
+            FD(imap_resp_type_to_dstr(resp->type)),
+            FU(*skip)
+        );
     }
     // set the outputs
     *skip = sf->passed;
@@ -2111,8 +2122,11 @@ fail:
     return NULL;
 }
 
-derr_type_t fmthook_imap_cmd(dstr_t* out, const void* arg){
-    const imap_cmd_t *cmd = arg;
+DEF_CONTAINER_OF(_fmt_icmd_t, iface, fmt_i)
+DEF_CONTAINER_OF(_fmt_iresp_t, iface, fmt_i)
+
+derr_type_t _fmt_icmd(const fmt_i *iface, writer_i *out){
+    const imap_cmd_t *cmd = CONTAINER_OF(iface, _fmt_icmd_t, iface)->cmd;
 
     // print the first 80 characers
     DSTR_VAR(buf, 80);
@@ -2143,11 +2157,11 @@ derr_type_t fmthook_imap_cmd(dstr_t* out, const void* arg){
         dstr_append_quiet(&buf, &DSTR_LIT("..."));
     }
 
-    return fmthook_dstr_dbg(out, &buf);
+    return fmt_dstr_dbg(buf, out);
 }
 
-derr_type_t fmthook_imap_resp(dstr_t* out, const void* arg){
-    const imap_resp_t *resp = arg;
+derr_type_t _fmt_iresp(const fmt_i *iface, writer_i *out){
+    const imap_resp_t *resp = CONTAINER_OF(iface, _fmt_iresp_t, iface)->resp;
 
     // print the first 80 characers
     DSTR_VAR(buf, 80);
@@ -2178,5 +2192,5 @@ derr_type_t fmthook_imap_resp(dstr_t* out, const void* arg){
         dstr_append_quiet(&buf, &DSTR_LIT("..."));
     }
 
-    return fmthook_dstr_dbg(out, &buf);
+    return fmt_dstr_dbg(buf, out);
 }

@@ -29,7 +29,7 @@ void qw_instr_dot(qw_env_t env){
                 return;
             }
             qw_error(env.engine,
-                "DICT has no key or method \"%x\"", FD_DBG(&key)
+                "DICT has no key or method \"%x\"", FD_DBG(key)
             );
 
         case QW_VAL_STRING:
@@ -79,7 +79,7 @@ void qw_instr_dot(qw_env_t env){
                 qw_method_rpad(env, string);
                 return;
             }
-            qw_error(env.engine, "STRING has no method \"%x\"", FD_DBG(&key));
+            qw_error(env.engine, "STRING has no method \"%x\"", FD_DBG(key));
 
         case QW_VAL_FALSE:
         case QW_VAL_TRUE:
@@ -93,7 +93,7 @@ void qw_instr_dot(qw_env_t env){
     qw_error(env.engine,
         "type %x cannot be dereferenced with `.%x`",
         FS(qw_val_name(*val)),
-        FD_DBG(&key)
+        FD_DBG(key)
     );
 }
 
@@ -223,7 +223,7 @@ void qw_instr_percent(qw_env_t env){
         if(++i == fmt.len){
             qw_error(env.engine,
                 "incomplete %%-escape at end of fmt string (\"%x\")",
-                FD_DBG(&fmt)
+                FD_DBG(fmt)
             );
         }
         saw_percent = true;
@@ -239,7 +239,7 @@ void qw_instr_percent(qw_env_t env){
                 qw_error(env.engine,
                     "too few args (%x) to fmt string (\"%x\")",
                     FU(nargs),
-                    FD_DBG(&fmt)
+                    FD_DBG(fmt)
                 );
             }
             qw_val_t *arg = l.vals[nargs-1];
@@ -247,7 +247,7 @@ void qw_instr_percent(qw_env_t env){
                 qw_error(env.engine,
                     "arg[%x] to fmt string (\"%x\") is of type %x, not STRING",
                     FU(nargs-1),
-                    FD_DBG(&fmt),
+                    FD_DBG(fmt),
                     FS(qw_val_name(*arg))
                 );
             }
@@ -258,7 +258,7 @@ void qw_instr_percent(qw_env_t env){
         qw_error(env.engine,
             "invalid %%-escape (\"%%%x\") in fmt string (\"%x\")",
             FC(c),
-            FD_DBG(&fmt)
+            FD_DBG(fmt)
         );
     }
 
@@ -267,7 +267,7 @@ void qw_instr_percent(qw_env_t env){
         qw_error(env.engine,
             "too many args (%x) to fmt string (\"%x\")",
             FU(nargs),
-            FD_DBG(&fmt)
+            FD_DBG(fmt)
         );
     }
 
@@ -338,7 +338,7 @@ void qw_instr_global(qw_env_t env){
         qw_stack_put(env.engine, &qw_builtin_exists.type);
         return;
     }
-    qw_error(env.engine, "global key \"%x\" not found", FD_DBG(&key));
+    qw_error(env.engine, "global key \"%x\" not found", FD_DBG(key));
 }
 
 void qw_instr_func(qw_env_t env){

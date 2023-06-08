@@ -9,14 +9,14 @@ DSTR_STATIC(MSG_EXPUNGED_dstr, "EXPUNGED");
 DSTR_STATIC(MSG_NOT4ME_dstr, "NOT4ME");
 DSTR_STATIC(UNKNOWN_dstr, "UNKNOWN");
 
-const dstr_t *msg_state_to_dstr(msg_state_e state){
+dstr_t msg_state_to_dstr(msg_state_e state){
     switch(state){
-        case MSG_UNFILLED:     return &MSG_UNFILLED_dstr;     break;
-        case MSG_FILLED:       return &MSG_FILLED_dstr;     break;
-        case MSG_EXPUNGED:     return &MSG_EXPUNGED_dstr;     break;
-        case MSG_NOT4ME:       return &MSG_NOT4ME_dstr;       break;
+        case MSG_UNFILLED:     return MSG_UNFILLED_dstr;     break;
+        case MSG_FILLED:       return MSG_FILLED_dstr;       break;
+        case MSG_EXPUNGED:     return MSG_EXPUNGED_dstr;     break;
+        case MSG_NOT4ME:       return MSG_NOT4ME_dstr;       break;
     }
-    return &UNKNOWN_dstr;
+    return UNKNOWN_dstr;
 }
 
 derr_t msg_new(msg_t **out, msg_key_t key, unsigned int uid_dn,
@@ -76,7 +76,7 @@ derr_t msg_del_file(msg_t *msg, const string_builder_t *basepath){
     }
 
     string_builder_t subdir = SUB(basepath, msg->subdir);
-    string_builder_t path = sb_append(&subdir, FD(&msg->filename));
+    string_builder_t path = sb_append(&subdir, SBD(msg->filename));
     PROP(&e, remove_path(&path) );
 
     dstr_free(&msg->filename);
@@ -370,13 +370,13 @@ void update_free(update_t **old){
 derr_t msg_write(const msg_t *msg, dstr_t *out){
     derr_t e = E_OK;
 
-    const dstr_t *state_str = msg_state_to_dstr(msg->state);
+    const dstr_t state_str = msg_state_to_dstr(msg->state);
 
     PROP(&e, FMT(out, "msg:%x(up):%x(dn):%x:%x/%x:",
                 FU(msg->key.uid_up),
                 FU(msg->uid_dn),
                 FD(state_str),
-                FD(&msg->filename),
+                FD(msg->filename),
                 FU(msg->length)) );
 
     msg_flags_t f = msg->flags;
@@ -426,9 +426,11 @@ derr_t msg_mod_write(const msg_mod_t *mod, dstr_t *out){
     return e;
 }
 
-derr_type_t fmthook_fmk(dstr_t* out, const void* arg){
-    const msg_key_t *key = arg;
-    return FMT_QUIET(
-        out, "{.up=%x, .local=%x}", FU(key->uid_up), FU(key->uid_local)
+DEF_CONTAINER_OF(_fmt_mk_t, iface, fmt_i);
+
+derr_type_t _fmt_mk(const fmt_i *iface, writer_i *out){
+    msg_key_t key = CONTAINER_OF(iface, _fmt_mk_t, iface)->key;
+    return FMT_UNLOCKED(
+        out, "{.up=%x, .local=%x}", FU(key.uid_up), FU(key.uid_local)
     );
 }

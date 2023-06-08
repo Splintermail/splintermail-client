@@ -106,7 +106,7 @@ static derr_t fas_respond(connection_t* conn, int code,
     PROP(&e, FMT(&headers, "HTTP/1.0 %x fake api server gives no reason\r\n"
                         "Content-Length: %x\r\n"
                         "\r\n", FI(code), FU(response->len)) );
-    //PFMT("RESPONDING:\n%x%x\n--------\n", FD(&headers), FD(response));
+    //PFMT("RESPONDING:\n%x%x\n--------\n", FD(headers), FD(*response));
     PROP(&e, connection_write(conn, &headers) );
     PROP(&e, connection_write(conn, response) );
     return e;
@@ -180,7 +180,7 @@ static void* fas_thread(void* arg){
         unsigned int ctr;
         PROP_GO(&e, fas_expect_get(&exp_path, &exp_arg, &hook, &ctr), cleanup_6);
 
-        //PFMT("expecting %x %x\nreceived:%x\n", FD(&exp_path), FD(&exp_arg), FD(&body));
+        //PFMT("expecting %x %x\nreceived:%x\n", FD(exp_path), FD(exp_arg), FD(body));
 
         // now parse the body
         json_t json;
@@ -200,14 +200,14 @@ static void* fas_thread(void* arg){
         DSTR_VAR(errbuf, 1024);
         PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf), cleanup_6);
         if(!ok){
-            ORIG_GO(&e, E_VALUE, "%x", cleanup_6, FD(&errbuf));
+            ORIG_GO(&e, E_VALUE, "%x", cleanup_6, FD(errbuf));
         }
 
         // check the path
         if(!dstr_eq(path, exp_path)){
             TRACE(&e, "expected path: %x\n"
                       "         but got: %x\n",
-                     FD(&exp_path), FD(&path));
+                     FD(exp_path), FD(path));
             ORIG_GO(&e, E_VALUE, "wrong path", cleanup_6);
         }
 
@@ -216,12 +216,12 @@ static void* fas_thread(void* arg){
             if(!have_arg){
                 if(exp_arg.data != NULL){
                     TRACE(&e, "expected argument: %x\n"
-                              "          but got null\n", FD(&exp_arg));
+                              "          but got null\n", FD(exp_arg));
                     ORIG_GO(&e, E_VALUE, "wrong argument", cleanup_6);
                 }else if(!dstr_eq(_arg, exp_arg) != 0){
                     TRACE(&e, "expected argument: %x\n"
                               "          but got: %x\n",
-                             FD(&exp_arg), FD(&_arg));
+                             FD(exp_arg), FD(_arg));
                     ORIG_GO(&e, E_VALUE, "wrong argument", cleanup_6);
                 }
             }

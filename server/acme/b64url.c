@@ -139,8 +139,10 @@ static unsigned char unb64ify(char c){
     }
 }
 
-derr_type_t bin2b64url_quiet(const dstr_t bin, dstr_t *b64){
+static derr_type_t do_bin2b64url(const dstr_t bin, writer_i *out){
     derr_type_t etype = E_NONE;
+
+    writer_t w = *out->w;
 
     // track which position we're looking at
     unsigned char u = 0;
@@ -149,33 +151,37 @@ derr_type_t bin2b64url_quiet(const dstr_t bin, dstr_t *b64){
         switch(i%3){
             case 0:
                 u = (c >> 2) & 0x3f;
-                etype = dstr_append_char(b64, b64ify(u));
+                etype = w.putc(out, b64ify(u));
                 if(etype) return etype;
                 u = (c & 0x03) << 4;
                 break;
             case 1:
                 u |= (c >> 4) & 0x0f;
-                etype = dstr_append_char(b64, b64ify(u));
+                etype = w.putc(out, b64ify(u));
                 if(etype) return etype;
                 u = (c & 0x0f) << 2;
                 break;
             case 2:
                 u |= (c >> 6) & 0x03;
-                etype = dstr_append_char(b64, b64ify(u));
+                etype = w.putc(out, b64ify(u));
                 if(etype) return etype;
                 u = c & 0x3f;
-                etype = dstr_append_char(b64, b64ify(u));
+                etype = w.putc(out, b64ify(u));
                 if(etype) return etype;
                 u = 0;
                 break;
         }
     }
     if(bin.len%3 != 0){
-        etype = dstr_append_char(b64, b64ify(u));
+        etype = w.putc(out, b64ify(u));
         if(etype) return etype;
     }
 
     return E_NONE;
+}
+
+derr_type_t bin2b64url_quiet(const dstr_t bin, dstr_t *b64){
+    return do_bin2b64url(bin, WD(b64));
 }
 
 derr_t bin2b64url(const dstr_t bin, dstr_t *b64){
@@ -189,9 +195,11 @@ derr_t bin2b64url(const dstr_t bin, dstr_t *b64){
     return e;
 }
 
-derr_type_t fmthook_fb64url(dstr_t *out, const void *arg){
-    const dstr_t *bin = (const dstr_t*)arg;
-    return bin2b64url_quiet(*bin, out);
+DEF_CONTAINER_OF(_fmt_dstr_t, iface, fmt_i)
+
+derr_type_t _fmt_b64url(const fmt_i *iface, writer_i *out){
+    dstr_t bin = CONTAINER_OF(iface, _fmt_dstr_t, iface)->d;
+    return do_bin2b64url(bin, out);
 }
 
 derr_type_t b64url2bin_quiet(const dstr_t b64, dstr_t *bin){

@@ -520,7 +520,7 @@ derr_t preuser_new(
     schedulable_prep(&p->schedulable, scheduled);
 
     hash_elem_t *old = hashmap_sets(out, &p->user, &p->elem);
-    if(old) LOG_FATAL("preuser found existing user %x\n", FD_DBG(&p->user));
+    if(old) LOG_FATAL("preuser found existing user %x\n", FD_DBG(p->user));
 
     return e;
 

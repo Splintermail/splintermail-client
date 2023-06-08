@@ -16,9 +16,9 @@
         /* write either the scannable or the the last token + scannable */ \
         dstr_t scannable = imf_get_scannable(&s); \
         if(exp_error == E_NONE){ \
-            TRACE(&e, "on input: '%x'\n", FD_DBG(&scannable));  \
+            TRACE(&e, "on input: '%x'\n", FD_DBG(scannable));  \
         }else{ \
-            TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token_dstr), FD_DBG(&scannable));  \
+            TRACE(&e, "on input: '%x%x'\n", FD_DBG(token_dstr), FD_DBG(scannable));  \
         } \
         ORIG_GO(&e, E_VALUE, "unexpected status", cu); \
     } \
@@ -30,15 +30,15 @@
                 FI(exp_type), FI(type)); \
         /* write the last token + scannable */ \
         dstr_t scannable = imf_get_scannable(&s); \
-        TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token_dstr), FD_DBG(&scannable));  \
+        TRACE(&e, "on input: '%x%x'\n", FD_DBG(token_dstr), FD_DBG(scannable));  \
         ORIG_GO(&e, E_VALUE, "unexpected token type", cu); \
     } \
     if(exp_error == E_NONE && dstr_cmp(&token_dstr, &exp_token) != 0){ \
         TRACE(&e, "expected token \"%x\" but got token \"%x\"\n", \
-                FD_DBG(&exp_token), FD_DBG(&token_dstr)); \
+                FD_DBG(exp_token), FD_DBG(token_dstr)); \
         /* write the last token + scannable */ \
         dstr_t scannable = imf_get_scannable(&s); \
-        TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token_dstr), FD_DBG(&scannable));  \
+        TRACE(&e, "on input: '%x%x'\n", FD_DBG(token_dstr), FD_DBG(scannable));  \
         ORIG_GO(&e, E_VALUE, "unexpected token type", cu); \
     } \
 } while(0)

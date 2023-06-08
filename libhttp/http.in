@@ -25,7 +25,7 @@ static void trace_http_error(derr_t *E, dstr_off_t token){
     DSTR_VAR(context, 1024);
     get_token_context(&context, token, 80);
 
-    TRACE_ORIG(E, E_RESPONSE, "invalid http:\n%x", FD(&context));
+    TRACE_ORIG(E, E_RESPONSE, "invalid http:\n%x", FD(context));
 }
 
 // recorded error message is based on sem.loc, and is written to E

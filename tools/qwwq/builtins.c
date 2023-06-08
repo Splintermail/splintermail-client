@@ -313,17 +313,17 @@ static void qw_instr_wrap(qw_env_t env){
     derr_type_t etype = dstr_tosize_quiet(widthstr, &width, 10);
     if(etype){
         qw_error(env.engine,
-            "invalid width in wrap(width=%x)", FD_DBG(&widthstr)
+            "invalid width in wrap(width=%x)", FD_DBG(widthstr)
         );
     }
     if(indent.len >= width){
         qw_error(env.engine,
-            "indent (\"%x\") exceeds width (%x)", FD_DBG(&indent), FU(width)
+            "indent (\"%x\") exceeds width (%x)", FD_DBG(indent), FU(width)
         );
     }
     if(hang.len >= width){
         qw_error(env.engine,
-            "hang (\"%x\") exceeds width (%x)", FD_DBG(&hang), FU(width)
+            "hang (\"%x\") exceeds width (%x)", FD_DBG(hang), FU(width)
         );
     }
     // first pass to figure length
@@ -500,7 +500,7 @@ static void qw_instr_repl(qw_env_t env){
         qw_error(env.engine,
             "failure in dstr_recode(): %x: %x\n",
             FD(error_to_dstr(e.type)),
-            FD(&e.msg)
+            FD(e.msg)
         );
     }
 }
@@ -536,12 +536,12 @@ static void _instr_pad(qw_env_t env, const char *name, bool left){
     derr_type_t etype = dstr_tosize_quiet(widthstr, &width, 10);
     if(etype){
         qw_error(env.engine,
-            "invalid width in %s(width=%x)", FS(name), FD_DBG(&widthstr)
+            "invalid width in %s(width=%x)", FS(name), FD_DBG(widthstr)
         );
     }
     if(charstr.len != 1){
         qw_error(env.engine,
-            "invalid char in %s(char=%x)", FS(name), FD_DBG(&charstr)
+            "invalid char in %s(char=%x)", FS(name), FD_DBG(charstr)
         );
     }
     // detect noop
@@ -609,7 +609,7 @@ static void qw_instr_get(qw_env_t env){
     // do the dereference
     qw_val_t *out = qw_dict_get(env, dict, key);
     if(!out){
-        qw_error(env.engine, "missing key in get(key=\"%x\")", FD_DBG(&key));
+        qw_error(env.engine, "missing key in get(key=\"%x\")", FD_DBG(key));
     }
     qw_stack_put(env.engine, out);
 }
@@ -835,13 +835,13 @@ static void qw_instr_exists(qw_env_t env){
 
     // null-terminate path
     DSTR_VAR(buf, 4096);
-    derr_type_t etype = FMT_QUIET(&buf, "%x", FD(&path));
+    derr_type_t etype = FMT_QUIET(&buf, "%x", FD(path));
     if(etype) qw_error(env.engine, "filename too long");
 
     struct stat s;
     int ret = stat(buf.data, &s);
     if(ret && errno != ENOENT && errno != ENOTDIR){
-        qw_error(env.engine, "exists(%x): %x", FD_DBG(&path), FE(&errno));
+        qw_error(env.engine, "exists(%x): %x", FD_DBG(path), FE(errno));
     }
     qw_stack_put_bool(env.engine, ret == 0);
 }

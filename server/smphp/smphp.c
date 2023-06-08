@@ -88,8 +88,8 @@ static zend_string *print_error(derr_t e_in){
 #endif
     // production AND debug builds: report errors via badbadbad alerts
     DSTR_VAR(summary, 128);
-    DROP_CMD( FMT(&summary, "smphp: %x", FD(&e_in.msg)) );
-    badbadbad_alert(&summary, &e_in.msg);
+    DROP_CMD( FMT(&summary, "smphp: %x", FD(e_in.msg)) );
+    badbadbad_alert(summary, e_in.msg);
     DROP_VAR(&e_in);
     /* just return NULL; the php code has to check for NULL values anyway,
        so there is no point in providing a generic fallback in two places */
@@ -128,14 +128,14 @@ static void _drop(derr_t e_in){
 #endif
     // production AND debug builds: report errors via badbadbad alerts
     DSTR_VAR(summary, 128);
-    DROP_CMD( FMT(&summary, "smphp: %x", FD(&e_in.msg)) );
-    badbadbad_alert(&summary, &e_in.msg);
+    DROP_CMD( FMT(&summary, "smphp: %x", FD(e_in.msg)) );
+    badbadbad_alert(summary, e_in.msg);
     DROP_VAR(&e_in);
 }
 
 
 static derr_t _create_account(
-    const dstr_t *email, const dstr_t *pass, dstr_t *uuid
+    const dstr_t email, const dstr_t pass, dstr_t *uuid
 ){
     derr_t e = E_OK;
 
@@ -150,7 +150,7 @@ cu_sql:
     return e;
 }
 
-static derr_t _login(const dstr_t *email, const dstr_t *pass, dstr_t *uuid){
+static derr_t _login(const dstr_t email, const dstr_t pass, dstr_t *uuid){
     derr_t e = E_OK;
 
     MYSQL sql;
@@ -165,7 +165,7 @@ cu_sql:
 }
 
 static derr_t _add_session_auth(
-    int server_id, const dstr_t *session_id, const dstr_t *uuid
+    int server_id, const dstr_t session_id, const dstr_t uuid
 ){
     derr_t e = E_OK;
 
@@ -182,7 +182,7 @@ cu_sql:
 
 
 static derr_t _validate_session_auth(
-    int server_id, const dstr_t *session_id, dstr_t *email
+    int server_id, const dstr_t session_id, dstr_t *email
 ){
     derr_t e = E_OK;
 
@@ -197,10 +197,10 @@ static derr_t _validate_session_auth(
 
     // lookup username (useful to php)
     bool ok;
-    PROP_GO(&e, get_email_for_uuid(&sql, &uuid, email, &ok), cu_sql);
+    PROP_GO(&e, get_email_for_uuid(&sql, uuid, email, &ok), cu_sql);
     if(!ok){
         // this is possible in race conditions but it's more likely a bug
-        TRACE(&e, "session_id:%x uuid:%x", FD(session_id), FSID(&uuid));
+        TRACE(&e, "session_id:%x uuid:%x", FD(session_id), FSID(uuid));
         ORIG_GO(&e, E_INTERNAL, "session with no account was found", cu_sql);
     }
 
@@ -210,7 +210,7 @@ cu_sql:
     return e;
 }
 
-static derr_t _session_logout(int server_id, const dstr_t *session_id){
+static derr_t _session_logout(int server_id, const dstr_t session_id){
     derr_t e = E_OK;
 
     MYSQL sql;
@@ -226,7 +226,7 @@ cu_sql:
 
 
 static derr_t _new_csrf(
-    int server_id, const dstr_t *session_id, dstr_t *csrf
+    int server_id, const dstr_t session_id, dstr_t *csrf
 ){
     derr_t e = E_OK;
 
@@ -252,7 +252,7 @@ PHP_FUNCTION(smphp_valid_email){
         Z_PARAM_STRING(email.data, email.len)
     ZEND_PARSE_PARAMETERS_END();
 
-    zend_string *error = print_error( valid_splintermail_email(&email) );
+    zend_string *error = print_error( valid_splintermail_email(email) );
     if(error != NULL){
         RETURN_STR(error);
     }
@@ -271,7 +271,7 @@ PHP_FUNCTION(smphp_valid_password){
         Z_PARAM_STRING(password.data, password.len)
     ZEND_PARSE_PARAMETERS_END();
 
-    zend_string *error = print_error( valid_splintermail_password(&password) );
+    zend_string *error = print_error( valid_splintermail_password(password) );
     if(error != NULL){
         RETURN_STR(error);
     }
@@ -293,7 +293,7 @@ PHP_FUNCTION(smphp_create_account){
     ZEND_PARSE_PARAMETERS_END();
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    zend_string *error = print_error( _create_account(&email, &pass, &uuid) );
+    zend_string *error = print_error( _create_account(email, pass, &uuid) );
     if(error == NULL){
         return;
     }
@@ -337,7 +337,7 @@ PHP_FUNCTION(smphp_login){
     ZEND_PARSE_PARAMETERS_END();
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    zend_string *error = print_error( _login(&email, &pass, &uuid) );
+    zend_string *error = print_error( _login(email, pass, &uuid) );
     if(error == NULL){
         return;
     }
@@ -382,7 +382,7 @@ PHP_FUNCTION(smphp_add_session_auth){
 
     if(server_id > INT_MAX || server_id < INT_MIN) return;
 
-    _drop( _add_session_auth((int)server_id, &session_id, &uuid) );
+    _drop( _add_session_auth((int)server_id, session_id, uuid) );
 }
 
 // smphp_validate_session_auth(
@@ -402,7 +402,7 @@ PHP_FUNCTION(smphp_validate_session_auth){
     derr_t e = E_OK;
 
     DSTR_VAR(email, SMSQL_EMAIL_SIZE);
-    derr_t e2 = _validate_session_auth((int)server_id, &session_id, &email);
+    derr_t e2 = _validate_session_auth((int)server_id, session_id, &email);
     CATCH(e2, E_USERMSG){
         // user is not logged in; drop the user message and return NULL
         DROP_VAR(&e2);
@@ -432,7 +432,7 @@ PHP_FUNCTION(smphp_session_logout){
 
     if(server_id > INT_MAX || server_id < INT_MIN) return;
 
-    _drop( _session_logout((int)server_id, &session_id) );
+    _drop( _session_logout((int)server_id, session_id) );
 }
 
 
@@ -451,7 +451,7 @@ PHP_FUNCTION(smphp_new_csrf){
     derr_t e = E_OK;
 
     DSTR_VAR(csrf, SMSQL_CSRF_SIZE);
-    PROP_GO(&e, _new_csrf((int)server_id, &session_id, &csrf), fail);
+    PROP_GO(&e, _new_csrf((int)server_id, session_id, &csrf), fail);
 
     zend_string *out = zend_string_init(csrf.data, csrf.len, false);
     if(out != NULL){

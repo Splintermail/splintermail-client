@@ -73,8 +73,8 @@ static void trace_imap_error(
         FMT(&buf,
             "%x at input: %x%x",
             FS(reason),
-            FD_DBG(dtoken),
-            FD_DBG(&scannable)
+            FD_DBG(*dtoken),
+            FD_DBG(scannable)
         )
     );
     // truncate message
@@ -86,7 +86,7 @@ static void trace_imap_error(
     if(a->is_client){
         /* clients immediately raise a derr_t error; we only talk to dovecot
            so in practice any parsing error as a client is our bug */
-        TRACE_ORIG(E, E_PARAM, "error parsing server response: %x", FD(&buf));
+        TRACE_ORIG(E, E_PARAM, "error parsing server response: %x", FD(buf));
     }else{
         // servers report errors to the client
         ie_dstr_free(a->errmsg);

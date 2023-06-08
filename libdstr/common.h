@@ -79,8 +79,8 @@ typedef struct {
     dstr_t msg;
 } derr_t;
 
-const dstr_t *error_to_dstr(derr_type_t type);
-const dstr_t *error_to_msg(derr_type_t type);
+dstr_t error_to_dstr(derr_type_t type);
+dstr_t error_to_msg(derr_type_t type);
 
 #define REGISTER_ERROR_TYPE(NAME, NAME_STRING, MSG_STRING) \
     DSTR_STATIC(NAME ## _name_dstr, NAME_STRING); \
@@ -718,6 +718,10 @@ derr_t b642bin_stream(dstr_t* b64, dstr_t* bin);
 size_t b642bin_output_len(size_t in);
 size_t bin2b64_output_len(size_t in);
 
+// no error checking
+char hex_high_nibble(unsigned char u);
+char hex_low_nibble(unsigned char u);
+
 // these are not streaming functions; that is, they don't consume the input
 // however they only append to the output
 derr_t bin2hex(const dstr_t* bin, dstr_t* hex);
@@ -747,225 +751,6 @@ static inline char uchar_to_char(unsigned char u){
 #endif
 }
 
-// String Formatting functions below //
-
-/* fmt_dstr_append_quiet is just like dstr_append_quiet except when it fails
-   due to a size limit it will try to fill the buffer as much as possible
-   before returning the error */
-derr_type_t fmt_dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text);
-
-derr_type_t dstr_append_hex(dstr_t* dstr, unsigned char val);
 derr_type_t dstr_append_char(dstr_t* dstr, char val);
 // append the same char multiple times, such as for padding a string
 derr_type_t dstr_append_char_n(dstr_t* dstr, char val, size_t n);
-
-typedef enum {
-    FMT_UINT,
-    FMT_INT,
-    FMT_FLOAT,
-    FMT_CHAR,
-    FMT_CSTR,
-    FMT_PTR,
-    FMT_DSTR,
-    FMT_BOOL,
-    FMT_EXT,
-    FMT_EXT_NOCONST,
-} fmt_type_t;
-
-typedef struct {
-    const void* arg;
-    derr_type_t (*hook)(dstr_t* out, const void* arg);
-} fmt_data_ext_t;
-
-typedef struct {
-    void* arg;
-    derr_type_t (*hook)(dstr_t* out, void* arg);
-} fmt_data_ext_noconst_t;
-
-typedef union {
-    uintmax_t u;
-    intmax_t i;
-    long double f;
-    char c;
-    const char* cstr;
-    const void* ptr;
-    const dstr_t* dstr;
-    bool boolean;
-    fmt_data_ext_t ext;
-    fmt_data_ext_noconst_t ext_noconst;
-} fmt_data_t;
-
-typedef struct {
-    fmt_type_t type;
-    fmt_data_t data;
-} fmt_t;
-
-/* NOTE: this following function does not use the error-handling macros,
-   because the it is *called* in the error-handling macros, and any error
-   results in an immediate recurse-until-segfault operation. */
-// Also note: this function is meant to be called by the FFMT macro
-derr_type_t pvt_ffmt_quiet(
-    FILE* f, size_t* written, const char* fstr, const fmt_t* args, size_t nargs
-);
-derr_t pvt_ffmt(
-    FILE* f, size_t* written, const char* fstr, const fmt_t* args, size_t nargs
-);
-/*  throws : E_OS (on the write part)
-             If you use an extension, this could throw additional errors */
-
-// Note: this function is meant to be called by the FMT macro
-derr_type_t pvt_fmt_quiet(
-    dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs
-);
-derr_t pvt_fmt(
-    dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs
-);
-/*  throws : E_NOMEM
-             E_FIXEDSIZE
-             E_INTERNAL
-             If you use an extension, this could throw additional errors */
-
-/* the following macros CANNOT be inline functions because the compound
-   literals they create have automatic storage that falls out of scope as soon
-   as the compound literal falls out of scope (meaning you can't safely return
-   the compound literal or it will be useless) */
-
-// FMT is like sprintf, without the null-termination guarantee in error cases
-#define FMT(out, fstr, ...) \
-    pvt_fmt(out, \
-        fstr, \
-        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) - 1 \
-    )
-#define FMT_QUIET(out, fstr, ...) \
-    pvt_fmt_quiet(out, \
-        fstr, \
-        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) - 1 \
-    )
-
-// FFMT is like fprintf
-#define FFMT(f, written, fstr, ...) \
-    pvt_ffmt(f, \
-        written, \
-        fstr, \
-        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) - 1 \
-    )
-
-#define FFMT_QUIET(f, written, fstr, ...) \
-    pvt_ffmt_quiet(f, \
-        written, \
-        fstr, \
-        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) - 1 \
-    )
-
-// PFMT is like printf
-#define PFMT(fstr, ...) FFMT(stdout, NULL, fstr, __VA_ARGS__)
-
-/* The following functions can be inline functions because they return structs
-   which only contain literal values or pointers to outside objects */
-static inline fmt_t FU(uintmax_t arg){ return (fmt_t){FMT_UINT, {.u = arg} }; }
-static inline fmt_t FI(intmax_t arg){ return (fmt_t){FMT_INT, {.i = arg} }; }
-static inline fmt_t FF(long double arg){ return (fmt_t){FMT_FLOAT, {.f = arg} }; }
-static inline fmt_t FC(char arg){ return (fmt_t){FMT_CHAR, {.c = arg} }; }
-static inline fmt_t FS(const char* arg){ return (fmt_t){FMT_CSTR, {.cstr = arg} }; }
-static inline fmt_t FD(const dstr_t* arg){ return (fmt_t){FMT_DSTR, {.dstr = arg} }; }
-static inline fmt_t FP(const void* arg){ return (fmt_t){FMT_PTR, {.ptr = arg} }; }
-static inline fmt_t FB(bool arg){ return (fmt_t){FMT_BOOL, {.boolean = arg} }; }
-
-derr_type_t fmthook_dstr_dbg(dstr_t* out, const void* arg);
-
-static inline fmt_t FD_DBG(const dstr_t* arg){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
-                                     .hook = fmthook_dstr_dbg} } };
-}
-// this is just for passing two args in one fmthook
-typedef struct {
-    const char *buf;
-    size_t n;
-} fsn_format_t;
-
-derr_type_t fmthook_fsn(dstr_t* out, const void* arg);
-
-#define FSN(_buf, _n) ((fmt_t){ \
-     FMT_EXT, { \
-        .ext = { \
-            .hook = fmthook_fsn, \
-            .arg = (const void*)(&(const fsn_format_t){ \
-                .buf = _buf, \
-                .n = _n, \
-            })\
-        }}})
-
-// the FMT()-ready replacement of perror():
-derr_type_t fmthook_strerror(dstr_t* out, const void* arg);
-
-static inline fmt_t FE(int* err){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)err,
-                                     .hook = fmthook_strerror} } };
-}
-
-// hex-encoded dstr
-derr_type_t fmthook_bin2hex(dstr_t* out, const void* arg);
-
-static inline fmt_t FX(const dstr_t *arg){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
-                                     .hook = fmthook_bin2hex} } };
-}
-
-// String Builder stuff below //
-
-typedef struct string_builder_t {
-    const struct string_builder_t* prev;
-    const struct string_builder_t* next;
-    fmt_t elem;
-} string_builder_t;
-
-static inline string_builder_t sb_append(const string_builder_t* sb, fmt_t elem){
-    return (string_builder_t){.prev=sb, .next=NULL, .elem=elem};
-}
-
-static inline string_builder_t sb_prepend(const string_builder_t* sb, fmt_t elem){
-    return (string_builder_t){.prev=NULL, .next=sb, .elem=elem};
-}
-
-// shortcut for literal string builder objects
-#define SB(fmt) ((string_builder_t){.prev=NULL, .next=NULL, .elem=fmt})
-
-derr_t sb_append_to_dstr(const string_builder_t* sb, const dstr_t* joiner, dstr_t* out);
-derr_t sb_to_dstr(const string_builder_t* sb, const dstr_t* joiner, dstr_t* out);
-derr_t sb_fwrite(FILE* f, size_t* written, const string_builder_t* sb,
-                 const dstr_t* joiner);
-
-/* this will attempt to expand the string_builder into a stack buffer, and then
-   into a heap buffer if that fails.  The "out" parameter is a pointer to
-   whichever buffer was successfully written to.  The result is always
-   null-terminated. */
-derr_t sb_expand(const string_builder_t* sb, const dstr_t* joiner,
-                 dstr_t* stack_dstr, dstr_t* heap_dstr, dstr_t** out);
-
-// FMT() support for string_builder
-derr_type_t fmthook_sb(dstr_t* out, const void* arg);
-
-// this is just for passing two args in one fmthook
-typedef struct {
-    const string_builder_t* sb;
-    const dstr_t* joiner;
-} string_builder_format_t;
-
-/* This needs to be a macro to put the intermediate struct in the proper scope.
-   Treat it as if it were the following prototype:
-
-    fmt_t FSB(const string_builder_t* arg, const dstr_t* joiner);
-*/
-#define FSB(_sb, _joiner) ((fmt_t){ \
-     FMT_EXT, { \
-        .ext = { \
-            .hook = fmthook_sb, \
-            .arg = (const void*)(&(const string_builder_format_t){ \
-                .sb = _sb, \
-                .joiner = _joiner, \
-            })\
-        }}})

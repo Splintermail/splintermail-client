@@ -22,19 +22,14 @@ extern derr_type_t E_SQL;
 // a 'duplicate entry' error
 extern derr_type_t E_SQL_DUP;
 
-derr_type_t fmthook_sql_error(dstr_t* out, void* arg);
+typedef struct {
+    fmt_i iface;
+    MYSQL *sql;
+} _fmt_sql_t;
 
-static inline fmt_t FSQL(MYSQL *sql){
-    return (fmt_t){
-        FMT_EXT_NOCONST,
-        {
-            .ext_noconst = {
-                .arg = (void*)sql,
-                .hook = fmthook_sql_error,
-            }
-        }
-    };
-}
+derr_type_t _fmt_sql(const fmt_i *iface, writer_i *out);
+
+#define FSQL(sql) (&(_fmt_sql_t){ {_fmt_sql}, sql }.iface)
 
 // sock is allowed to be NULL (defaults to "/var/run/mysqld/mysqld.sock")
 // dbname can be NULL to not choose a database
@@ -51,9 +46,9 @@ derr_t sql_connect_unix(
     MYSQL *sql, const dstr_t *user, const dstr_t *pass, const dstr_t *sock
 );
 
-derr_t sql_query(MYSQL *sql, const dstr_t *query);
+derr_t sql_query(MYSQL *sql, const dstr_t query);
 
-derr_t sql_exec_multi(MYSQL *sql, const dstr_t *stmts);
+derr_t sql_exec_multi(MYSQL *sql, const dstr_t stmts);
 
 derr_t sql_use_result(MYSQL *sql, MYSQL_RES **res);
 
@@ -71,7 +66,7 @@ derr_t _sql_read_row(
 
 derr_t sql_stmt_init(MYSQL *sql, MYSQL_STMT **stmt);
 
-derr_t sql_stmt_prepare(MYSQL_STMT *stmt, const dstr_t *query);
+derr_t sql_stmt_prepare(MYSQL_STMT *stmt, const dstr_t query);
 
 derr_t _sql_stmt_bind_params(MYSQL_STMT *stmt, MYSQL_BIND *args, size_t nargs);
 #define sql_stmt_bind_params(stmt, ...) \
@@ -95,7 +90,7 @@ derr_t sql_stmt_execute(MYSQL_STMT *stmt);
 
 derr_t _sql_norow_query(
     MYSQL *sql,
-    const dstr_t *query,
+    const dstr_t query,
     size_t *affected,
     MYSQL_BIND *args,
     size_t nargs
@@ -113,7 +108,7 @@ derr_t _sql_norow_query(
 // if ok==NULL, raises an error if no row is received
 // if ok!=NULL, sets ok=bool(one row was received)
 derr_t _sql_onerow_query(
-    MYSQL *mysql, const dstr_t *query, bool *ok, MYSQL_BIND *args, size_t nargs
+    MYSQL *mysql, const dstr_t query, bool *ok, MYSQL_BIND *args, size_t nargs
 );
 #define sql_onerow_query(sql, query, ok, ...) \
     _sql_onerow_query( \
@@ -138,7 +133,7 @@ derr_t _sql_onerow_query(
 derr_t _sql_multirow_stmt(
     MYSQL *sql,
     MYSQL_STMT **stmt,
-    const dstr_t *query,
+    const dstr_t query,
     MYSQL_BIND *args,
     size_t nargs
 );

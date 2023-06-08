@@ -171,7 +171,7 @@ derr_t gen_key_path(int bits, const string_builder_t *keypath){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(keypath, &DSTR_LIT("/"), &stack, &heap, &path) );
+    PROP(&e, sb_expand(keypath, &stack, &heap, &path) );
 
     PROP_GO(&e, gen_key(bits, path->data), cu);
 
@@ -416,7 +416,7 @@ derr_t keypair_load_private_path(
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(keypath, &DSTR_LIT("/"), &stack, &heap, &path) );
+    PROP(&e, sb_expand(keypath, &stack, &heap, &path) );
 
     PROP_GO(&e, keypair_load_private(out, path->data), cu);
 
@@ -432,7 +432,7 @@ derr_t keypair_load_public_path(
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(keypath, &DSTR_LIT("/"), &stack, &heap, &path) );
+    PROP(&e, sb_expand(keypath, &stack, &heap, &path) );
 
     PROP_GO(&e, keypair_load_public(out, path->data), cu);
 
@@ -670,9 +670,9 @@ derr_t encrypter_start(encrypter_t* ec, link_t *keys, dstr_t* out){
         // format line
         PROP_GO(&e, FMT(&ec->pre64, "R:%x:%x:%x:%x\n",
                                  FU(kp->fingerprint->len),
-                                 FD(kp->fingerprint),
+                                 FD(*kp->fingerprint),
                                  FI(ek_len[i]),
-                                 FD(&ek_wrapper)), fail_1);
+                                 FD(ek_wrapper)), fail_1);
         // dump line
         PROP_GO(&e, bin2b64_stream(&ec->pre64, out, B64_WIDTH, false), fail_1);
 
@@ -684,7 +684,7 @@ derr_t encrypter_start(encrypter_t* ec, link_t *keys, dstr_t* out){
     dstr_t iv_wrapper;
     DSTR_WRAP(iv_wrapper, (char*)iv, (size_t)iv_len, false);
     // note we are also appending the M: to start the message
-    PROP_GO(&e, FMT(&ec->pre64, "IV:%x:%x\nM:", FI(iv_len), FD(&iv_wrapper)), fail_1);
+    PROP_GO(&e, FMT(&ec->pre64, "IV:%x:%x\nM:", FI(iv_len), FD(iv_wrapper)), fail_1);
     PROP_GO(&e, bin2b64_stream(&ec->pre64, out, B64_WIDTH, false), fail_1);
 
 cu:
@@ -782,11 +782,11 @@ derr_t encrypter_finish(encrypter_t* ec, dstr_t* out){
 
     // base64-encode the tag
     DSTR_VAR(b64tag, CIPHER_TAG_LEN * 2);
-    // e = PFMT("%x\n", FD_DBG(&tag)); DROP_VAR(&e);
+    // e = PFMT("%x\n", FD_DBG(tag)); DROP_VAR(&e);
     PROP_GO(&e, bin2b64_stream(&tag, &b64tag, 0, true), cleanup);
 
     // append the encoded tag on its own line, with '=' as a prefix
-    PROP_GO(&e, FMT(out, "=%x\n", FD(&b64tag)), cleanup);
+    PROP_GO(&e, FMT(out, "=%x\n", FD(b64tag)), cleanup);
 
     // append the PEM-like footer
     PROP_GO(&e, dstr_append(out, &pem_footer), cleanup);
@@ -1259,20 +1259,20 @@ cleanup:
     return e;
 }
 
-derr_t hmac(const dstr_t* secret, const dstr_t* payload, dstr_t* hmac){
+derr_t hmac(const dstr_t secret, const dstr_t payload, dstr_t* hmac){
     derr_t e = E_OK;
     // set minimum length
     PROP(&e, dstr_grow(hmac, EVP_MAX_MD_SIZE) );
 
-    if(secret->len > INT_MAX){
+    if(secret.len > INT_MAX){
         ORIG(&e, E_PARAM, "secret too long");
     }
-    int seclen = (int)secret->len;
+    int seclen = (int)secret.len;
 
     unsigned int hmaclen;
     const EVP_MD* type = EVP_sha512();
-    unsigned char* ret = HMAC(type, (unsigned char*)secret->data, seclen,
-                              (unsigned char*)payload->data, payload->len,
+    unsigned char* ret = HMAC(type, (unsigned char*)secret.data, seclen,
+                              (unsigned char*)payload.data, payload.len,
                               (unsigned char*)hmac->data, &hmaclen);
     if(!ret){
         trace_ssl_errors(&e);

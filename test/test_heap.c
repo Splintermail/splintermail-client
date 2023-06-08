@@ -33,7 +33,7 @@ static void _print_heap(const hnode_t *hnode, size_t indent){
     // print node
     LOG_DEBUG(
         "%x%xB%x\n",
-        FD(&indent_dstr),
+        FD(indent_dstr),
         FI(CONTAINER_OF(hnode, int_val_t, hnode)->value),
         FI(hnode->balance)
     );

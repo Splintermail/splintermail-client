@@ -52,7 +52,7 @@ derr_t parse_url(const dstr_t *text, url_t *out){
 
     bool ok = parse_url_ex(text, out, &errbuf);
     if(!ok){
-        ORIG(&e, E_PARAM, "invalid url: %x", FD(&errbuf));
+        ORIG(&e, E_PARAM, "invalid url: %x", FD(errbuf));
     }
 
     return e;
@@ -115,7 +115,7 @@ derr_t parse_url_reference(const dstr_t *text, url_t *out){
 
     bool ok = parse_url_reference_ex(text, out, &errbuf);
     if(!ok){
-        ORIG(&e, E_PARAM, "invalid url: %x", FD(&errbuf));
+        ORIG(&e, E_PARAM, "invalid url: %x", FD(errbuf));
     }
 
     return e;
@@ -125,7 +125,7 @@ url_t must_parse_url(const dstr_t *text){
     url_t out;
     DSTR_VAR(errbuf, 512);
     if(!parse_url_ex(text, &out, &errbuf)){
-        LOG_FATAL("failed to parse url (%x): %x\n", FD(text), FD(&errbuf));
+        LOG_FATAL("failed to parse url (%x): %x\n", FD(*text), FD(errbuf));
     }
     return out;
 }
@@ -189,7 +189,7 @@ derr_t parse_addrspec(const dstr_t *text, addrspec_t *out){
 
     bool ok = parse_addrspec_ex(text, out, &errbuf);
     if(!ok){
-        ORIG(&e, E_PARAM, "invalid addrspec:\n%x", FD(&errbuf));
+        ORIG(&e, E_PARAM, "invalid addrspec:\n%x", FD(errbuf));
     }
 
     return e;
@@ -200,7 +200,7 @@ addrspec_t must_parse_addrspec(const dstr_t *text){
     DSTR_VAR(errbuf, 512);
     if(!parse_addrspec_ex(text, &out, &errbuf)){
         LOG_FATAL(
-            "failed to parse addrspec (%x):\n%x\n", FD(text), FD(&errbuf)
+            "failed to parse addrspec (%x):\n%x\n", FD(*text), FD(errbuf)
         );
     }
     return out;

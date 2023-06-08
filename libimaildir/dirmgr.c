@@ -16,12 +16,11 @@ static void managed_dir_free(managed_dir_t **mgd){
     *mgd = NULL;
 }
 
-static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
-        const dstr_t *name){
+static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm, dstr_t name){
     derr_t e = E_OK;
 
     // maildir not open in dirmgr, make sure it exists on the filesystem
-    string_builder_t dir_path = sb_append(&dm->path, FD(name));
+    string_builder_t dir_path = sb_append(&dm->path, SBD(name));
     PROP(&e, mkdirs_path(&dir_path, 0777) );
     // also ensure ctn exist
     PROP(&e, make_ctn(&dir_path, 0777) );
@@ -30,9 +29,9 @@ static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
     CHECK(&e);
 
     // copy the name, which persists for the hashmap and for the imaildir_t
-    PROP_GO(&e, dstr_new(&mgd->name, name->len), fail_malloc);
-    PROP_GO(&e, dstr_copy(name, &mgd->name), fail_name);
-    string_builder_t path = sb_append(&dm->path, FD(&mgd->name));
+    PROP_GO(&e, dstr_new(&mgd->name, name.len), fail_malloc);
+    PROP_GO(&e, dstr_copy(&name, &mgd->name), fail_name);
+    string_builder_t path = sb_append(&dm->path, SBD(mgd->name));
     PROP_GO(&e,
         imaildir_init(
             &mgd->m, &dm->imaildir_cb, path, &mgd->name, dm->imaildir_hooks
@@ -63,22 +62,19 @@ static derr_t rmdir_ctn(const string_builder_t *dir_path){
     string_builder_t full_path;
     bool ok;
 
-    DSTR_STATIC(cur, "cur");
-    full_path = sb_append(dir_path, FD(&cur));
+    full_path = sb_append(dir_path, SBS("cur"));
     PROP(&e, exists_path(&full_path, &ok) );
     if(ok){
         PROP(&e, drmdir_path(&full_path) );
     }
 
-    DSTR_STATIC(tmp, "tmp");
-    full_path = sb_append(dir_path, FD(&tmp));
+    full_path = sb_append(dir_path, SBS("tmp"));
     PROP(&e, exists_path(&full_path, &ok) );
     if(ok){
         PROP(&e, drmdir_path(&full_path) );
     }
 
-    DSTR_STATIC(new, "new");
-    full_path = sb_append(dir_path, FD(&new));
+    full_path = sb_append(dir_path, SBS("new"));
     PROP(&e, exists_path(&full_path, &ok) );
     if(ok){
         PROP(&e, drmdir_path(&full_path) );
@@ -95,18 +91,15 @@ static derr_t make_ctn(const string_builder_t *dir_path, mode_t mode){
 
     // make sure files exist before deleting them, and return all failures
 
-    DSTR_STATIC(cur, "cur");
-    full_path = sb_append(dir_path, FD(&cur));
+    full_path = sb_append(dir_path, SBS("cur"));
     PROP(&e, exists_path(&full_path, &do_rm) );
     if(!do_rm) PROP(&e, mkdirs_path(&full_path, mode) );
 
-    DSTR_STATIC(tmp, "tmp");
-    full_path = sb_append(dir_path, FD(&tmp));
+    full_path = sb_append(dir_path, SBS("tmp"));
     PROP(&e, exists_path(&full_path, &do_rm) );
     if(!do_rm) PROP(&e, mkdirs_path(&full_path, mode) );
 
-    DSTR_STATIC(new, "new");
-    full_path = sb_append(dir_path, FD(&new));
+    full_path = sb_append(dir_path, SBS("new"));
     PROP(&e, exists_path(&full_path, &do_rm) );
     if(!do_rm) PROP(&e, mkdirs_path(&full_path, mode) );
 
@@ -118,7 +111,7 @@ static derr_t ctn_check(const string_builder_t *path, bool *ret){
     char *ctn[3] = {"cur", "tmp", "new"};
     *ret = true;
     for(size_t i = 0; i < 3; i++){
-        string_builder_t subdir_path = sb_append(path, FS(ctn[i]));
+        string_builder_t subdir_path = sb_append(path, SBS(ctn[i]));
         bool temp;
         PROP(&e, dir_rw_access_path(&subdir_path, false, &temp) );
         *ret &= temp;
@@ -139,7 +132,7 @@ static derr_t call_user_hook(const for_each_mbx_arg_t *arg, bool has_ctn){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(arg->name, &DSTR_LIT("/"), &stack, &heap, &path) );
+    PROP(&e, sb_expand(arg->name, &stack, &heap, &path) );
 
     PROP_GO(&e, arg->hook(path, has_ctn, arg->found_child, arg->hook_data),
             cu);
@@ -162,8 +155,8 @@ static derr_t handle_each_mbx(const string_builder_t* base,
     for_each_mbx_arg_t *prev_arg = userdata;
     prev_arg->found_child = true;
 
-    string_builder_t path = sb_append(base, FD(file));
-    string_builder_t name = sb_append(prev_arg->name, FD(file));
+    string_builder_t path = sb_append(base, SBD(*file));
+    string_builder_t name = sb_append(prev_arg->name, SBD(*file));
 
     for_each_mbx_arg_t arg = {
         .hook = prev_arg->hook,
@@ -195,7 +188,7 @@ derr_t dirmgr_do_for_each_mbx(dirmgr_t *dm, const dstr_t *ref_name,
         .name = NULL,
     };
 
-    string_builder_t path = sb_append(&dm->path, FD(ref_name));
+    string_builder_t path = sb_append(&dm->path, SBD(*ref_name));
 
     PROP(&e, for_each_file_in_dir(&path, handle_each_mbx, &arg) );
 
@@ -229,7 +222,7 @@ derr_t dirmgr_open_up(
     }
 
     // no existing imaildir in dirs, better open a new one
-    PROP(&e, managed_dir_new(&mgd, dm, name) );
+    PROP(&e, managed_dir_new(&mgd, dm, *name) );
 
     PROP_GO(&e, up_init(up, &mgd->m, cb, exts), fail);
 
@@ -273,7 +266,7 @@ derr_t dirmgr_open_dn(
     }
 
     // no existing imaildir in dirs, better open a new one
-    PROP(&e, managed_dir_new(&mgd, dm, name) );
+    PROP(&e, managed_dir_new(&mgd, dm, *name) );
 
     PROP_GO(&e, dn_init(dn, &mgd->m, cb, exts, examine), fail);
 
@@ -390,7 +383,7 @@ derr_t dirmgr_init(
     derr_t e = E_OK;
 
     // first, make sure we can prepare the filesystem how we like it
-    string_builder_t tmp_path = sb_append(&path, FS("tmp"));
+    string_builder_t tmp_path = sb_append(&path, SBS("tmp"));
     PROP(&e, mkdirs_path(&tmp_path, 0700) );
     PROP(&e, empty_dir(&tmp_path) );
 
@@ -457,7 +450,7 @@ static derr_t _prune_empty_dirs(
 ){
     derr_t e = E_OK;
     bool *parent_nonempty = arg;
-    string_builder_t path = sb_append(base, FD(name));
+    string_builder_t path = sb_append(base, SBD(*name));
 
     if(!isdir){
         // parent is not empty
@@ -476,7 +469,7 @@ static derr_t _prune_empty_dirs(
 
     // but if we're looking at the parent directory of ctn, handle ctn here
     bool has_tmp = false;
-    string_builder_t tmppath = sb_append(&path, FD(&tmp));
+    string_builder_t tmppath = sb_append(&path, SBD(tmp));
     PROP(&e, exists_path(&tmppath, &has_tmp) );
     if(has_tmp){
         PROP(&e, empty_dir(&tmppath) );
@@ -484,7 +477,7 @@ static derr_t _prune_empty_dirs(
 
     bool has_cur = false;
     bool cur_empty = true;
-    string_builder_t curpath = sb_append(&path, FD(&cur));
+    string_builder_t curpath = sb_append(&path, SBD(cur));
     PROP(&e, exists_path(&curpath, &has_cur) );
     if(has_cur){
         PROP(&e, dir_is_empty(&curpath, &cur_empty) );
@@ -493,7 +486,7 @@ static derr_t _prune_empty_dirs(
 
     bool has_new = false;
     bool new_empty = true;
-    string_builder_t newpath = sb_append(&path, FD(&new));
+    string_builder_t newpath = sb_append(&path, SBD(new));
     PROP(&e, exists_path(&newpath, &has_new) );
     if(has_new){
         PROP(&e, dir_is_empty(&newpath, &new_empty) );
@@ -536,7 +529,7 @@ void prune_empty_dirs(const string_builder_t *path){
     return;
 
 warn:
-    TRACE(&e, "failed to prune maildir: %x\n", FSB(path, &DSTR_LIT("/")));
+    TRACE(&e, "failed to prune maildir: %x\n", FSB(*path));
     DUMP(e);
     DROP_VAR(&e);
     return;
@@ -548,7 +541,7 @@ void dirmgr_free(dirmgr_t *dm){
     dm->initialized = false;
 
     // clean up any temporary files
-    string_builder_t tmp_path = sb_append(&dm->path, FS("tmp"));
+    string_builder_t tmp_path = sb_append(&dm->path, SBS("tmp"));
     DROP_CMD( empty_dir(&tmp_path) );
 
     prune_empty_dirs(&dm->path);
@@ -634,7 +627,7 @@ derr_t dirmgr_hold_get_imaildir(dirmgr_hold_t *hold, imaildir_t **out){
     }
 
     // make sure it exists on the filesystem
-    string_builder_t dir_path = sb_append(&dm->path, FD(&hold->name));
+    string_builder_t dir_path = sb_append(&dm->path, SBD(hold->name));
     PROP(&e, mkdirs_path(&dir_path, 0777) );
 
     // also ensure ctn exist
@@ -682,7 +675,7 @@ derr_t dirmgr_freeze_new(
     hash_elem_t *h = hashmap_gets(&dm->freezes, name);
     if(h != NULL){
         ORIG(&e,
-            E_BUSY, "mailbox \"%x\" is frozen by another thread", FD_DBG(name)
+            E_BUSY, "mailbox \"%x\" is frozen by another thread", FD_DBG(*name)
         );
         return e;
     }
@@ -732,11 +725,11 @@ derr_t dirmgr_delete(dirmgr_t *dm, dirmgr_freeze_t *freeze){
         ORIG(&e,
             E_INTERNAL,
             "invalid name (%x) in dirmgr_delete",
-            FD_DBG(&freeze->name)
+            FD_DBG(freeze->name)
         );
 
 
-    string_builder_t dir_path = sb_append(&dm->path, FD(&freeze->name));
+    string_builder_t dir_path = sb_append(&dm->path, SBD(freeze->name));
     bool exists;
     PROP(&e, exists_path(&dir_path, &exists) );
     if(exists){
@@ -754,17 +747,17 @@ derr_t dirmgr_rename(dirmgr_t *dm, dirmgr_freeze_t *src, dirmgr_freeze_t *dst){
         ORIG(&e,
             E_INTERNAL,
             "invalid src name (%x) in dirmgr_rename",
-            FD_DBG(&src->name)
+            FD_DBG(src->name)
         );
     if(!dirmgr_name_valid(&dst->name))
         ORIG(&e,
             E_INTERNAL,
             "invalid dst name (%x) in dirmgr_rename",
-            FD_DBG(&dst->name)
+            FD_DBG(dst->name)
         );
 
-    string_builder_t src_path = sb_append(&dm->path, FD(&src->name));
-    string_builder_t dst_path = sb_append(&dm->path, FD(&dst->name));
+    string_builder_t src_path = sb_append(&dm->path, SBD(src->name));
+    string_builder_t dst_path = sb_append(&dm->path, SBD(dst->name));
 
     // delete dst_path
     bool exists;
@@ -807,7 +800,7 @@ derr_t dirmgr_process_status_resp(
         // make sure it exists on the filesystem
         /* we know it's a valid folder since the server sent us a STATUS
            response for this folder, so it's ok to create a mailbox here */
-        string_builder_t dir_path = sb_append(&dm->path, FD(name));
+        string_builder_t dir_path = sb_append(&dm->path, SBD(*name));
         PROP_GO(&e, mkdirs_path(&dir_path, 0777), cu);
 
         // also ensure ctn exist

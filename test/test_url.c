@@ -200,7 +200,7 @@ static bool dstr_off_eq(const dstr_off_t a, const dstr_off_t b){
 }
 
 // writes one extra character at the start and one extra at the end
-static dstr_t *write_offset(dstr_t *buf, const dstr_off_t off, char c){
+static dstr_t write_offset(dstr_t *buf, const dstr_off_t off, char c){
     buf->len = 0;
     for(size_t i = 0; i < off.start; i++){
         dstr_append_quiet(buf, &DSTR_LIT(" "));
@@ -212,11 +212,11 @@ static dstr_t *write_offset(dstr_t *buf, const dstr_off_t off, char c){
         dstr_append_quiet(buf, &dc);
     }
     dstr_append_quiet(buf, &DSTR_LIT("|"));
-    return buf;
+    return *buf;
 }
 
 static bool do_off_cmp(
-    const dstr_t *url, const char *name, dstr_off_t exp, dstr_off_t got, char c
+    const dstr_t url, const char *name, dstr_off_t exp, dstr_off_t got, char c
 ){
     if(got.buf == NULL){
         LOG_ERROR("%x was never when parsing: %x\n", FS(name), FD(url));
@@ -248,11 +248,11 @@ static bool do_test_case(parse_f parser, char *c_url, char *c_exp){
     DSTR_VAR(errbuf, 512);
     ok = parser(&d_url, &got, &errbuf);
     if(!ok){
-        LOG_ERROR("failed to parse url: %x\n%x\n", FS(c_url), FD(&errbuf));
+        LOG_ERROR("failed to parse url: %x\n%x\n", FS(c_url), FD(errbuf));
         return false;
     }
 
-    #define OFF_CMP(name, c) do_off_cmp(&d_url, #name, exp.name, got.name, c)
+    #define OFF_CMP(name, c) do_off_cmp(d_url, #name, exp.name, got.name, c)
 
     ok &= OFF_CMP(scheme, 's');
     ok &= OFF_CMP(user, 'U');
@@ -286,8 +286,8 @@ static bool do_failure_case(parse_f parser, char *c_url, char *c_exp){
     if(dstr_cmp2(errbuf, exp) != 0){
         LOG_ERROR(
             "-- failure case failed, expected:\n%x\n-- but got:\n%x\n",
-            FD(&exp),
-            FD(&errbuf)
+            FD(exp),
+            FD(errbuf)
         );
         return false;
     }
@@ -520,12 +520,12 @@ static bool do_addrspec_test_case(char *c_spec, char *c_exp){
     ok = parse_addrspec_ex(&d_spec, &got, &errbuf);
     if(!ok){
         LOG_ERROR(
-            "failed to parse addrspec: %x\n%x\n", FS(c_spec), FD(&errbuf)
+            "failed to parse addrspec: %x\n%x\n", FS(c_spec), FD(errbuf)
         );
         return false;
     }
 
-    #define OFF_CMP(name, c) do_off_cmp(&d_spec, #name, exp.name, got.name, c)
+    #define OFF_CMP(name, c) do_off_cmp(d_spec, #name, exp.name, got.name, c)
 
     ok &= OFF_CMP(scheme, 's');
     ok &= OFF_CMP(host, 'h');

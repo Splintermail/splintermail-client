@@ -30,10 +30,10 @@ static void http_close_cb(duv_http_t *http){
 static void hdr_cb(duv_http_req_t *req, const http_pair_t hdr){
     if(!have_status){
         have_status = true;
-        LOG_INFO("HTTP/1.1 %x %x\n", FI(req->status), FD(&req->reason));
+        LOG_INFO("HTTP/1.1 %x %x\n", FI(req->status), FD(req->reason));
         status_code = req->status;
     }
-    LOG_INFO("%x: %x\n", FD(&hdr.key), FD(&hdr.value));
+    LOG_INFO("%x: %x\n", FD(hdr.key), FD(hdr.value));
 }
 
 static derr_t post_process(void){
@@ -72,10 +72,10 @@ static derr_t post_process(void){
 
     // now print the final output
     PROP(&e,
-        FFMT(stdout, NULL,
+        FFMT(stdout,
             "{\"eab_kid\":\"%x\",\"eab_hmac_key\":\"%x\"}\n",
-            FD_JSON(&kid),
-            FD_JSON(&hmac_key)
+            FD_JSON(kid),
+            FD_JSON(hmac_key)
         )
     );
 
@@ -84,7 +84,7 @@ static derr_t post_process(void){
 
 static void done_cb(stream_reader_t *r, derr_t e){
     (void)r;
-    LOG_INFO("\n%x\n", FD(&rbuf));
+    LOG_INFO("\n%x\n", FD(rbuf));
     if(is_error(e)){
         PROP_VAR_GO(&E, &e, done);
     }

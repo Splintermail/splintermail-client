@@ -7,9 +7,6 @@
 #include "api_client.h"
 
 
-static dstr_t slash = {.data = "/", .len = 1, .fixed_size = true, .size = 1};
-
-
 void api_token_init(api_token_t* token){
     // wrap the buffer with the dstr
     DSTR_WRAP_ARRAY(token->secret, token->secret_buffer);
@@ -66,7 +63,7 @@ derr_t api_token_read_path(const string_builder_t *sb, api_token_t* token){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, api_token_read(path->data, token), cu);
 
@@ -80,17 +77,17 @@ derr_t api_token_write(const char* path, api_token_t* token){
     // open the file for writing (with the new nonce)
     FILE* f = compat_fopen(path, "w");
     if(!f){
-        LOG_ERROR("%x: %x\n", FS(path), FE(&errno));
+        LOG_ERROR("%x: %x\n", FS(path), FE(errno));
         ORIG(&e, errno == ENOMEM ? E_NOMEM : E_FS,
                 "unable to open API credentials for reading");
     }
 
     // write the json to the file
-    PROP_GO(&e, FFMT(f, NULL, "{ \"token\"  : %x,\n"
+    PROP_GO(&e, FFMT(f, "{ \"token\"  : %x,\n"
                               "  \"secret\" : \"%x\",\n"
                               "  \"nonce\"  : %x }\n",
                               FU(token->key),
-                              FD(&token->secret),
+                              FD(token->secret),
                               FU(token->nonce)), cu);
 cu:
     fclose(f);
@@ -102,7 +99,7 @@ derr_t api_token_write_path(const string_builder_t *sb, api_token_t* token){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, api_token_write(path->data, token), cu);
 
@@ -138,10 +135,13 @@ static derr_t native_api_call(const char* host, unsigned int port,
 
     // send the POST request
     DSTR_VAR(req, 4096);
-    derr_t e2 = FMT(&req, "POST /api/%x HTTP/1.0\r\n"
-                          "%x"
-                          "Content-Length: %x\r\n"
-                          "\r\n", FD(command), FD(headers), FU(req_body->len));
+    derr_t e2 = FMT(&req,
+        "POST /api/%x HTTP/1.0\r\n"
+        "%x"
+        "Content-Length: %x\r\n"
+        "\r\n",
+        FD(*command), FD(*headers), FU(req_body->len)
+    );
     CATCH(e2, E_FIXEDSIZE){
         LOG_ERROR("command or headers are too long\n");
         RETHROW_GO(&e, &e2, E_PARAM, cleanup_2);
@@ -256,9 +256,12 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
     // first build json string out of the command and arg
     DSTR_VAR(body, 4096);
     if(arg){
-        e2 = FMT(&body, "{\"path\":\"/api/%x\", \"arg\":\"%x\"}", FD(command), FD_DBG(arg));
+        e2 = FMT(&body,
+            "{\"path\":\"/api/%x\", \"arg\":\"%x\"}",
+            FD(*command), FD_DBG(*arg)
+        );
     }else{
-        e2 = FMT(&body, "{\"path\":\"/api/%x\", \"arg\":null}", FD(command));
+        e2 = FMT(&body, "{\"path\":\"/api/%x\", \"arg\":null}", FD(*command));
     }
     CATCH(e2, E_FIXEDSIZE){
         LOG_ERROR("arg or command too long\n");
@@ -274,7 +277,7 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
 
     // build the authorization
     DSTR_VAR(user_pass, 256);
-    e2 = FMT(&user_pass, "%x:%x", FD(username), FD(password));
+    e2 = FMT(&user_pass, "%x:%x", FD(*username), FD(*password));
     CATCH(e2, E_FIXEDSIZE){
         LOG_ERROR("username or password too long\n");
         RETHROW(&e, &e2, E_INTERNAL);
@@ -285,7 +288,7 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
 
     DSTR_VAR(headers, 512);
     NOFAIL(&e, E_FIXEDSIZE,
-            FMT(&headers, "Authorization: Basic %x\r\n", FD(&up_b64)) );
+            FMT(&headers, "Authorization: Basic %x\r\n", FD(up_b64)) );
 
     // make the API request
     PROP(&e, native_api_call(host, port, command, &payload, &headers,
@@ -304,10 +307,10 @@ derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
     DSTR_VAR(body, 4096);
     if(arg){
         e2 = FMT(&body, "{\"path\":\"/api/%x\", \"arg\":\"%x\", \"nonce\":%x}",
-                           FD(command), FD_DBG(arg), FU(token->nonce));
+                           FD(*command), FD_DBG(*arg), FU(token->nonce));
     }else{
         e2 = FMT(&body, "{\"path\":\"/api/%x\", \"arg\":null, \"nonce\":%x}",
-                           FD(command), FU(token->nonce));
+                           FD(*command), FU(token->nonce));
     }
     CATCH(e2, E_FIXEDSIZE){
         LOG_ERROR("arg or command too long\n");
@@ -326,7 +329,7 @@ derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
     DSTR_VAR(hexsig, 256);
     // token->secret shouldn't be too long, signature shouldn't be too short
     NOFAIL(&e, ERROR_GROUP(E_PARAM, E_FIXEDSIZE),
-            hmac(&token->secret, &payload, &signature) );
+            hmac(token->secret, payload, &signature) );
 
     // convert signature to hex
     NOFAIL(&e, E_FIXEDSIZE, bin2hex(&signature, &hexsig) );
@@ -338,15 +341,15 @@ derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
 
     DSTR_VAR(signature_header, 512);
     NOFAIL(&e, E_FIXEDSIZE,
-            FMT(&signature_header, "X-AUTH-SIGNATURE: %x", FD(&hexsig)) );
+            FMT(&signature_header, "X-AUTH-SIGNATURE: %x", FD(hexsig)) );
 
     // use native http requests
     DSTR_VAR(headers, 1024);
-    NOFAIL(&e, E_FIXEDSIZE, FMT(&headers, "%x\r\n%x\r\n", FD(&key_header),
-                FD(&signature_header) ));
-    // PFMT("payload %x\n", FD(&payload));
-    // PFMT("headers %x\n", FD(&headers));
-    // PFMT("command %x\n", FD(command));
+    NOFAIL(&e, E_FIXEDSIZE, FMT(&headers, "%x\r\n%x\r\n", FD(key_header),
+                FD(signature_header) ));
+    // PFMT("payload %x\n", FD(payload));
+    // PFMT("headers %x\n", FD(headers));
+    // PFMT("command %x\n", FD(*command));
     PROP(&e, native_api_call(host, port, command, &payload, &headers,
                           code, reason, recv, json) );
 
@@ -388,7 +391,7 @@ derr_t register_api_token(
             E_RESPONSE,
             "API server responded with a non-200 HTTP code: %x %x",
             FI(code),
-            FD(&reason)
+            FD(reason)
         );
     }
 
@@ -405,7 +408,7 @@ derr_t register_api_token(
     DSTR_VAR(errbuf, 1024);
     PROP(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf) );
     if(!ok){
-        TRACE(&e, "%x", FD(&errbuf));
+        TRACE(&e, "%x", FD(errbuf));
         ORIG(&e, E_RESPONSE, "invalid api token response");
     }
 
@@ -417,7 +420,7 @@ derr_t register_api_token(
             if(is_error(e2)){
                 DROP_VAR(&e2);
             }else if(ok){
-                TRACE(&e, "server said: %x\n", FD(&dcontents));
+                TRACE(&e, "server said: %x\n", FD(dcontents));
             }
         }
         ORIG(&e, E_RESPONSE, "api call failed");
@@ -432,7 +435,7 @@ derr_t register_api_token(
     );
     PROP(&e, jspec_read_ex(jspec, jcontents, &ok, &errbuf) );
     if(!ok){
-        TRACE(&e, "%x", FD(&errbuf));
+        TRACE(&e, "%x", FD(errbuf));
         ORIG(&e, E_RESPONSE, "invalid server response");
     }
 
@@ -457,7 +460,7 @@ derr_t register_api_token_path(
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, register_api_token(host, port, user, pass, path->data), cu);
 

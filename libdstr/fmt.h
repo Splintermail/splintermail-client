@@ -15,12 +15,6 @@ struct writer_i {
     writer_t *w;
 };
 
-// each of these locks, writes, and unlocks
-derr_type_t wputc_quiet(writer_i *iface, char c);
-derr_type_t wputsn_quiet(writer_i *iface, const char *s, size_t n);
-derr_type_t wputs_quiet(writer_i *iface, const char *s);
-derr_type_t wputd_quiet(writer_i *iface, dstr_t s);
-
 // predefined writers
 extern writer_t _writer_dstr;
 extern writer_t _writer_file;
@@ -46,40 +40,61 @@ struct fmt_i {
     derr_type_t (*fmt)(const fmt_i *iface, writer_i *out);
 };
 
-derr_type_t _fmt2_quiet(
+derr_type_t _fmt_unlocked(
     writer_i *iface, const char *fstr, const fmt_i **args, size_t nargs
 );
 
-derr_t _fmt2(
+derr_type_t _fmt_quiet(
     writer_i *iface, const char *fstr, const fmt_i **args, size_t nargs
 );
 
-#define FMT2(out, fstr, ...) \
-    _fmt2(WD(out), \
+derr_t _fmt(
+    writer_i *iface, const char *fstr, const fmt_i **args, size_t nargs
+);
+
+/* since WFMT_UNLOCKED is mostly useful to implement other fmt_i's, it takes
+   a bare writer_i* */
+#define FMT_UNLOCKED(out, fstr, ...) \
+    _fmt_unlocked(out, \
         fstr, \
         &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
-        sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i) - 1 \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i*) - 1 \
     )
 
-#define FMT2_QUIET(out, fstr, ...) \
-    _fmt2_quiet(WD(out), \
+#define FMT(out, fstr, ...) \
+    _fmt(WD(out), \
         fstr, \
         &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
-        sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i) - 1 \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i*) - 1 \
     )
 
-#define FFMT2(out, fstr, ...) \
-    _fmt2(WF(out), \
+#define FMT_QUIET(out, fstr, ...) \
+    _fmt_quiet(WD(out), \
         fstr, \
         &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
-        sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i) - 1 \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i*) - 1 \
     )
 
-#define FFMT2_QUIET(out, fstr, ...) \
-    _fmt2_quiet(WF(out), \
+#define FFMT(out, fstr, ...) \
+    _fmt(WF(out), \
         fstr, \
         &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
-        sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i) - 1 \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i*) - 1 \
+    )
+
+#define FFMT_QUIET(out, fstr, ...) \
+    _fmt_quiet(WF(out), \
+        fstr, \
+        &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i*) - 1 \
+    )
+
+// printf equivalent, always _quiet
+#define PFMT(fstr, ...) \
+    _fmt_quiet(WF(stdout), \
+        fstr, \
+        &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i*) - 1 \
     )
 
 // basic fmt_i implementations
@@ -101,7 +116,7 @@ typedef struct {
 
 typedef struct {
     fmt_i iface;
-    void *p;
+    const void *p;
 } _fmt_ptr_t;
 
 typedef struct {
@@ -127,12 +142,6 @@ typedef struct {
 
 typedef struct {
     fmt_i iface;
-    string_builder_t sb;
-    dstr_t joiner;
-} _fmt_sb_t;
-
-typedef struct {
-    fmt_i iface;
     int err;
 } _fmt_errno_t;
 
@@ -148,21 +157,20 @@ derr_type_t _fmt_cstrn(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_dstr(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_dstr_dbg(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_dstr_hex(const fmt_i *iface, writer_i *out);
-derr_type_t _fmt_sb(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_errno(const fmt_i *iface, writer_i *out);
 
-#define F2B(b) (&(_fmt_i){ (b) ? _fmt_true : _fmt_false })
-#define F2I(i) (&((_fmt_int_t){ {_fmt_int}, i }.iface))
-#define F2U(u) (&((_fmt_uint_t){ {_fmt_uint}, u }.iface))
-#define F2F(f) (&((_fmt_float_t){ {_fmt_float}, f }.iface))
-#define F2P(p) (&((_fmt_ptr_t){ {_fmt_ptr}, p }.iface))
-#define F2C(f) (&((_fmt_char_t){ {_fmt_char}, c }.iface))
-#define F2S(s) (&((_fmt_cstr_t){ {_fmt_cstr}, s }.iface))
-#define F2SN(s,n) (&((_fmt_cstrn_t){ {_fmt_cstrn}, s, n }.iface))
-#define F2D(d) (&((_fmt_dstr_t){ {_fmt_dstr}, d }.iface))
-#define F2D_DBG(d) (&((_fmt_dstr_t){ {_fmt_dstr_dbg}, d }.iface))
-#define F2X(d) (&((_fmt_dstr_t){ {_fmt_dstr_hex}, d }.iface))
-#define F2SB(sb) (&((_fmt_sb_t){ {_fmt_sb}, sb, DSTR_LIT("/")).iface)
-#define F2SB_EX(sb, joiner) (&((_fmt_sb_t){ {_fmt_sb}, sb, joiner).iface)
-#define F2E(e) (&((_fmt_errno_t){ {_fmt_errno}, e }.iface))
+#define FB(b) (&(fmt_i){ (b) ? _fmt_true : _fmt_false })
+#define FI(i) (&(_fmt_int_t){ {_fmt_int}, i }.iface)
+#define FU(u) (&(_fmt_uint_t){ {_fmt_uint}, u }.iface)
+#define FF(f) (&(_fmt_float_t){ {_fmt_float}, f }.iface)
+#define FP(p) (&(_fmt_ptr_t){ {_fmt_ptr}, p }.iface)
+#define FC(c) (&(_fmt_char_t){ {_fmt_char}, c }.iface)
+#define FS(s) (&(_fmt_cstr_t){ {_fmt_cstr}, s }.iface)
+#define FSN(s,n) (&(_fmt_cstrn_t){ {_fmt_cstrn}, s, n }.iface)
+#define FD(d) (&(_fmt_dstr_t){ {_fmt_dstr}, d }.iface)
+#define FD_DBG(d) (&(_fmt_dstr_t){ {_fmt_dstr_dbg}, d }.iface)
+#define FX(d) (&(_fmt_dstr_t){ {_fmt_dstr_hex}, d }.iface)
+#define FE(e) (&(_fmt_errno_t){ {_fmt_errno}, e }.iface)
 
+// for use by other fmt extensions
+derr_type_t fmt_dstr_dbg(dstr_t d, writer_i *out);

@@ -107,7 +107,7 @@ static derr_t test_ed25519(void){
             ),
         cu);
 
-        EXPECT_D3_GO(&e, "acme_jws", &jwsbuf, &acme_exp, cu);
+        EXPECT_D3_GO(&e, "acme_jws", jwsbuf, acme_exp, cu);
     }
 
     {
@@ -121,7 +121,7 @@ static derr_t test_ed25519(void){
 
         PROP_GO(&e, jws(protected, payload, SIGN_KEY(k), &jwsbuf), cu);
 
-        EXPECT_D3_GO(&e, "jws", &jwsbuf, &acme_exp, cu);
+        EXPECT_D3_GO(&e, "jws", jwsbuf, acme_exp, cu);
     }
 
 cu:
@@ -161,7 +161,7 @@ static derr_t test_es256(void){
 
     // can write the key back to match the input
     jwk_out = dstr_strip_chars(jwk_out, '\n');
-    EXPECT_DM_GO(&e, "jwk_out", &jwk_out, &jwk_in, cu);
+    EXPECT_DM_GO(&e, "jwk_out", jwk_out, jwk_in, cu);
 
     // es256 signatures are not deterministic, so test vectors won't work
 
@@ -259,7 +259,7 @@ static derr_t test_hs256(void){
 
     PROP(&e, jws(protected, payload, SIGN_HS256(&hmac_secret), &jwsbuf) );
 
-    EXPECT_D3(&e, "hs256-jws", &jwsbuf, &hs256_exp);
+    EXPECT_D3(&e, "hs256-jws", jwsbuf, hs256_exp);
 
     return e;
 }

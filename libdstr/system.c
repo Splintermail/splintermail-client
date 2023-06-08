@@ -30,7 +30,7 @@ dstr_t dgetenv(const dstr_t varname, bool *found){
         // validate the split
         if(len != 2){
             LOG_ERROR(
-                "ignoring invalid environment variable: %x\n", FD(&envvar)
+                "ignoring invalid environment variable: %x\n", FD(envvar)
             );
             continue;
         }
@@ -64,11 +64,11 @@ derr_t dsetenv(const dstr_t name, const dstr_t value){
         buf = &heap;
     }
 
-    PROP_GO(&e, FMT(buf, "%x=%x", FD(&name), FD(&value)), cu);
+    PROP_GO(&e, FMT(buf, "%x=%x", FD(name), FD(value)), cu);
 
     int ret = _putenv(buf->data);
     if(ret){
-        TRACE(&e, "putenv(\"%x=...\"): %x\n", FD_DBG(&name), FE(&errno));
+        TRACE(&e, "putenv(\"%x=...\"): %x\n", FD_DBG(name), FE(errno));
         ORIG_GO(&e, E_OS, "putenv failed", cu);
     }
 
@@ -122,7 +122,7 @@ cu:
     // always overwrite
     int ret = setenv(n, v, 1);
     if(ret){
-        TRACE(&e, "setenv(%x, ...): %x\n", FD_DBG(&name), FE(&errno));
+        TRACE(&e, "setenv(%x, ...): %x\n", FD_DBG(name), FE(errno));
         ORIG_GO(&e, E_OS, "setenv failed", cu);
     }
 
@@ -153,11 +153,11 @@ derr_t dunsetenv(const dstr_t name){
         buf = &heap;
     }
 
-    PROP_GO(&e, FMT(buf, "%x=", FD(&name)), cu);
+    PROP_GO(&e, FMT(buf, "%x=", FD(name)), cu);
 
     int ret = _putenv(buf->data);
     if(ret){
-        TRACE(&e, "putenv(\"%x=\"): %x\n", FD_DBG(&name), FE(&errno));
+        TRACE(&e, "putenv(\"%x=\"): %x\n", FD_DBG(name), FE(errno));
         ORIG_GO(&e, E_OS, "putenv failed", cu);
     }
 
@@ -194,7 +194,7 @@ cu:
     // always overwrite
     int ret = unsetenv(n);
     if(ret){
-        TRACE(&e, "unsetenv(%x): %x\n", FD_DBG(&name), FE(&errno));
+        TRACE(&e, "unsetenv(%x): %x\n", FD_DBG(name), FE(errno));
         ORIG_GO(&e, E_OS, "setenv failed", cu);
     }
 
@@ -211,7 +211,7 @@ derr_t dtime(time_t *out){
     errno = 0;
     time_t ret = time(out);
     if(errno || ret == ((time_t)-1)){
-        TRACE(&e, "time(): %x\n", FE(&errno));
+        TRACE(&e, "time(): %x\n", FE(errno));
         ORIG(&e, E_OS, "time() failed");
     }
 
@@ -239,7 +239,7 @@ derr_t dtimezone(long int *tz){
     int ret = _get_timezone(tz);
     if(ret != 0){
         // I see no docs at all about what error_t means
-        TRACE(&e, "_get_timezone: %x\n", FE(&errno));
+        TRACE(&e, "_get_timezone: %x\n", FE(errno));
         ORIG(&e, E_OS, "_get_timezone failed");
     }
     return e;
@@ -253,7 +253,7 @@ derr_t dlocaltime(time_t t, struct tm *tm){
     _ensure_tzset();
     struct tm *tret = localtime_r(&t, tm);
     if(tret == NULL){
-        TRACE(&e, "localtime_r(%x): %x\n", FI(t), FE(&errno));
+        TRACE(&e, "localtime_r(%x): %x\n", FI(t), FE(errno));
         ORIG(&e, E_OS, "localtime_r failed");
     }
     return e;
@@ -262,7 +262,7 @@ derr_t dlocaltime(time_t t, struct tm *tm){
     _ensure_tzset();
     int ret = localtime_s(tm, &t);
     if(ret){
-        TRACE(&e, "localtime_s(%x): %x\n", FI(t), FE(&ret));
+        TRACE(&e, "localtime_s(%x): %x\n", FI(t), FE(ret));
         ORIG(&e, E_OS, "localtime_s failed");
     }
     return e;
@@ -278,7 +278,7 @@ derr_t dthread_create(dthread_t *thread, void *(*fn)(void*), void *arg){
 
     int ret = pthread_create(thread, NULL, fn, arg);
     if(ret != 0){
-        TRACE(&e, "pthread_create: %x\n", FE(&errno));
+        TRACE(&e, "pthread_create: %x\n", FE(errno));
         ORIG(&e, E_OS, "pthread_create failed");
     }
 
@@ -295,7 +295,7 @@ derr_t dmutex_init(dmutex_t *mutex){
     derr_t e = E_OK;
     int ret = pthread_mutex_init(mutex, NULL);
     if(ret){
-        TRACE(&e, "pthread_mutex_init: %x\n", FE(&errno));
+        TRACE(&e, "pthread_mutex_init: %x\n", FE(errno));
         ORIG(&e,
             errno == ENOMEM ? E_NOMEM : E_OS, "pthread_mutex_init failed"
         );
@@ -320,7 +320,7 @@ derr_t dcond_init(dcond_t *cond){
     derr_t e = E_OK;
     int ret = pthread_cond_init(cond, NULL);
     if(ret){
-        TRACE(&e, "pthread_cond_init: %x\n", FE(&errno));
+        TRACE(&e, "pthread_cond_init: %x\n", FE(errno));
         ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OS, "pthread_cond_init failed");
     }
     return e;
@@ -413,7 +413,7 @@ derr_t dthread_create(dthread_t *thread, void *(*fn)(void*), void *arg){
 
     uintptr_t uret = _beginthread(exec_pthread_fn, 0, thread);
     if(uret == (uintptr_t)-1){
-        TRACE(&e, "_beginthread: %x\n", FE(&errno));
+        TRACE(&e, "_beginthread: %x\n", FE(errno));
         ORIG_GO(&e, E_OS, "_beginthread failed", fail_cond);
     }
     thread->h = (HANDLE)uret;
@@ -468,7 +468,7 @@ derr_t dpipe(int *read_fd, int *write_fd){
 
     int ret = pipe(pipefd);
     if(ret){
-        TRACE(&e, "pipe: %x\n", FE(&errno));
+        TRACE(&e, "pipe: %x\n", FE(errno));
         ORIG(&e, E_OS, "pipe failed");
     }
 
@@ -483,7 +483,7 @@ derr_t ddup2(int oldfd, int newfd){
 
     int ret = dup2(oldfd, newfd);
     if(ret < 0){
-        TRACE(&e, "dup2: %x\n", FE(&errno));
+        TRACE(&e, "dup2: %x\n", FE(errno));
         ORIG(&e, E_OS, "dup2 failed");
     }
 
@@ -497,7 +497,7 @@ derr_t dfork(pid_t *pid, bool *child){
     *pid = fork();
 
     if(*pid < 0){
-        TRACE(&e, "fork: %x\n", FE(&errno));
+        TRACE(&e, "fork: %x\n", FE(errno));
         ORIG(&e, E_OS, "fork failed");
     }
 
@@ -614,7 +614,7 @@ derr_t dkill(pid_t pid, int sig){
 
     int ret = kill(pid, sig);
     if(ret){
-        TRACE(&e, "kill(pid=%x, sig=%x): %x", FI(pid), FI(sig), FE(&errno));
+        TRACE(&e, "kill(pid=%x, sig=%x): %x", FI(pid), FI(sig), FE(errno));
         ORIG(&e, E_OS, "kill() failed");
     }
 
@@ -631,7 +631,7 @@ derr_t dwaitpid(pid_t pid, int *wstatus, int options){
 
     if(ret < 0){
         TRACE(&e,
-            "wait(pid=%x, options=%x): %x", FI(pid), FI(options), FE(&errno)
+            "wait(pid=%x, options=%x): %x", FI(pid), FI(options), FE(errno)
         );
         ORIG(&e, E_OS, "wait() failed");
     }
@@ -668,7 +668,7 @@ derr_t close_extra_fds(int starting_at){
     struct rlimit rl;
     int ret = getrlimit(RLIMIT_NOFILE, &rl);
     if(ret != 0){
-        TRACE(&e, "getrlimit(): %x\n", FE(&errno));
+        TRACE(&e, "getrlimit(): %x\n", FE(errno));
         ORIG(&e, E_OS, "getrlimit failed");
     }
 
@@ -701,7 +701,7 @@ derr_t _make_env(
     // validate inputs
     for(size_t i = 0; i < nvars; i++){
         if(_get_var(&vars[i]).len == 0){
-            TRACE(&e, "invalid environment variable: \"%x\"\n", FD(&vars[i]));
+            TRACE(&e, "invalid environment variable: \"%x\"\n", FD(vars[i]));
             ORIG(&e, E_PARAM, "invalid environment variable in make_env");
         }
     }
@@ -793,9 +793,8 @@ static derr_t which_hook(
     if(arg->found) return e;
 
     if(dstr_cmp(file, &arg->file) == 0){
-        string_builder_t sb = sb_append(base, FD(file));
-        PROP(&e, sb_to_dstr(&sb, &DSTR_LIT("/"), arg->out) );
-        PROP(&e, dstr_null_terminate(arg->out) );
+        string_builder_t sb = sb_append(base, SBD(*file));
+        PROP(&e, FMT(arg->out, "%x", FSB(sb)) );
         arg->found = true;
     }
 
@@ -828,7 +827,7 @@ static derr_t dwhich(const dstr_t file, dstr_t *out, bool *found){
 
         if(elem.len == 0) continue;
 
-        string_builder_t elem_path = SB(FD(&elem));
+        string_builder_t elem_path = SBD(elem);
         derr_t e2 = for_each_file_in_dir(&elem_path, which_hook, &arg);
         CATCH(e2, E_FS){
             // ignore filesystem errors
@@ -862,7 +861,7 @@ derr_t _dexec(
     bool found;
     PROP(&e, dwhich(file, &path, &found) );
     if(!found){
-        TRACE(&e, "%x not found on PATH\n", FD(&file));
+        TRACE(&e, "%x not found on PATH\n", FD(file));
         ORIG(&e, E_PARAM, "dexec(): file not found");
     }
 
@@ -887,7 +886,7 @@ derr_t _dexec(
     // this only returns on failure
     execve(path.data, argv, env);
 
-    TRACE(&e, "execve: %x\n", FE(&errno));
+    TRACE(&e, "execve: %x\n", FE(errno));
     ORIG_GO(&e, E_OS, "execve failed", fail);
 
 fail:
@@ -901,10 +900,10 @@ fail:
 void _after_child_proc(derr_t e){
     if(is_error(e)){
         DROP_CMD(
-            FFMT(stderr, NULL, "error trace (%x):\n", FD(error_to_dstr(e.type)))
+            FFMT(stderr, "error trace (%x):\n", FD(error_to_dstr(e.type)))
         );
         if(e.msg.len > 0){
-            DROP_CMD( FFMT(stderr, NULL, "%x", FD(&(e).msg)) );
+            DROP_CMD( FFMT(stderr, "%x", FD((e).msg)) );
         }
         DROP_VAR(&e);
         exit(1);

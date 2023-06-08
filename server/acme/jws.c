@@ -393,8 +393,8 @@ static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
                 "\"kty\":\"EC\","
                 "\"x\":\"%x\","
                 "\"y\":\"%x\"",
-            FB64URL(&xbuf),
-            FB64URL(&ybuf)
+            FB64URL(xbuf),
+            FB64URL(ybuf)
         ),
     cu);
 
@@ -405,7 +405,7 @@ static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
             ORIG(&e, E_INTERNAL, "dbuf too small!");
         }
         dbuf.len = (size_t)BN_bn2bin(d, (unsigned char*)dbuf.data);
-        PROP_GO(&e, FMT(out, ",\"d\":\"%x\"", FB64URL(&dbuf)), cu);
+        PROP_GO(&e, FMT(out, ",\"d\":\"%x\"", FB64URL(dbuf)), cu);
     }
 
     PROP_GO(&e, dstr_append(out, &DSTR_LIT("}")), cu);
@@ -625,14 +625,14 @@ static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
                 "\"kty\":\"EC\","
                 "\"x\":\"%x\","
                 "\"y\":\"%x\"",
-            FB64URL(&x),
-            FB64URL(&y)
+            FB64URL(x),
+            FB64URL(y)
         ),
     cu);
 
     if(pvt){
         // get the private key as a bignum
-        PROP_GO(&e, FMT(out, ",\"d\":\"%x\"", FB64URL(&d)), cu);
+        PROP_GO(&e, FMT(out, ",\"d\":\"%x\"", FB64URL(d)), cu);
     }
 
     PROP_GO(&e, dstr_append(out, &DSTR_LIT("}")), cu);
@@ -798,7 +798,7 @@ derr_t jwk_to_key(json_ptr_t jwk, key_i **out){
         ORIG(&e,
             E_PARAM,
             "only Ed25519 and ES256 keys are supported; got \"kty\": \"%x\"",
-            FD_DBG(&kty)
+            FD_DBG(kty)
         );
     }
     if(!have_crv) ORIG(&e, E_PARAM, "missing crv");
@@ -809,7 +809,7 @@ derr_t jwk_to_key(json_ptr_t jwk, key_i **out){
             ORIG(&e,
                 E_PARAM,
                 "only Ed25519 EdDSA curve is supported; got \"crv\": \"%x\"",
-                FD_DBG(&crv)
+                FD_DBG(crv)
             );
         }
         if(!have_x || !have_d){
@@ -822,7 +822,7 @@ derr_t jwk_to_key(json_ptr_t jwk, key_i **out){
             ORIG(&e,
                 E_PARAM,
                 "only P-256 ECDSA curve is supported; got \"crv\": \"%x\"",
-                FD_DBG(&crv)
+                FD_DBG(crv)
             );
         }
         if(!have_x || !have_y || !have_d){
@@ -943,8 +943,8 @@ derr_t jws(
                 "\"payload\":\"%x\","
                 "\"signature\":\"%x\""
             "}",
-            FB64URL(&payload),
-            FB64URL(&signature),
+            FB64URL(payload),
+            FB64URL(signature),
         )
     );
 
@@ -971,10 +971,10 @@ derr_t acme_jws(
                 "\"kid\":\"%x\","
                 "\"url\":\"%x\""
             "}",
-            FD(k->protected_params),
-            FD_JSON(&nonce),
-            FD_JSON(&kid),
-            FD_JSON(&url),
+            FD(*k->protected_params),
+            FD_JSON(nonce),
+            FD_JSON(kid),
+            FD_JSON(url),
         )
     );
 

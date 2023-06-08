@@ -52,19 +52,19 @@ static int same_as(const char* a, const char* b){
             ORIG(&e, E_VALUE, "wrong found"); \
         } \
         if(opt_a.val.data != NULL){ \
-            TRACE(&e, "opt_a.val: expected %x, got %x\n", FS(NULL), FD(&opt_a.val)); \
+            TRACE(&e, "opt_a.val: expected %x, got %x\n", FS(NULL), FD(opt_a.val)); \
             ORIG(&e, E_VALUE, "wrong option value"); \
         } \
         if(opt_b.val.data != NULL){ \
-            TRACE(&e, "opt_b.val: expected %x, got %x\n", FS(NULL), FD(&opt_b.val)); \
+            TRACE(&e, "opt_b.val: expected %x, got %x\n", FS(NULL), FD(opt_b.val)); \
             ORIG(&e, E_VALUE, "wrong option value"); \
         } \
         if(!same_as(vc, opt_c.val.data)){ \
-            TRACE(&e, "opt_c.val: expected %x, got %x\n", FS(vc), FD(&opt_c.val)); \
+            TRACE(&e, "opt_c.val: expected %x, got %x\n", FS(vc), FD(opt_c.val)); \
             ORIG(&e, E_VALUE, "wrong option value"); \
         } \
         if(!same_as(vd, opt_d.val.data)){ \
-            TRACE(&e, "opt_d.val: expected %x, got %x\n", FS(vd), FD(&opt_d.val)); \
+            TRACE(&e, "opt_d.val: expected %x, got %x\n", FS(vd), FD(opt_d.val)); \
             ORIG(&e, E_VALUE, "wrong option value"); \
         } \
     } \
@@ -191,7 +191,7 @@ static derr_t opt_dump(opt_spec_t **spec, size_t speclen, dstr_t *out){
         opt_spec_t *s = spec[i];
         if(!s->found) continue;
         if(s->val_req){
-            PROP(&e, FMT(out, "%x %x\n", FS(s->olong), FD(&s->val)) );
+            PROP(&e, FMT(out, "%x %x\n", FS(s->olong), FD(s->val)) );
         }else{
             PROP(&e, FMT(out, "%x\n", FS(s->olong)) );
         }
@@ -207,7 +207,7 @@ static derr_t opt_dump(opt_spec_t **spec, size_t speclen, dstr_t *out){
     int result = dstr_cmp(&exp, &out); \
     if(result != 0){ \
         TRACE(&e, "expected: %x\n" \
-                 "but got:  %x\n", FD(&exp), FD(&out)); \
+                 "but got:  %x\n", FD(exp), FD(out)); \
         ORIG(&e, E_VALUE, "test fail"); \
     } \
 } while(0)
@@ -268,7 +268,7 @@ static derr_t test_conf_parse(void){
             // we are expecting to puke on this input; do nothing
             DROP_VAR(&e2);
         }else{
-            TRACE(&e2, "conf parse should have puked on: %x\n", FD(&text));
+            TRACE(&e2, "conf parse should have puked on: %x\n", FD(text));
             RETHROW(&e, &e2, E_VALUE);
         }
     }
@@ -280,7 +280,7 @@ static derr_t test_conf_parse(void){
             // we are expecting to puke on this input; do nothing
             DROP_VAR(&e2);
         }else{
-            TRACE(&e2, "conf parse should have puked on: %x\n", FD(&text));
+            TRACE(&e2, "conf parse should have puked on: %x\n", FD(text));
             RETHROW(&e, &e2, E_VALUE);
         }
     }
@@ -292,7 +292,7 @@ static derr_t test_conf_parse(void){
             // we are expecting to puke on this input; do nothing
             DROP_VAR(&e2);
         }else{
-            TRACE(&e2, "conf parse should have puked on: %x\n", FD(&text));
+            TRACE(&e2, "conf parse should have puked on: %x\n", FD(text));
             RETHROW(&e, &e2, E_VALUE);
         }
     }

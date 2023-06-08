@@ -8,16 +8,16 @@ static derr_t test_prune_empty_dirs(void){
 
     DSTR_VAR(tmp, 4096);
     PROP(&e, mkdir_temp("test-dirmgr", &tmp) );
-    string_builder_t path = SB(FD(&tmp));
+    string_builder_t path = SBD(tmp);
 
     #define MKDIR(p) do { \
-        string_builder_t x = sb_append(&path, FS(p)); \
+        string_builder_t x = sb_append(&path, SBS(p)); \
         PROP_GO(&e, mkdirs_path(&x, 0700), cu); \
     } while(0)
     #define TOUCH(p, f) do { \
-        string_builder_t x = sb_append(&path, FS(p)); \
+        string_builder_t x = sb_append(&path, SBS(p)); \
         PROP_GO(&e, mkdirs_path(&x, 0700), cu); \
-        string_builder_t y = sb_append(&x, FS(f)); \
+        string_builder_t y = sb_append(&x, SBS(f)); \
         PROP_GO(&e, touch_path(&y), cu); \
     } while(0)
 
@@ -45,18 +45,18 @@ static derr_t test_prune_empty_dirs(void){
     MKDIR("mail/partialempty/cur");
     TOUCH("mail/partialnonempty/cur", "file");
 
-    string_builder_t mail = sb_append(&path, FS("mail"));
+    string_builder_t mail = sb_append(&path, SBS("mail"));
     prune_empty_dirs(&mail);
 
     #define HERE(p) do { \
-        string_builder_t x = sb_append(&path, FS(p)); \
+        string_builder_t x = sb_append(&path, SBS(p)); \
         bool ok; \
         PROP_GO(&e, exists_path(&x, &ok), cu); \
         EXPECT_B_GO(&e, p, ok, true, cu); \
     } while(0)
 
     #define GONE(p) do { \
-        string_builder_t x = sb_append(&path, FS(p)); \
+        string_builder_t x = sb_append(&path, SBS(p)); \
         bool ok; \
         PROP_GO(&e, exists_path(&x, &ok), cu); \
         EXPECT_B_GO(&e, p, ok, false, cu); \

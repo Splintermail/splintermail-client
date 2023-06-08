@@ -13,41 +13,41 @@ void log_flush(void);
 void auto_log_flush(bool val);
 // this ALWAYS return 0, for use in the CATCH macro
 int pvt_do_log(
-    log_level_t level, const char* fstr, const fmt_t* args, size_t nargs
+    log_level_t level, const char* fstr, const fmt_i** args, size_t nargs
 );
 SM_NORETURN(
-    void pvt_do_log_fatal(const char* fstr, const fmt_t* args, size_t nargs)
+    void pvt_do_log_fatal(const char* fstr, const fmt_i** args, size_t nargs)
 );
 #define LOG_AS(log_level, fstr, ...) \
     pvt_do_log(log_level, fstr, \
-             &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
+             &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+             sizeof((const fmt_i*[]){NULL, __VA_ARGS__}) / sizeof(fmt_i*) - 1)
 #define LOG_ERROR(fstr, ...) \
     pvt_do_log(LOG_LVL_ERROR, fstr, \
-             &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
+             &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+             sizeof((const fmt_i*[]){NULL, __VA_ARGS__}) / sizeof(fmt_i*) - 1)
 #define LOG_WARN(fstr, ...) \
     pvt_do_log(LOG_LVL_WARN, fstr, \
-             &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
+             &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+             sizeof((const fmt_i*[]){NULL, __VA_ARGS__}) / sizeof(fmt_i*) - 1)
 #define LOG_INFO(fstr, ...) \
     pvt_do_log(LOG_LVL_INFO, fstr, \
-             &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
+             &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+             sizeof((const fmt_i*[]){NULL, __VA_ARGS__}) / sizeof(fmt_i*) - 1)
 #define LOG_DEBUG(fstr, ...) \
     pvt_do_log(LOG_LVL_DEBUG, fstr, \
-             &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
+             &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+             sizeof((const fmt_i*[]){NULL, __VA_ARGS__}) / sizeof(fmt_i*) - 1)
 #define LOG_FATAL(fstr, ...) \
     pvt_do_log_fatal( \
         "FATAL ERROR in file %x: %x(), line %x: " fstr, \
-        (const fmt_t[]){ \
+        (const fmt_i*[]){ \
             FS(FILE_BASENAME), \
             FS(__func__), \
             FU(__LINE__), \
             __VA_ARGS__ \
         }, \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) + 2 \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__}) / sizeof(fmt_i*) + 2 \
     )
 
 #define FILE_LOC \
@@ -68,64 +68,40 @@ static inline void DROP_VAR(derr_t *error){
     dstr_free(&error->msg);
 }
 
-static inline void DUMP(derr_t e){
-    if(is_error(e)){
-        LOG_ERROR("error trace (%x):\n", FD(error_to_dstr(e.type)));
-        if(e.msg.len > 0){
-            LOG_ERROR("%x", FD(&(e).msg));
-        }
-    }
-}
-
+void DUMP(derr_t e);
 
 // TRACE() and friends are best-effort append-to-derr_t.msg functions
-static inline derr_type_t pvt_trace_quiet(
-        derr_t *e, const char* fstr, const fmt_t *args, size_t nargs){
-    derr_type_t type;
-    // if e is yet-unallocated, allocate it first
-    if(e->msg.data == NULL){
-        type = dstr_new_quiet(&e->msg, 1024);
-        if(type) return type;
-    }
-    // attempt to append to the trace
-    return pvt_fmt_quiet(&e->msg, fstr, args, nargs);
-}
+derr_type_t pvt_trace_quiet(
+    derr_t *e, const char* fstr, const fmt_i **args, size_t nargs
+);
 
 #define TRACE(e, fstr, ...) \
     pvt_trace_quiet((e), \
         fstr, \
-        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1 \
+        &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__}) / sizeof(fmt_i*) - 1 \
     )
 
 
 // ORIG() and friends set the derr_t.type and append to derr_t.msg
-
-static inline void pvt_orig(
+void pvt_orig(
     derr_t *e,
     derr_type_t code,
     const char *fstr,
-    const fmt_t *args,
+    const fmt_i **args,
     size_t nargs,
     const char *file,
     const char *func,
     int line
-){
-    e->type = code;
-    pvt_trace_quiet(e, fstr, args, nargs);
-    TRACE(e,
-        "originating %x from file %x: %x(), line %x\n",
-        FD(error_to_dstr(code)), FS(file), FS(func), FI(line)
-    );
-}
+);
 
 #define TRACE_ORIG(e, code, fstr, ...) \
     pvt_orig( \
         (e), \
         (code), \
         "ERROR: " fstr "\n", \
-        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1, \
+        &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__}) / sizeof(fmt_i*) - 1, \
         FILE_LOC \
     ) \
 
@@ -134,8 +110,8 @@ static inline void pvt_orig(
         (e), \
         (code), \
         "ERROR: " fstr "\n", \
-        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1, \
+        &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__}) / sizeof(fmt_i*) - 1, \
         FILE_LOC \
     ); \
     return *(e); \
@@ -148,8 +124,8 @@ static inline void pvt_orig(
         (e), \
         (code), \
         "ERROR: " fstr "\n", \
-        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1, \
+        &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__}) / sizeof(fmt_i*) - 1, \
         FILE_LOC \
     ); \
     goto label; \
@@ -370,44 +346,26 @@ static inline bool pvt_nofail(derr_t *e, derr_type_t mask, derr_t cmd,
    a pointer to a derr_t instead of a derr_t value, so that it set the variable
    to E_OK. */
 
-static inline void pvt_merge_cmd(derr_t *e, derr_t cmd, const char* message,
-        const char* file, const char* func, int line){
-    // prefer the old type
-    if(e->type == E_NONE){
-        e->type = cmd.type;
-    }
-    // if e has no message, just use the new one
-    if(e->msg.data == NULL){
-        e->msg = cmd.msg;
-        if(e->msg.data != NULL){
-            // if the new one is non-NULL, extend it with some context
-            TRACE(e, "merging %x from %x at file %x: %x(), line %x\n",
-                FD(error_to_dstr(cmd.type)), FS(message), FS(file),
-                FS(func), FI(line));
-        }
-
-    }else{
-        // otherwise, embed the new message into the old one
-        if(is_error(cmd) || cmd.msg.data != NULL){
-            // embed the new error trace with a message
-            TRACE(e, "merging %x from %x at file %x: %x(), line %x\n%x",
-                FD(error_to_dstr(cmd.type)), FS(message), FS(file),
-                FS(func), FI(line), FD(&cmd.msg));
-        }
-        // done with the old msg
-        dstr_free(&cmd.msg);
-    }
-}
+void pvt_merge_cmd(
+    derr_t *e,
+    derr_t cmd,
+    const char* message,
+    const char* file,
+    const char* func,
+    int line
+);
 #define MERGE_CMD(e, cmd, message) \
     pvt_merge_cmd((e), (cmd), (message), FILE_LOC)
 
 
-static inline void pvt_merge_var(derr_t *e, derr_t *var, const char* message,
-        const char* file, const char* func, int line){
-    pvt_merge_cmd(e, *var, message, file, func, line);
-    // pvt_merge_cmd will dstr_free() the msg but we need to erase the pointer
-    *var = E_OK;
-}
+void pvt_merge_var(
+    derr_t *e,
+    derr_t *var,
+    const char* message,
+    const char* file,
+    const char* func,
+    int line
+);
 #define MERGE_VAR(e, e2, message) \
     pvt_merge_var((e), (e2), (message), FILE_LOC)
 
@@ -415,41 +373,15 @@ static inline void pvt_merge_var(derr_t *e, derr_t *var, const char* message,
 /* SPLIT effectively duplicates an error object.  It is used in multi-threaded
    situations where a single error causes two different things to fail, such
    as a session and the entire loop. */
-static inline derr_t pvt_split(derr_t *orig, const char *file,
-        const char *func, int line){
-    // be smart if orig is not even an error
-    if(orig->type == E_NONE){
-        return E_OK;
-    }
-    // do TRACE before duplication
-    TRACE(orig, "splitting %x at file %x: %x(), line %x\n",
-        FD(error_to_dstr(orig->type)), FS(file), FS(func), FI(line));
-    // copy type and zero msg
-    derr_t out = {.type = orig->type, .msg = (dstr_t){0}};
-    // duplicate message (best effort)
-    dstr_append_quiet(&out.msg, &orig->msg);
-    return out;
-}
+derr_t pvt_split(derr_t *orig, const char *file, const char *func, int line);
 #define SPLIT(e) pvt_split(&(e), FILE_LOC)
 
 /* BROADCAST duplicates an error object, like SPLIT, except with a different
    implication.  BROADCAST implies a shared reasource failed and all of its
    accessors will receive the same error. */
-static inline derr_t pvt_broadcast(derr_t *orig, const char *file,
-        const char *func, int line){
-    // be smart if orig is not even an error
-    if(orig->type == E_NONE){
-        return E_OK;
-    }
-    // do TRACE before duplication
-    TRACE(orig, "broadcasting %x at file %x: %x(), line %x\n",
-        FD(error_to_dstr(orig->type)), FS(file), FS(func), FI(line));
-    // copy type and zero msg
-    derr_t out = {.type = orig->type, .msg = (dstr_t){0}};
-    // duplicate message (best effort)
-    dstr_append_quiet(&out.msg, &orig->msg);
-    return out;
-}
+derr_t pvt_broadcast(
+    derr_t *orig, const char *file, const char *func, int line
+);
 #define BROADCAST(e) pvt_broadcast(&(e), FILE_LOC)
 
 /* if you pass an error laterally, you need to reset it without freeing the

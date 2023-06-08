@@ -8,7 +8,7 @@ typedef enum {
     JSON_ARRAY,
 } json_type_e;
 
-const dstr_t *json_type_to_dstr(json_type_e type);
+dstr_t json_type_to_dstr(json_type_e type);
 
 struct json_node_t;
 typedef struct json_node_t json_node_t;
@@ -104,14 +104,16 @@ derr_t json_parse_finish(json_parser_t *p);
 // if you have the whole json string in memory you don't need a json_parser_t
 derr_t json_parse(const dstr_t in, json_t *out);
 
-derr_type_t json_encode_quiet(const dstr_t utf8, dstr_t *out);
-derr_t json_encode(const dstr_t utf8, dstr_t *out);
+derr_type_t json_encode_quiet(const dstr_t utf8, writer_i *out);
+derr_t json_encode(const dstr_t utf8, writer_i *out);
 
-derr_type_t fmthook_fd_json(dstr_t* out, const void* arg);
-static inline fmt_t FD_JSON(const dstr_t* arg){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
-                                     .hook = fmthook_fd_json} } };
-}
+typedef struct {
+    fmt_i iface;
+    dstr_t d;
+} _fmt_fd_json_t;
+
+derr_type_t _fmt_fd_json(const fmt_i *iface, writer_i *out);
+#define FD_JSON(d) (&(_fmt_fd_json_t){ {_fmt_fd_json}, d }.iface)
 
 derr_t json_walk(
     json_ptr_t ptr,

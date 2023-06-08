@@ -1,55 +1,92 @@
-typedef enum {
-    PYARG_EMPTY_TYPE = 0,
-    PYARG_DSTR_TYPE,
-    PYARG_NULLABLE_DSTR_TYPE,
-    PYARG_UINT_TYPE,
-    PYARG_UINT64_TYPE,
-    PYARG_INT_TYPE,
-    PYARG_INT64_TYPE,
-} py_arg_type_e;
+struct pyarg_i;
+typedef struct pyarg_i pyarg_i;
 
-struct py_arg_t;
-typedef struct py_arg_t py_arg_t;
-typedef void (*out_fn_t)(py_arg_t);
-struct py_arg_t {
-    py_arg_type_e type;
+typedef void* voidp;
+LIST_HEADERS(voidp)
+
+struct pyarg_i {
     char *name;
-    char *fmt;
-    void *param1;
-    bool need_size;
-    bool optional;
-    out_fn_t out_fn;
-    void *out_src;
-    const void **out;
-    Py_ssize_t out_len;
+    // add params and extend the fstr
+    derr_t (*pre)(pyarg_i*, LIST(voidp) *params, dstr_t *fstr);
+    // process any results as needed
+    void (*post)(pyarg_i*);
 };
 
-// fixed size struct to get compiler errors if we exceed static sizes.
 typedef struct {
-    py_arg_t a1;
-    py_arg_t a2;
-    py_arg_t a3;
-    py_arg_t a4;
-    py_arg_t a5;
-    py_arg_t a6;
-    py_arg_t a7;
-    py_arg_t a8;
-} py_args_t;
+    pyarg_i iface;
+    dstr_t *out;
+    char *text;
+    Py_ssize_t len;
+} _pyarg_dstr_t;
+
+derr_t _pyarg_dstr_pre(pyarg_i *iface, LIST(voidp) *params, dstr_t *fstr);
+void _pyarg_dstr_post(pyarg_i *iface);
+
+typedef struct {
+    pyarg_i iface;
+    dstr_t **out;
+    char *text;
+    Py_ssize_t len;
+    dstr_t mem;
+} _pyarg_dstr_null_t;
+
+derr_t _pyarg_dstr_null_pre(pyarg_i *iface, LIST(voidp) *params, dstr_t *fstr);
+void _pyarg_dstr_null_post(pyarg_i *iface);
+
+typedef struct {
+    pyarg_i iface;
+    unsigned int *out;
+} _pyarg_uint_t;
+
+derr_t _pyarg_uint_pre(pyarg_i *iface, LIST(voidp) *params, dstr_t *fstr);
+
+typedef struct {
+    pyarg_i iface;
+    uint64_t *out;
+} _pyarg_uint64_t;
+
+derr_t _pyarg_uint64_pre(pyarg_i *iface, LIST(voidp) *params, dstr_t *fstr);
+
+typedef struct {
+    pyarg_i iface;
+    int *out;
+} _pyarg_int_t;
+
+derr_t _pyarg_int_pre(pyarg_i *iface, LIST(voidp) *params, dstr_t *fstr);
+
+typedef struct {
+    pyarg_i iface;
+    int64_t *out;
+} _pyarg_int64_t;
+
+derr_t _pyarg_int64_pre(pyarg_i *iface, LIST(voidp) *params, dstr_t *fstr);
+
+typedef struct {
+    pyarg_i iface;
+    PyObject **out;
+} _pyarg_obj_t;
+
+derr_t _pyarg_obj_pre(pyarg_i *iface, LIST(voidp) *params, dstr_t *fstr);
+
+
+// dstr: "str"
+#define PD(name, out) (&(_pyarg_dstr_t){ {name, _pyarg_dstr_pre, _pyarg_dstr_post}, out }.iface)
+
+// nullable dstr: "Optional[str]"
+#define PDN(name, out) (&(_pyarg_dstr_null_t){ {name, _pyarg_dstr_null_pre, _pyarg_dstr_null_post}, out }.iface)
+
+#define PU(name, out) (&(_pyarg_uint_t){ {name, _pyarg_uint_pre }, out }.iface)
+#define PU64(name, out) (&(_pyarg_uint64_t){ {name, _pyarg_uint64_pre }, out }.iface)
+#define PI(name, out) (&(_pyarg_int_t){ {name, _pyarg_int_pre }, out }.iface)
+#define PI64(name, out) (&(_pyarg_int64_t){ {name, _pyarg_int64_pre }, out }.iface)
+
+// arbitrary python object, reference count is NOT incremented
+#define PO(name, out) (&(_pyarg_obj_t){ {name, _pyarg_obj_pre }, out }.iface)
+
 #define NARGS 8
 
-// str (or bytes)
-py_arg_t pyarg_dstr(dstr_t *mem, const dstr_t **out, char *name);
-// str="default"
-py_arg_t pyarg_dstr_opt(dstr_t *mem, const dstr_t **out, char *name, char *_default);
-// Optional[str]
-py_arg_t pyarg_nullable_dstr(dstr_t *mem, const dstr_t **out, char *name);
-// Optional[str] = value
-py_arg_t pyarg_nullable_dstr_opt(dstr_t *mem, const dstr_t **out, char *name, char *_default);
-
-// int
-py_arg_t pyarg_uint(unsigned int *out, char *name);
-py_arg_t pyarg_uint64(uint64_t *out, char *name);
-py_arg_t pyarg_int(int *out, char *name);
-py_arg_t pyarg_int64(int64_t *out, char *name);
-
-derr_t pyarg_parse(PyObject *pyargs, PyObject *pykwds, py_args_t args);
+/* avoid using our normal __VA_ARGS__ trick to make sure auto-memory for each
+   pyarg_i stays in-scope */
+derr_t pyarg_parse(
+    PyObject *pyargs, PyObject *pykwds, pyarg_i *args[], size_t nargs
+);

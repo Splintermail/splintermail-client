@@ -86,8 +86,8 @@ int main(int argc, char **argv){
     dstr_t post = DSTR_LIT("WQ");
     if(o_bound.found){
         if(dstr_count2(o_bound.val, colon) != 1){
-            FFMT_QUIET(stderr, NULL,
-                "invalid --boundary string: %x\n", FD(&o_bound.val)
+            FFMT_QUIET(stderr,
+                "invalid --boundary string: %x\n", FD(o_bound.val)
             );
             return 1;
         }
@@ -98,8 +98,8 @@ int main(int argc, char **argv){
     size_t stack = 4096;
     if(o_stack.found){
         if(dstr_tosize_quiet(o_stack.val, &stack, 10) != E_NONE){
-            FFMT_QUIET(stderr, NULL,
-                "invalid --stack size: %x\n", FD(&o_stack.val)
+            FFMT_QUIET(stderr,
+                "invalid --stack size: %x\n", FD(o_stack.val)
             );
             return 1;
         }
@@ -208,7 +208,7 @@ write_output:
     if(o_out.found && o_in.found){
         int ret = fchmod(fileno(fout), input_mode);
         if(ret){
-            ORIG_GO(&e, E_OS, "chmod(%x): %x", cu, FD(&o_out.val), FE(&errno));
+            ORIG_GO(&e, E_OS, "chmod(%x): %x", cu, FD(o_out.val), FE(errno));
         }
     }
 #endif // _WIN32
@@ -229,7 +229,7 @@ cu:
     if(e.type == E_USERMSG){
         DSTR_VAR(buf, 256);
         consume_e_usermsg(&e, &buf);
-        FFMT_QUIET(stderr, NULL, "%x\n", FD(&buf));
+        FFMT_QUIET(stderr, "%x\n", FD(buf));
         return 1;
     }
 

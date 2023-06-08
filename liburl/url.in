@@ -53,11 +53,11 @@ static void url_handle_error(
 
     // longest DBG char is \xNN, or 4 chars, and we have two lines of len 80
     // 80 * 4 = 320
-    FMT_QUIET(errbuf, "invalid url: %x", FD_DBG(&head));
+    FMT_QUIET(errbuf, "invalid url: %x", FD_DBG(head));
     size_t nspaces = errbuf->len;
-    FMT_QUIET(errbuf, "%x", FD_DBG(&token));
+    FMT_QUIET(errbuf, "%x", FD_DBG(token));
     size_t ncarets = MAX(errbuf->len - nspaces, 1);
-    FMT_QUIET(errbuf, "%x\n", FD_DBG(&tail));
+    FMT_QUIET(errbuf, "%x\n", FD_DBG(tail));
 
     // spaces
     for(size_t i = 0; i < nspaces; i++){

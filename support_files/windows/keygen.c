@@ -71,7 +71,7 @@ static derr_t remove_srl(
         }
     }
 
-    string_builder_t path = sb_append(base, FD(file));
+    string_builder_t path = sb_append(base, SBD(*file));
     PROP(&e, dunlink_path(&path) );
 
     return e;
@@ -91,7 +91,7 @@ derr_t keygen_main(int argc, char **argv){
     if(!ok){
         LOG_ERROR("$TEMP not set\n");
     }else{
-        IF_PROP(&e, FMT(&logfile, "%x\\splintermail-keygen.log", FD(&temp)) ){
+        IF_PROP(&e, FMT(&logfile, "%x\\splintermail-keygen.log", FD(temp)) ){
             TRACE(&e, "unable to configure to logfile in %TEMP%\n");
             DUMP(e);
             DROP_VAR(&e);
@@ -253,7 +253,7 @@ derr_t keygen_main(int argc, char **argv){
     // cleanup unecessary files
     {
         // rm -f "$outdir/$(echo QW ca_name WQ | sed -e 's/[^a-z].*//')"*.srl
-        string_builder_t output_path = SB(FS(output_dir));
+        string_builder_t output_path = SBS(output_dir);
         PROP(&e, for_each_file_in_dir(&output_path, remove_srl, NULL));
     }
     {

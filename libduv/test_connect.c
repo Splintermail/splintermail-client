@@ -209,7 +209,7 @@ fail:
 static void on_listener(uv_stream_t *server, int status){
     (void)server;
     if(status < 0){
-        TRACE(&E, "on_listener: %x\n", FUV(&status));
+        TRACE(&E, "on_listener: %x\n", FUV(status));
         ORIG_GO(&E, uv_err_type(status), "on_listener error", fail);
     }
 

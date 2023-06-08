@@ -117,32 +117,32 @@ static derr_t test_leftshift(void){
     PROP(&e, dstr_append(&buf, &text1) );
     PROP(&e, http_read(&r, &hdr, &status) );
     EXPECT_I(&e, "status", status, -2);
-    EXPECT_D(&e, "buf", &buf, &DSTR_LIT("Date: Thu, 01 Jan 1970 "));
+    EXPECT_D(&e, "buf", buf, DSTR_LIT("Date: Thu, 01 Jan 1970 "));
     EXPECT_U(&e, "buf.len", buf.len, 23);
     EXPECT_I(&e, "status_code", r.status, 200);
     // reason has been leftshifted away but should have been copied
-    EXPECT_D(&e, "reason", &r.reason, &DSTR_LIT("OK"));
+    EXPECT_D(&e, "reason", r.reason, DSTR_LIT("OK"));
 
     // add text2
     PROP(&e, dstr_append(&buf, &text2) );
     PROP(&e, http_read(&r, &hdr, &status) );
     EXPECT_I(&e, "status", status, -1);
-    EXPECT_DM(&e, "buf", &buf, &DSTR_LIT(
+    EXPECT_DM(&e, "buf", buf, DSTR_LIT(
         "Date: Thu, 01 Jan 1970 00:00:00 GMT\r\n"
         "Server: Yo mamma\r\n"
     ));
-    EXPECT_D(&e, "key", &hdr.key, &DSTR_LIT("Date"));
+    EXPECT_D(&e, "key", hdr.key, DSTR_LIT("Date"));
     EXPECT_D3(&e,
-        "value", &hdr.value, &DSTR_LIT("Thu, 01 Jan 1970 00:00:00 GMT")
+        "value", hdr.value, DSTR_LIT("Thu, 01 Jan 1970 00:00:00 GMT")
     );
     PROP(&e, http_read(&r, &hdr, &status) );
     EXPECT_I(&e, "status", status, -1);
-    EXPECT_DM(&e, "buf", &buf, &DSTR_LIT(
+    EXPECT_DM(&e, "buf", buf, DSTR_LIT(
         "Date: Thu, 01 Jan 1970 00:00:00 GMT\r\n"
         "Server: Yo mamma\r\n"
     ));
-    EXPECT_D(&e, "key", &hdr.key, &DSTR_LIT("Server"));
-    EXPECT_D(&e, "value", &hdr.value, &DSTR_LIT("Yo mamma"));
+    EXPECT_D(&e, "key", hdr.key, DSTR_LIT("Server"));
+    EXPECT_D(&e, "value", hdr.value, DSTR_LIT("Yo mamma"));
     PROP(&e, http_read(&r, &hdr, &status) );
     EXPECT_I(&e, "status", status, -2);
     EXPECT_U(&e, "buf.len", buf.len, 0);
@@ -151,13 +151,13 @@ static derr_t test_leftshift(void){
     PROP(&e, dstr_append(&buf, &text3) );
     PROP(&e, http_read(&r, &hdr, &status) );
     EXPECT_I(&e, "status", status, -2);
-    EXPECT_D(&e, "buf", &buf, &DSTR_LIT("\r"));
+    EXPECT_D(&e, "buf", buf, DSTR_LIT("\r"));
 
     // add text4
     PROP(&e, dstr_append(&buf, &text4) );
     PROP(&e, http_read(&r, &hdr, &status) );
     EXPECT_I(&e, "status", status, 2);
-    EXPECT_D(&e, "buf", &buf, &DSTR_LIT("\r\nbody bytes\r\n"));
+    EXPECT_D(&e, "buf", buf, DSTR_LIT("\r\nbody bytes\r\n"));
 
     return e;
 }

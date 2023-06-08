@@ -24,7 +24,7 @@ derr_t qw_dynamics_init(qw_dynamics_t *out, char **dynamics, size_t n){
             ORIG_GO(&e,
                 E_PARAM, "dynamic value has no '=': \"%x\"",
                 fail,
-                FD_DBG(&in)
+                FD_DBG(in)
             );
         }
 
@@ -37,7 +37,7 @@ derr_t qw_dynamics_init(qw_dynamics_t *out, char **dynamics, size_t n){
                 E_PARAM,
                 "dynamic value key is not a valid identifier: \"%x\"",
                 fail,
-                FD_DBG(&in)
+                FD_DBG(in)
             );
         }
 
@@ -159,22 +159,22 @@ static dstr_t exec_snippet(qw_env_t env, dstr_t snippet){
 
     // check stack length
     if(qw_stack_len(env.engine) != 1){
-        FFMT_QUIET(stderr, NULL,
+        FFMT_QUIET(stderr,
             "Error: the following snippet returned %x values instead of 1:\n"
             "# BEGIN SNIPPET\n"
             "%x\n"
             "# END SNIPPET\n",
             FU(qw_stack_len(env.engine)),
-            FD(&snippet)
+            FD(snippet)
         );
         size_t n = qw_stack_len(env.engine) - 1;
-        FFMT_QUIET(stderr, NULL, "# BEGIN STACK\n");
+        FFMT_QUIET(stderr, "# BEGIN STACK\n");
         while(qw_stack_len(env.engine)){
-            FFMT_QUIET(stderr, NULL,
+            FFMT_QUIET(stderr,
                 "%x. %x", FU(n--), FQ(qw_stack_pop(env.engine))
             );
         }
-        FFMT_QUIET(stderr, NULL, "# END STACK\n");
+        FFMT_QUIET(stderr, "# END STACK\n");
         qw_error(env.engine, "execution error");
     }
 
@@ -182,15 +182,15 @@ static dstr_t exec_snippet(qw_env_t env, dstr_t snippet){
 
     // check val is a string
     if(*val != QW_VAL_STRING){
-        FFMT_QUIET(stderr, NULL,
+        FFMT_QUIET(stderr,
             "Error: the following snippet did not return a string, but a %x:\n"
             "# BEGIN SNIPPET\n"
             "%x\n"
             "# END SNIPPET\n",
             FS(qw_val_name(*val)),
-            FD(&snippet)
+            FD(snippet)
         );
-        FFMT_QUIET(stderr, NULL, "Returned value: %x\n", FQ(val));
+        FFMT_QUIET(stderr, "Returned value: %x\n", FQ(val));
         qw_error(env.engine, "invalid top-level snippet");
     }
     qw_string_t *string = CONTAINER_OF(val, qw_string_t, type);

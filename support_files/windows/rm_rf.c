@@ -17,7 +17,7 @@ int main(int argc, char** argv) {
     if(!ok){
         LOG_ERROR("$TEMP not set\n");
     }else{
-        IF_PROP(&e, FMT(&logfile, "%x\\splintermail-rm_rf.log", FD(&temp)) ){
+        IF_PROP(&e, FMT(&logfile, "%x\\splintermail-rm_rf.log", FD(temp)) ){
             TRACE(&e, "unable to configure to logfile in %TEMP%\n");
             DUMP(e);
             DROP_VAR(&e);

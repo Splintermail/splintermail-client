@@ -80,7 +80,7 @@ static derr_t gen_msg_header(
             "Subject: %x\r\n"
             "\r\n",
             FS(date_field),
-            FD(&subj)
+            FD(subj)
         )
     );
 
@@ -90,7 +90,7 @@ static derr_t gen_msg_header(
 static derr_t inject_msg(
     keydir_t *kd, const dstr_t content, const imap_time_t intdate
 ){
-    string_builder_t path = sb_append(&kd->path, FS("injected_msg.tmp"));
+    string_builder_t path = sb_append(&kd->path, SBS("injected_msg.tmp"));
     dirmgr_hold_t *hold = NULL;
     imaildir_t *m = NULL;
 
@@ -172,7 +172,7 @@ static derr_t inject_new_key_msg(keydir_t *kd, const dstr_t fpr_bin){
 "Splintermail cannot be coerced into adding encryption keys to your\r\n"
 "account without your knowledge.\r\n";
 
-    PROP_GO(&e, FMT(&content, body_fmt_str, FX(&fpr_bin)), cu);
+    PROP_GO(&e, FMT(&content, body_fmt_str, FX(fpr_bin)), cu);
 
     // inject the message
     PROP_GO(&e, inject_msg(kd, content, intdate), cu);
@@ -198,9 +198,9 @@ static derr_t _write_key(keydir_t *kd, const dstr_t pem, const dstr_t bin_fpr){
 
     // filename is just "HEX_FPR.pem"
     DSTR_VAR(file, 256);
-    PROP(&e, FMT(&file, "%x.pem", FX(&bin_fpr)) );
+    PROP(&e, FMT(&file, "%x.pem", FX(bin_fpr)) );
 
-    string_builder_t path = sb_append(&kd->key_path, FD(&file) );
+    string_builder_t path = sb_append(&kd->key_path, SBD(file) );
     PROP(&e, dstr_write_path(&path, &pem) );
 
     return e;
@@ -239,9 +239,9 @@ static derr_t _rm_key(keydir_t *kd, const dstr_t bin_fpr){
     derr_t e = E_OK;
 
     DSTR_VAR(file, 256);
-    PROP(&e, FMT(&file, "%x.pem", FX(&bin_fpr)) );
+    PROP(&e, FMT(&file, "%x.pem", FX(bin_fpr)) );
 
-    string_builder_t path = sb_append(&kd->key_path, FD(&file) );
+    string_builder_t path = sb_append(&kd->key_path, SBD(file) );
     PROP(&e, rm_rf_path(&path) );
 
     return e;
@@ -543,7 +543,7 @@ static derr_t _load_or_gen_mykey(
 
     PROP(&e, mkdirs_path(key_path, 0700) );
 
-    string_builder_t mykey_path = sb_append(key_path, FS("mykey.pem"));
+    string_builder_t mykey_path = sb_append(key_path, SBS("mykey.pem"));
 
     bool have_key;
     PROP(&e, exists_path(&mykey_path, &have_key) );
@@ -584,14 +584,11 @@ static derr_t add_peer_key(
     // skip mykey, which is handled elsewhere
     if(dstr_eq(*file, DSTR_LIT("mykey.pem"))) return e;
 
-    string_builder_t path = sb_append(base, FD(file));
+    string_builder_t path = sb_append(base, SBD(*file));
     keypair_t *kp;
     IF_PROP(&e, keypair_load_public_path(&kp, &path) ){
         // we must have hit an error reading the key
-        TRACE(&e,
-            "deleting broken key '%x' after failure:\n",
-            FSB(&path, &DSTR_LIT("/"))
-        );
+        TRACE(&e, "deleting broken key '%x' after failure:\n", FSB(path));
         DUMP(e);
         DROP_VAR(&e);
         // delete the broken key and exit
@@ -641,11 +638,11 @@ derr_t keydir_new(
             .process_msg = imaildir_hooks_process_msg,
         },
     };
-    kd->path = sb_append(root, FD(&kd->user));
-    kd->mail_path = sb_append(&kd->path, FS("mail"));
-    kd->key_path = sb_append(&kd->path, FS("keys"));
+    kd->path = sb_append(root, SBD(kd->user));
+    kd->mail_path = sb_append(&kd->path, SBS("mail"));
+    kd->key_path = sb_append(&kd->path, SBS("keys"));
 
-    string_builder_t fpr_path = sb_append(&kd->path, FS("fingerprints"));
+    string_builder_t fpr_path = sb_append(&kd->path, SBS("fingerprints"));
     PROP_GO(&e, fpr_watcher_init( &kd->fpr_watcher, fpr_path), fail);
 
     // load or create my_keypair

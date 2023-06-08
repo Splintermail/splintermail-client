@@ -31,7 +31,7 @@ const char *get_date_field(char *buf, size_t len, time_t epoch){
     size_t dlen = strftime(buf, len, "%a, %d %b %Y %H:%M:%S %z", &tnow);
     if(dlen == 0){
         LOG_WARN(
-            "error formatting time string: strftime: %x\n", FE(&errno)
+            "error formatting time string: strftime: %x\n", FE(errno)
         );
         return fallback;
     }

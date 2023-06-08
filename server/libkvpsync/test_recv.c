@@ -96,9 +96,9 @@ static dstr_t display_value(const dstr_t *got){
         E_VALUE, \
         "expected %x -> %x but got %x\n", \
         cu, \
-        FD(&_k), \
-        FD(&_exp), \
-        FD(&_got) \
+        FD(_k), \
+        FD(_exp), \
+        FD(_got) \
     ); \
 } while(0)
 

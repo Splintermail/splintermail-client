@@ -2125,7 +2125,7 @@ static derr_t disconnect_finish(dn_t *dn){
             "disconnecting is not allowed to fail: %x %x",
             cu,
             FD(ie_status_to_dstr(st_resp->status)),
-            FD_DBG(&st_resp->text->dstr)
+            FD_DBG(st_resp->text->dstr)
         );
     }
 

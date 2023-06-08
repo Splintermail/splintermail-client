@@ -75,7 +75,7 @@ void qw_engine_free(qw_engine_t *out);
 
 SM_NORETURN(
     void _qw_error(
-        qw_engine_t *engine, const char *fmt, const fmt_t *args, size_t nargs
+        qw_engine_t *engine, const char *fmt, const fmt_i **args, size_t nargs
     )
 );
 
@@ -83,8 +83,8 @@ SM_NORETURN(
     _qw_error( \
         engine, \
         fmt "\n", \
-        &(const fmt_t[]){FI(0), __VA_ARGS__}[1], \
-        sizeof((const fmt_t[]){FI(0), __VA_ARGS__}) / sizeof(fmt_t) - 1 \
+        &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__}) / sizeof(fmt_i*) - 1 \
     )
 
 // instruction operations

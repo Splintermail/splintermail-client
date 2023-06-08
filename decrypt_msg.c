@@ -81,7 +81,7 @@ cleanup_dec:
     for(size_t i = 0; i < recips.len; i++){
         DSTR_VAR(hexfpr, FL_FINGERPRINT * 2);
         IF_PROP(&e, bin2hex(&recips.data[i], &hexfpr)){}
-        TRACE(&e, "    %x\n", FD(&hexfpr));
+        TRACE(&e, "    %x\n", FD(hexfpr));
     }
 cleanup_key:
     keypair_free(&kp);

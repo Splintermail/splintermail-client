@@ -153,7 +153,7 @@ derr_t decrypter_finish(decrypter_t* dc, dstr_t* out);
            E_FIXEDSIZE (writing to *out)
            E_NOMEM     (writing to *out) */
 
-derr_t hmac(const dstr_t* secret, const dstr_t* payload, dstr_t* hmac);
+derr_t hmac(const dstr_t secret, const dstr_t payload, dstr_t* hmac);
 /* throws: E_PARAM (secret too long)
            E_NOMEM     (writing to *hmac)
            E_FIXEDSIZE (writing to *hmac)

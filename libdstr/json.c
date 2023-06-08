@@ -109,7 +109,7 @@ static inline int is_whitespace(char c){
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
-const dstr_t *json_type_to_dstr(json_type_e type){
+dstr_t json_type_to_dstr(json_type_e type){
     DSTR_STATIC(string_str, "string");
     DSTR_STATIC(number_str, "number");
     DSTR_STATIC(true_str, "true");
@@ -119,15 +119,15 @@ const dstr_t *json_type_to_dstr(json_type_e type){
     DSTR_STATIC(array_str, "array");
     DSTR_STATIC(unknown_str, "unknown");
     switch(type){
-        case JSON_STRING: return &string_str;
-        case JSON_NUMBER: return &number_str;
-        case JSON_TRUE: return &true_str;
-        case JSON_FALSE: return &false_str;
-        case JSON_NULL: return &null_str;
-        case JSON_OBJECT: return &object_str;
-        case JSON_ARRAY: return &array_str;
+        case JSON_STRING: return string_str;
+        case JSON_NUMBER: return number_str;
+        case JSON_TRUE: return true_str;
+        case JSON_FALSE: return false_str;
+        case JSON_NULL: return null_str;
+        case JSON_OBJECT: return object_str;
+        case JSON_ARRAY: return array_str;
     }
-    return &unknown_str;
+    return unknown_str;
 }
 
 static void json_text_block_free(json_text_block_t **old){
@@ -469,7 +469,7 @@ static derr_t parse_char(
         ORIG(&e, \
             E_PARAM, \
             "Unexpected character:\n%x", \
-            FD(&context) \
+            FD(context) \
         ); \
     } while(0)
 
@@ -837,15 +837,24 @@ derr_t json_parse(const dstr_t in, json_t *out){
 static derr_type_t json_encode_utf16_escape(uint16_t u, void *data){
     derr_type_t etype = E_NONE;
 
-    dstr_t *out = (dstr_t*)data;
+    writer_i *out = (writer_i*)data;
+    writer_t w = *out->w;
 
-    etype = dstr_append_char(out, '\\');
+    etype = w.putc(out, '\\');
     if(etype) return etype;
-    etype = dstr_append_char(out, 'u');
+    etype = w.putc(out, 'u');
     if(etype) return etype;
-    etype = dstr_append_hex(out, (unsigned char)(u >> 8));
+
+    unsigned char msb = (unsigned char)(u >> 8);
+    etype = w.putc(out, hex_high_nibble(msb));
     if(etype) return etype;
-    etype = dstr_append_hex(out, (unsigned char)(u >> 0));
+    etype = w.putc(out, hex_low_nibble(msb));
+    if(etype) return etype;
+
+    unsigned char lsb = (unsigned char)(u & 0xff);
+    etype = w.putc(out, hex_high_nibble(lsb));
+    if(etype) return etype;
+    etype = w.putc(out, hex_low_nibble(lsb));
     if(etype) return etype;
 
     return E_NONE;
@@ -854,7 +863,8 @@ static derr_type_t json_encode_utf16_escape(uint16_t u, void *data){
 static derr_type_t json_encode_each_codepoint(uint32_t codepoint, void *data){
     derr_type_t etype = E_NONE;
 
-    dstr_t *out = (dstr_t*)data;
+    writer_i *out = data;
+    writer_t w = *out->w;
 
     if(codepoint < 0x80){
         // ascii character
@@ -874,13 +884,13 @@ static derr_type_t json_encode_each_codepoint(uint32_t codepoint, void *data){
                 if(c < ' ' || c == 0x7f) goto utf16_escape;
         }
         if(escape){
-            etype = dstr_append_char(out, '\\');
+            etype = w.putc(out, '\\');
             if(etype) return etype;
-            etype = dstr_append_char(out, escape);
+            etype = w.putc(out, escape);
             if(etype) return etype;
         }else{
             // normal character
-            etype = dstr_append_char(out, c);
+            etype = w.putc(out, c);
             if(etype) return etype;
         }
         return E_NONE;
@@ -892,11 +902,26 @@ utf16_escape:
     return etype;
 }
 
-derr_type_t json_encode_quiet(const dstr_t utf8, dstr_t *out){
+static derr_type_t json_encode_unlocked(const dstr_t utf8, writer_i *out){
     return utf8_decode_quiet(utf8, json_encode_each_codepoint, (void*)out);
 }
 
-derr_t json_encode(const dstr_t utf8, dstr_t *out){
+derr_type_t json_encode_quiet(const dstr_t utf8, writer_i *out){
+    derr_type_t etype;
+    writer_t w = *out->w;
+    if(w.lock){
+        etype = w.lock(out);
+        if(etype) return etype;
+    }
+    etype = json_encode_unlocked(utf8, out);
+    derr_type_t etype2 = E_NONE;
+    if(w.unlock){
+        etype2 = w.unlock(out);
+    }
+    return etype ? etype : etype2;
+}
+
+derr_t json_encode(const dstr_t utf8, writer_i *out){
     derr_t e = E_OK;
 
     derr_type_t etype = json_encode_quiet(utf8, out);
@@ -906,9 +931,11 @@ derr_t json_encode(const dstr_t utf8, dstr_t *out){
     ORIG(&e, etype, "failure encoding json");
 }
 
-derr_type_t fmthook_fd_json(dstr_t* out, const void* arg){
-    const dstr_t *utf8 = (const dstr_t*)arg;
-    return json_encode_quiet(*utf8, out);
+DEF_CONTAINER_OF(_fmt_fd_json_t, iface, fmt_i)
+
+derr_type_t _fmt_fd_json(const fmt_i *iface, writer_i *out){
+    dstr_t d = CONTAINER_OF(iface, _fmt_fd_json_t, iface)->d;
+    return json_encode_unlocked(d, out);
 }
 
 derr_t json_walk(
@@ -1053,10 +1080,10 @@ static derr_t fdump_visit(
     if(closing){
         switch(node->type){
             case JSON_ARRAY:
-                PROP(&e, FFMT(f, NULL, "]%x\n", FS(comma)) );
+                PROP(&e, FFMT(f, "]%x\n", FS(comma)) );
                 return e;
             case JSON_OBJECT:
-                PROP(&e, FFMT(f, NULL, "}%x\n", FS(comma)) );
+                PROP(&e, FFMT(f, "}%x\n", FS(comma)) );
                 return e;
 
             case JSON_TRUE:
@@ -1069,45 +1096,45 @@ static derr_t fdump_visit(
     }
 
     if(key){
-        PROP(&e, FFMT(f, NULL, "\"%x\": ", FD_JSON(key)) );
+        PROP(&e, FFMT(f, "\"%x\": ", FD_JSON(*key)) );
     }
 
     switch(node->type){
         case JSON_TRUE:
-            PROP(&e, FFMT(f, NULL, "true%x\n", FS(comma)) );
+            PROP(&e, FFMT(f, "true%x\n", FS(comma)) );
             break;
         case JSON_FALSE:
-            PROP(&e, FFMT(f, NULL, "false%x\n", FS(comma)) );
+            PROP(&e, FFMT(f, "false%x\n", FS(comma)) );
             break;
         case JSON_NULL:
-            PROP(&e, FFMT(f, NULL, "null%x\n", FS(comma)) );
+            PROP(&e, FFMT(f, "null%x\n", FS(comma)) );
             break;
 
         case JSON_NUMBER:
-            PROP(&e, FFMT(f, NULL, "%x%x\n", FD(&node->text), FS(comma)) );
+            PROP(&e, FFMT(f, "%x%x\n", FD(node->text), FS(comma)) );
             break;
 
         case JSON_STRING:
             PROP(&e,
-                FFMT(f, NULL, "\"%x\"%x\n", FD_JSON(&node->text), FS(comma))
+                FFMT(f, "\"%x\"%x\n", FD_JSON(node->text), FS(comma))
             );
             break;
 
         case JSON_OBJECT:
             if(!node->child){
-                PROP(&e, FFMT(f, NULL, "{}%x\n", FS(comma)) );
+                PROP(&e, FFMT(f, "{}%x\n", FS(comma)) );
                 return e;
             }
-            PROP(&e, FFMT(f, NULL, "{\n") );
+            PROP(&e, FFMT(f, "{\n") );
             v->depth++;
             break;
 
         case JSON_ARRAY:
             if(!node->child){
-                PROP(&e, FFMT(f, NULL, "[]%x\n", FS(comma)) );
+                PROP(&e, FFMT(f, "[]%x\n", FS(comma)) );
                 return e;
             }
-            PROP(&e, FFMT(f, NULL, "[\n") );
+            PROP(&e, FFMT(f, "[\n") );
             v->depth++;
             break;
     }

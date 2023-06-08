@@ -54,25 +54,23 @@ static void py_smsql_dealloc(py_smsql_t *self){
 static int py_smsql_init(py_smsql_t *self, PyObject *args, PyObject *kwds){
     derr_t e = E_OK;
 
-    dstr_t _db;
-    const dstr_t *db;
-    dstr_t _sock;
-    const dstr_t *sock;
-    dstr_t _user;
-    const dstr_t *user;
-    dstr_t _pass;
-    const dstr_t *pass;
+    dstr_t *db = &DSTR_LIT("splintermail");
+    dstr_t sock = DSTR_LIT("/var/run/mysqld/mysqld.sock");
+    dstr_t *user = NULL;
+    dstr_t *pass = NULL;
 
-    py_args_t spec = {
-        pyarg_nullable_dstr_opt(&_db, &db, "db", "splintermail"),
-        pyarg_dstr_opt(&_sock, &sock, "sock", "/var/run/mysqld/mysqld.sock"),
-        pyarg_nullable_dstr_opt(&_user, &user, "user", NULL),
-        pyarg_nullable_dstr_opt(&_pass, &pass, "pass", NULL),
+    pyarg_i *spec[] = {
+        NULL, // begin optionals
+        PDN("db", &db),
+        PD("sock", &sock),
+        PDN("user", &user),
+        PDN("pass", &pass),
     };
+    size_t nspec = sizeof(spec)/sizeof(*spec);
 
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
-    PROP_GO(&e, smsql_init(self, *sock, user, pass, db), fail);
+    PROP_GO(&e, smsql_init(self, sock, user, pass, db), fail);
 
     return 0;
 
@@ -129,12 +127,12 @@ static PyObject *py_smsql_get_uuid(
 ){
     derr_t e = E_OK;
 
-    dstr_t _email;
-    const dstr_t *email;
-    py_args_t spec = {
-        pyarg_dstr(&_email, &email, "email"),
+    dstr_t email;
+    pyarg_i *spec[] = {
+        PD("email", &email),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
     bool ok;
@@ -156,12 +154,12 @@ static PyObject *py_smsql_get_email(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     DSTR_VAR(email, SMSQL_EMAIL_SIZE);
     bool ok;
@@ -182,12 +180,12 @@ static PyObject *py_smsql_list_aliases(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     link_t aliases;
     link_init(&aliases);
@@ -250,12 +248,12 @@ static PyObject *py_smsql_add_random_alias(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     DSTR_VAR(alias, SMSQL_EMAIL_SIZE);
 
@@ -276,15 +274,14 @@ static PyObject *py_smsql_add_primary_alias(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    dstr_t _alias;
-    const dstr_t *alias;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
-        pyarg_dstr(&_alias, &alias, "alias"),
+    dstr_t uuid;
+    dstr_t alias;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
+        PD("alias", &alias),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     PROP_GO(&e, add_primary_alias(&self->sql, uuid, alias), fail);
 
@@ -303,15 +300,14 @@ static PyObject *py_smsql_delete_alias(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    dstr_t _alias;
-    const dstr_t *alias;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
-        pyarg_dstr(&_alias, &alias, "alias"),
+    dstr_t uuid;
+    dstr_t alias;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
+        PD("alias", &alias),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     PROP_GO(&e, delete_alias(&self->sql, uuid, alias), fail);
 
@@ -330,12 +326,12 @@ static PyObject *py_smsql_delete_all_aliases(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     PROP_GO(&e, delete_all_aliases(&self->sql, uuid), fail);
 
@@ -356,12 +352,12 @@ static PyObject *py_smsql_list_device_fprs(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     link_t dstrs;
     link_init(&dstrs);
@@ -419,12 +415,12 @@ static PyObject *py_smsql_list_device_keys(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     link_t dstrs;
     link_init(&dstrs);
@@ -482,16 +478,14 @@ static PyObject *py_smsql_add_device(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    dstr_t _pubkey;
-    const dstr_t *pubkey;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
-        pyarg_dstr(&_pubkey, &pubkey, "pubkey"),
+    dstr_t uuid;
+    dstr_t pubkey;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
+        PD("pubkey", &pubkey),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
-    LOG_ERROR("pubkey: %x\n", FD(pubkey));
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     DSTR_VAR(fpr, SMSQL_FPR_SIZE);
     PROP_GO(&e, add_device(&self->sql, uuid, pubkey, &fpr), fail);
@@ -512,15 +506,14 @@ static PyObject *py_smsql_delete_device(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    dstr_t _fpr;
-    const dstr_t *fpr;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
-        pyarg_dstr(&_fpr, &fpr, "fpr"),
+    dstr_t uuid;
+    dstr_t fpr;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
+        PD("fpr", &fpr),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     PROP_GO(&e, delete_device(&self->sql, uuid, fpr), fail);
 
@@ -541,12 +534,12 @@ static PyObject *py_smsql_list_tokens(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     link_t tokens;
     link_init(&tokens);
@@ -602,12 +595,12 @@ static PyObject *py_smsql_add_token(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     unsigned int token;
     DSTR_VAR(secret, SMSQL_APISECRET_SIZE);
@@ -630,14 +623,14 @@ static PyObject *py_smsql_delete_token(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
+    dstr_t uuid;
     unsigned int token;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
-        pyarg_uint(&token, "token"),
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
+        PU("token", &token),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     PROP_GO(&e, delete_token(&self->sql, uuid, token), fail);
 
@@ -659,15 +652,14 @@ static PyObject *py_smsql_create_account(
 ){
     derr_t e = E_OK;
 
-    dstr_t _email;
-    const dstr_t *email;
-    dstr_t _pass;
-    const dstr_t *pass;
-    py_args_t spec = {
-        pyarg_dstr(&_email, &email, "email"),
-        pyarg_dstr(&_pass, &pass, "pass"),
+    dstr_t email;
+    dstr_t pass;
+    pyarg_i *spec[] = {
+        PD("email", &email),
+        PD("pass", &pass),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
     PROP_GO(&e, create_account(&self->sql, email, pass, &uuid), fail);
@@ -686,12 +678,12 @@ static PyObject *py_smsql_delete_account(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     PROP_GO(&e, delete_account(&self->sql, uuid), fail);
 
@@ -711,12 +703,12 @@ static PyObject *py_smsql_account_info(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     size_t dvcs;
     size_t paids;
@@ -745,15 +737,14 @@ static PyObject *py_smsql_validate_login(
 ){
     derr_t e = E_OK;
 
-    dstr_t _email;
-    const dstr_t *email;
-    dstr_t _pass;
-    const dstr_t *pass;
-    py_args_t spec = {
-        pyarg_dstr(&_email, &email, "email"),
-        pyarg_dstr(&_pass, &pass, "pass"),
+    dstr_t email;
+    dstr_t pass;
+    pyarg_i *spec[] = {
+        PD("email", &email),
+        PD("pass", &pass),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
     PROP_GO(&e, validate_login(&self->sql, email, pass, &uuid), fail);
@@ -784,17 +775,16 @@ static PyObject *py_smsql_validate_token_auth(
 
     unsigned int token;
     uint64_t nonce;
-    dstr_t _payload;
-    const dstr_t *payload;
-    dstr_t _signature;
-    const dstr_t *signature;
-    py_args_t spec = {
-        pyarg_uint(&token, "token"),
-        pyarg_uint64(&nonce, "nonce"),
-        pyarg_dstr(&_payload, &payload, "payload"),
-        pyarg_dstr(&_signature, &signature, "signature"),
+    dstr_t payload;
+    dstr_t signature;
+    pyarg_i *spec[] = {
+        PU("token", &token),
+        PU64("nonce", &nonce),
+        PD("payload", &payload),
+        PD("signature", &signature),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
     PROP_GO(&e,
@@ -817,15 +807,14 @@ static PyObject *py_smsql_change_password(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    dstr_t _pass;
-    const dstr_t *pass;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
-        pyarg_dstr(&_pass, &pass, "pass"),
+    dstr_t uuid;
+    dstr_t pass;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
+        PD("pass", &pass),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     PROP_GO(&e, change_password(&self->sql, uuid, pass), fail);
 
@@ -850,13 +839,13 @@ static PyObject *py_smsql_validate_session_auth(
     derr_t e = E_OK;
 
     int server_id;
-    dstr_t _session_id;
-    const dstr_t *session_id;
-    py_args_t spec = {
-        pyarg_int(&server_id, "server_id"),
-        pyarg_dstr(&_session_id, &session_id, "session_id"),
+    dstr_t session_id;
+    pyarg_i *spec[] = {
+        PI("server_id", &server_id),
+        PD("session_id", &session_id),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
     PROP_GO(&e,
@@ -878,15 +867,14 @@ static PyObject *py_smsql_validate_csrf(
 ){
     derr_t e = E_OK;
 
-    dstr_t _session_id;
-    const dstr_t *session_id;
-    dstr_t _csrf;
-    const dstr_t *csrf;
-    py_args_t spec = {
-        pyarg_dstr(&_session_id, &session_id, "session_id"),
-        pyarg_dstr(&_csrf, &csrf, "csrf"),
+    dstr_t session_id;
+    dstr_t csrf;
+    pyarg_i *spec[] = {
+        PD("session_id", &session_id),
+        PD("csrf", &csrf),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     PROP_GO(&e, validate_csrf(&self->sql, session_id, csrf), fail);
 
@@ -904,15 +892,14 @@ static PyObject *py_smsql_user_owns_addr(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    dstr_t _address;
-    const dstr_t *address;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
-        pyarg_dstr(&_address, &address, "address"),
+    dstr_t uuid;
+    dstr_t address;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
+        PD("address", &address),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     bool ok;
     PROP_GO(&e, user_owns_address(&self->sql, uuid, address, &ok), fail);
@@ -937,14 +924,14 @@ static PyObject *py_smsql_limit_check(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
+    dstr_t uuid;
     unsigned int recipients;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
-        pyarg_uint(&recipients, "recipients"),
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
+        PU("recipients", &recipients),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     bool ok;
     bool msg_sent;
@@ -975,8 +962,9 @@ static PyObject *py_smsql_gtid_current_pos(
 ){
     derr_t e = E_OK;
 
-    py_args_t spec = {0};
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    pyarg_i *spec[] = {0};
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     DSTR_VAR(buf, 1024);
     PROP_GO(&e, gtid_current_pos(&self->sql, &buf), fail);
@@ -995,12 +983,12 @@ static PyObject *py_smsql_trigger_deleter(
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     PROP_GO(&e, trigger_deleter(&self->sql, uuid), fail);
 
@@ -1019,10 +1007,11 @@ static PyObject *py_smsql_list_deletions(
     derr_t e = E_OK;
 
     int server_id;
-    py_args_t spec = {
-        pyarg_int(&server_id, "server_id"),
+    pyarg_i *spec[] = {
+        PI("server_id", &server_id),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     link_t dstrs;
     link_init(&dstrs);
@@ -1079,13 +1068,13 @@ static PyObject *py_smsql_deletions_finished_one(
     derr_t e = E_OK;
 
     int server_id;
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_int(&server_id, "server_id"),
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PI("server_id", &server_id),
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     PROP_GO(&e, deletions_finished_one(&self->sql, server_id, uuid), fail);
 
@@ -1321,21 +1310,30 @@ static PyObject *pysm_log_to_file(
     (void)self;
     derr_t e = E_OK;
 
-    dstr_t _path;
-    const dstr_t *path;
-    dstr_t _level;
-    const dstr_t *level;
-    py_args_t spec = {
-        pyarg_dstr(&_path, &path, "path"),
-        pyarg_dstr_opt(&_level, &level, "level", "info"),
+    PyObject *pathobj;
+    PyBytesObject *pathbytes = NULL;
+    dstr_t level = DSTR_LIT("info");
+    pyarg_i *spec[] = {
+        // accept arbitrary pyobject so we can keep a reference to the string
+        PO("path", &pathobj),
+        NULL, // begin optionals
+        PD("level", &level),
     };
+    size_t nspec = sizeof(spec)/sizeof(*spec);
 
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
+
+    // convert path object to bytes, or raise TypeError
+    int ret = PyUnicode_FSConverter(pathobj, &pathbytes);
+    if(!ret) return NULL;
+    // convert bytes to c-string
+    char *pathstr = PyBytes_AsString((PyObject*)pathbytes);
+    if(!pathstr) return NULL;
 
     log_level_t log_level = LOG_LVL_INFO;
 
     // lame-ass string-to-enum conversion
-    char firstchar = level->len > 0 ? level->data[0] : '\0';
+    char firstchar = level.len > 0 ? level.data[0] : '\0';
     if(firstchar == 'd' || firstchar == 'D'){
         log_level = LOG_LVL_DEBUG;
     }else if(firstchar == 'w' || firstchar == 'W'){
@@ -1344,12 +1342,15 @@ static PyObject *pysm_log_to_file(
         log_level = LOG_LVL_ERROR;
     }
 
-    PROP_GO(&e, logger_add_filename(log_level, path->data), fail);
-    LOG_DEBUG("logging to path %x\n", FD(path));
+    PROP_GO(&e, logger_add_filename(log_level, pathstr), fail);
+    LOG_DEBUG("logging to path %x\n", FS(pathstr));
+
+    // keep our reference to pathbytes indefinitely, so pathstr stays valid
 
     Py_RETURN_NONE;
 
 fail:
+    if(pathbytes) Py_DECREF(pathbytes);
     raise_derr(&e);
     return NULL;
 }
@@ -1358,12 +1359,12 @@ static PyObject *pysm_to_fsid(PyObject *self, PyObject *args, PyObject *kwds){
     (void)self;
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
-    py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     DSTR_VAR(fsid, SMSQL_FSID_SIZE);
 
@@ -1380,12 +1381,12 @@ static PyObject *pysm_to_uuid(PyObject *self, PyObject *args, PyObject *kwds){
     (void)self;
     derr_t e = E_OK;
 
-    dstr_t _fsid;
-    const dstr_t *fsid;
-    py_args_t spec = {
-        pyarg_dstr(&_fsid, &fsid, "fsid"),
+    dstr_t fsid;
+    pyarg_i *spec[] = {
+        PD("fsid", &fsid),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
 
@@ -1404,12 +1405,12 @@ static PyObject *pysm_valid_email(
     (void)self;
     derr_t e = E_OK;
 
-    dstr_t _email;
-    const dstr_t *email;
-    py_args_t spec = {
-        pyarg_dstr(&_email, &email, "email"),
+    dstr_t email;
+    pyarg_i *spec[] = {
+        PD("email", &email),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     PROP_GO(&e, valid_splintermail_email(email), fail);
 
@@ -1426,12 +1427,12 @@ static PyObject *pysm_valid_password(
     (void)self;
     derr_t e = E_OK;
 
-    dstr_t _password;
-    const dstr_t *password;
-    py_args_t spec = {
-        pyarg_dstr(&_password, &password, "password"),
+    dstr_t password;
+    pyarg_i *spec[] = {
+        PD("password", &password),
     };
-    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
 
     PROP_GO(&e, valid_splintermail_password(password), fail);
 

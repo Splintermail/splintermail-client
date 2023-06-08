@@ -383,7 +383,7 @@ typedef derr_t (*passthru_pre_f)(
 static ie_dstr_t *mktag(derr_t *e, sc_t *sc){
     if(is_error(*e)) return NULL;
     DSTR_VAR(buf, 64);
-    IF_PROP(e, FMT(&buf, "%x%x", FD(&prefix), FU(++sc->ntags)) ){
+    IF_PROP(e, FMT(&buf, "%x%x", FD(prefix), FU(++sc->ntags)) ){
         return NULL;
     }
     return ie_dstr_new2(e, buf);
@@ -664,8 +664,8 @@ static derr_t pre_append(
 
     // step 1: write the unencrypted text to a file for saving
     sc->append_tmp_id = dirmgr_new_tmp_id(sc->dirmgr);
-    string_builder_t tmp_path = sb_append(&sc->dirmgr->path, FS("tmp"));
-    string_builder_t path = sb_append(&tmp_path, FU(sc->append_tmp_id));
+    string_builder_t tmp_path = sb_append(&sc->dirmgr->path, SBS("tmp"));
+    string_builder_t path = sb_append(&tmp_path, SBU(sc->append_tmp_id));
     PROP(&e, dstr_write_path(&path, &append->content->dstr) );
 
     // step 2: copy some details from the APPEND command
@@ -727,8 +727,8 @@ static derr_t check_append(
     if(!*ok) return e;
 
     // get the path to the temporary file
-    string_builder_t tmp_path = sb_append(&sc->dirmgr->path, FS("tmp"));
-    string_builder_t path = sb_append(&tmp_path, FU(sc->append_tmp_id));
+    string_builder_t tmp_path = sb_append(&sc->dirmgr->path, SBS("tmp"));
+    string_builder_t path = sb_append(&tmp_path, SBU(sc->append_tmp_id));
 
     if(st->status == IE_ST_OK){
         // snag the uid from the APPENDUID status code
@@ -1095,8 +1095,8 @@ static derr_t send_enable(sc_t *sc){
     derr_t e = E_OK;
 
     ie_dstr_t *tag = mktag(&e, sc);
-    ie_dstr_t *ecs = ie_dstr_new2(&e, *extension_token(EXT_CONDSTORE));
-    ie_dstr_t *eqr = ie_dstr_new2(&e, *extension_token(EXT_QRESYNC));
+    ie_dstr_t *ecs = ie_dstr_new2(&e, extension_token(EXT_CONDSTORE));
+    ie_dstr_t *eqr = ie_dstr_new2(&e, extension_token(EXT_QRESYNC));
     ie_dstr_t *enable = ie_dstr_add(&e, ecs, eqr);
     imap_cmd_arg_t arg = { .enable = enable };
     imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_ENABLE, arg);
@@ -1125,11 +1125,11 @@ static derr_t check_enable(
         bool condstore = false;
         bool qresync = false;
         for(ie_dstr_t *ptr = resp->arg.enabled; ptr; ptr = ptr->next){
-            if(dstr_eq(ptr->dstr, *extension_token(EXT_CONDSTORE))){
+            if(dstr_eq(ptr->dstr, extension_token(EXT_CONDSTORE))){
                 condstore = true;
                 continue;
             }
-            if(dstr_eq(ptr->dstr, *extension_token(EXT_QRESYNC))){
+            if(dstr_eq(ptr->dstr, extension_token(EXT_QRESYNC))){
                 qresync = true;
                 continue;
             }
@@ -1367,8 +1367,8 @@ void sc_free(sc_t *sc){
     dirmgr_freeze_free(sc->freeze_rename_dst);
     dirmgr_hold_free(sc->append_hold);
     if(sc->append_tmp_id){
-        string_builder_t tmp_path = sb_append(&sc->dirmgr->path, FS("tmp"));
-        string_builder_t path = sb_append(&tmp_path, FU(sc->append_tmp_id));
+        string_builder_t tmp_path = sb_append(&sc->dirmgr->path, SBS("tmp"));
+        string_builder_t path = sb_append(&tmp_path, SBU(sc->append_tmp_id));
         DROP_CMD( remove_path(&path) );
     }
     imap_cmd_free(sc->cmd);

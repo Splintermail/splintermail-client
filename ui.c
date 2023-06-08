@@ -23,11 +23,6 @@ DSTR_STATIC(os_default_sm_dir, "/var/lib/splintermail");
 DSTR_STATIC(os_default_sm_dir, "C:/ProgramData/splintermail");
 #endif
 
-static char cslash = '/';
-static dstr_t slash = {
-    .data = &cslash, .len = 1, .size = 1, .fixed_size = true
-};
-
 static derr_t maybe_read_path(
     dstr_t *config_text,
     string_builder_t path,
@@ -59,11 +54,7 @@ static derr_t maybe_parse_config(
     derr_t e2 = conf_parse(&sub, spec, speclen);
     CATCH(e2, E_ANY){
         DROP_VAR(&e2);
-        FFMT_QUIET(stderr, NULL,
-            "error parsing \"%x\", exiting\n",
-            FSB(&path, &slash)
-        );
-        ORIG(&e, E_VALUE, "unable to parse config file");
+        ORIG(&e, E_VALUE, "unable to parse config file at \"%x\"", FSB(path));
     }
 
     return e;
@@ -78,15 +69,15 @@ static derr_t load_os_config_files(
     // Linux / Mac code
 
     // try to read /etc/splintermail.conf
-    string_builder_t default_path = SB(FS("/etc/splintermail.conf"));
+    string_builder_t default_path = SBS("/etc/splintermail.conf");
     dstr_off_t default_text = {0};
     PROP(&e, maybe_read_path(config_text, default_path, &default_text) );
 
     // try to read $HOME/.splintermail.conf
     char* home = getenv("HOME");
-    string_builder_t home_base = SB(FS(home));
+    string_builder_t home_base = SBS(home);
     string_builder_t home_dir_path =
-        sb_append(&home_base, FS(".splintermail.conf"));
+        sb_append(&home_base, SBS(".splintermail.conf"));
     dstr_off_t home_dir_text = {0};
     if(home){
         PROP(&e, maybe_read_path(config_text, home_dir_path, &home_dir_text) );
@@ -94,9 +85,9 @@ static derr_t load_os_config_files(
 
     // try to read $XDG_CONFIG_HOME/splintermail.conf
     char* conf = getenv("XDG_CONFIG_HOME");
-    string_builder_t conf_base = SB(FS(conf));
+    string_builder_t conf_base = SBS(conf);
     string_builder_t conf_dir_path =
-        sb_append(&conf_base, FS(".splintermail.conf"));
+        sb_append(&conf_base, SBS(".splintermail.conf"));
     dstr_off_t conf_dir_text = {0};
     if(conf){
         PROP(&e, maybe_read_path(config_text, conf_dir_path, &conf_dir_text) );
@@ -121,9 +112,9 @@ static derr_t load_os_config_files(
 
     // try to read %APPDATA%\splintermail\splintermail.conf
     char* appdata = getenv("APPDATA");
-    string_builder_t appdata_base = SB(FS(appdata));
+    string_builder_t appdata_base = SBS(appdata);
     string_builder_t appdata_path =
-        sb_append(&appdata_base, FS("splintermail/splintermail.conf"));
+        sb_append(&appdata_base, SBS("splintermail/splintermail.conf"));
     dstr_off_t appdata_text = {0};
     if(appdata){
         PROP(&e, maybe_read_path(config_text, appdata_path, &appdata_text) );
@@ -145,9 +136,9 @@ static derr_t load_os_config_files(
     // get the second parent (/path/to)
     dstr_t p2 = ddirname(p1);
     // defualt path is /path/to/splintermail.conf
-    string_builder_t p2_path = SB(FD(&p2));
+    string_builder_t p2_path = SBD(p2);
     string_builder_t default_path =
-        sb_append(&p2_path, FS("splintermail.conf"));
+        sb_append(&p2_path, SBS("splintermail.conf"));
     dstr_off_t default_text = {0};
     PROP(&e, maybe_read_path(config_text, default_path, &default_text) );
 
@@ -174,8 +165,8 @@ static derr_t get_os_default_account_path(
     char* appdata = getenv("APPDATA");
     if(!appdata) return e;
 
-    *mem = SB(FS(appdata));
-    *account_path = sb_append(mem, FS("splintermail"));
+    *mem = SBS(appdata);
+    *account_path = sb_append(mem, SBS("splintermail"));
     PROP(&e,
         harness.dir_rw_access_path(account_path, true, account_dir_access)
     );
@@ -190,8 +181,8 @@ static derr_t get_os_default_account_path(
     // OSX always sets account_dir to in ~/Library/splintermail
     char* home = getenv("HOME");
     if(!home) return e;
-    *mem = SB(FS(home));
-    *account_path = sb_append(mem, FS("Library/splintermail"));
+    *mem = SBS(home);
+    *account_path = sb_append(mem, SBS("Library/splintermail"));
     PROP(&e,
         harness.dir_rw_access_path(account_path, true, account_dir_access)
     );
@@ -205,8 +196,8 @@ static derr_t get_os_default_account_path(
     // Linux default account_dir is $XDG_CACHE_HOME/splintermail
     char* cache = getenv("XDG_CACHE_HOME");
     if(cache){
-        *mem = SB(FS(cache));
-        *account_path = sb_append(mem, FS("splintermail"));
+        *mem = SBS(cache);
+        *account_path = sb_append(mem, SBS("splintermail"));
         PROP(&e,
             harness.dir_rw_access_path(account_path, true, account_dir_access)
         );
@@ -217,13 +208,13 @@ static derr_t get_os_default_account_path(
     char* home = getenv("HOME");
     if(!home) return e;
     // make sure there is a $HOME/.cache
-    *mem = SB(FS(home));
-    string_builder_t cache_path = sb_append(mem, FS(".cache"));
+    *mem = SBS(home);
+    string_builder_t cache_path = sb_append(mem, SBS(".cache"));
     bool ok;
     PROP(&e, harness.dir_rw_access_path(&cache_path, true, &ok) );
     if(!ok) return e;
     // then make sure there is a $HOME/.cache/splintermail
-    *account_path = sb_append(mem, FS(".cache/splintermail"));
+    *account_path = sb_append(mem, SBS(".cache/splintermail"));
     PROP(&e,
         harness.dir_rw_access_path(account_path, true, account_dir_access)
     );
@@ -264,7 +255,7 @@ static derr_t user_search_hook(
 
 static derr_t user_prompt(const char* prompt, dstr_t* resp, bool hide){
     derr_t e = E_OK;
-    PROP(&e, FFMT(stderr, NULL, prompt) );
+    PROP(&e, FFMT(stderr, prompt) );
     fflush(stderr);
     if(hide){
         PROP(&e, get_password(resp) );
@@ -296,19 +287,20 @@ static derr_t prompt_one_of(const char* prompt, char* opts, size_t* ret){
                 break;
             }
         }
-        PROP(&e, FFMT(stderr, NULL, "Response must be one of [%x]\n", FS(opts)) );
+        PROP(&e, FFMT(stderr, "Response must be one of [%x]\n", FS(opts)) );
     }
     return e;
 }
 
 static derr_t check_api_token_register(const string_builder_t *account_path,
-                                       const dstr_t* user, bool* do_reg){
+                                       const dstr_t user, bool *do_reg){
     derr_t e = E_OK;
     derr_t e2;
     *do_reg = false;
     // check if the user indicated they never want to register
-    string_builder_t user_path = sb_append(account_path, FD(user));
-    string_builder_t noregister_path = sb_append(&user_path, FS("noregister"));
+    string_builder_t user_path = sb_append(account_path, SBD(user));
+    string_builder_t noregister_path =
+        sb_append(&user_path, SBS("noregister"));
     // if a noregister file exists, don't do anything
     bool ok;
     PROP(&e, harness.file_r_access_path(&noregister_path, &ok) );
@@ -375,17 +367,17 @@ static derr_t migrate_ditm_keys_hook(
     if(dstr_count(file, &DSTR_LIT("@")) != 1) return e;
 
     // check for a key to migrate
-    string_builder_t ditm_user = sb_append(base, FD(file));
-    string_builder_t src = sb_append(&ditm_user, FS("device.pem"));
+    string_builder_t ditm_user = sb_append(base, SBD(*file));
+    string_builder_t src = sb_append(&ditm_user, SBS("device.pem"));
     bool ok;
     PROP(&e, exists_path(&src, &ok) );
     if(!ok) return e;
 
     // check if a migration is unnecessary
-    string_builder_t citm_path = sb_append(base, FS("citm"));
-    string_builder_t citm_user = sb_append(&citm_path, FD(file));
-    string_builder_t user_keys = sb_append(&citm_user, FS("keys"));
-    string_builder_t dst = sb_append(&user_keys, FS("mykey.pem"));
+    string_builder_t citm_path = sb_append(base, SBS("citm"));
+    string_builder_t citm_user = sb_append(&citm_path, SBD(*file));
+    string_builder_t user_keys = sb_append(&citm_user, SBS("keys"));
+    string_builder_t dst = sb_append(&user_keys, SBS("mykey.pem"));
     PROP(&e, exists_path(&dst, &ok) );
     if(ok) return e;
 
@@ -505,7 +497,7 @@ static derr_t api_command_main(
     // --account_dir option
     bool account_dir_access = false;
     if(o_account_dir.found){
-        account_path = SB(FD(&o_account_dir.val));
+        account_path = SBD(o_account_dir.val);
         // make sure we can access the account_dir
         PROP_GO(&e,
             harness.dir_rw_access_path(
@@ -518,17 +510,17 @@ static derr_t api_command_main(
     }
 
     if(!account_dir_access){
-        FFMT_QUIET(stderr, NULL,
+        FFMT_QUIET(stderr,
             "account directory %x not found or not "
             "accessible; API token access disabled\n",
-            FSB(&account_path, &slash)
+            FSB(account_path)
         );
     }
 
     // figure out who our user is
     bool user_found = false;
     if(o_user.found){
-        PROP_GO(&e, FMT(&user, "%x", FD(&o_user.val)), cu);
+        PROP_GO(&e, FMT(&user, "%x", FD(o_user.val)), cu);
         user_found = true;
     }else if(account_dir_access){
         // verify that we can auto-decide who the user is
@@ -561,7 +553,7 @@ static derr_t api_command_main(
     bool can_register = false; // have permissions to save an token?
     if(account_dir_access){
         // start the creds_path
-        user_path = sb_append(&account_path, FD(&user));
+        user_path = sb_append(&account_path, SBD(user));
         // if the folder doesn't exist, we know we can make it
         bool ok;
         PROP_GO(&e, harness.exists_path(&user_path, &ok), cu);
@@ -576,10 +568,10 @@ static derr_t api_command_main(
             if(ok){
                 user_dir_access = true;
             }else{
-                FFMT_QUIET(stderr, NULL,
+                FFMT_QUIET(stderr,
                     "Insufficient permissions for user directory %x; "
                     "API token access disabled\n",
-                    FSB(&user_path, &slash)
+                    FSB(user_path)
                 );
             }
         }
@@ -590,7 +582,7 @@ static derr_t api_command_main(
     bool creds_found = false;  // have good creds?
     if(user_dir_access){
         // complete the creds_path
-        creds_path = sb_append(&user_path, FS("api_token.json"));
+        creds_path = sb_append(&user_path, SBS("api_token.json"));
         // check if the file already exists
         bool ok;
         PROP_GO(&e, harness.exists_path(&creds_path, &ok), cu);
@@ -606,27 +598,27 @@ static derr_t api_command_main(
                 CATCH(e2, E_PARAM, E_INTERNAL){
                     DROP_VAR(&e2);
                     // broken token, warn user
-                    FFMT_QUIET(stderr, NULL,
+                    FFMT_QUIET(stderr,
                         "api token at \"%x\" appears invalid; ignoring it.\n",
-                        FSB(&creds_path, &slash)
+                        FSB(creds_path)
                     );
                 }else CATCH(e2, E_ANY){
                     DROP_VAR(&e2);
                     // NOMEM is about the only plausible error we could get here
-                    FFMT_QUIET(stderr, NULL,
+                    FFMT_QUIET(stderr,
                         "unexpected error reading api token at \"%x\"; "
                         "disabling API token access.\n",
-                        FSB(&creds_path, &slash)
+                        FSB(creds_path)
                     );
                 }else{
                     creds_found = true;
                 }
             }else{
                 // file exists, but we have no access to it
-                FFMT_QUIET(stderr, NULL,
+                FFMT_QUIET(stderr,
                     "Insufficient permissions for %x; "
                     "API token access disabled\n",
-                    FSB(&creds_path, &slash)
+                    FSB(creds_path)
                 );
                 /* no need to set can_register = false here, because it's
                    impossible to arrive here with can_register == true */
@@ -644,7 +636,7 @@ static derr_t api_command_main(
     if(newargc > 2){
         dstr_t argv2;
         DSTR_WRAP(argv2, argv[2], strlen(argv[2]), true);
-        PROP_GO(&e, json_encode(argv2, &argument_var), cu);
+        PROP_GO(&e, json_encode(argv2, WD(&argument_var)), cu);
         argument = &argument_var;
     }
 
@@ -682,13 +674,13 @@ static derr_t api_command_main(
         cu);
         // make sure confirmation was valid
         if(dstr_cmp(&new_password, &confirm_password) != 0){
-            FFMT_QUIET(stderr, NULL, "Password confirmation failed.\n");
+            FFMT_QUIET(stderr, "Password confirmation failed.\n");
             *retval = 6;
             goto cu;
         }
         // set the argument for the API call
         argument_var.len = 0;
-        PROP_GO(&e, json_encode(new_password, &argument_var), cu);
+        PROP_GO(&e, json_encode(new_password, WD(&argument_var)), cu);
         argument = &argument_var;
     }else if(need_password){
         PROP_GO(&e,
@@ -700,7 +692,7 @@ static derr_t api_command_main(
     if(can_register && !creds_found){
         bool do_reg;
         PROP_GO(&e,
-            check_api_token_register(&account_path, &user, &do_reg),
+            check_api_token_register(&account_path, user, &do_reg),
         cu);
         if(do_reg){
             // do the registration
@@ -725,9 +717,9 @@ static derr_t api_command_main(
     if(need_confirmation){
         // prompt for confirmation
         DSTR_STATIC(confirmation, "I really want to do this");
-        FFMT_QUIET(stderr, NULL,
+        FFMT_QUIET(stderr,
             "`%x` needs confirmation. Type the following text:\n"
-             "%x\n", FD(&command), FD(&confirmation));
+             "%x\n", FD(command), FD(confirmation));
         // get confirmation
         DSTR_VAR(temp, 256);
         PROP_GO(&e, get_string(&temp), cu);
@@ -765,15 +757,15 @@ static derr_t api_command_main(
                                 &code, &reason, &recv, &json), cu);
         // check for rejection of API token
         if(code == 401 || code == 403){
-            FFMT_QUIET(stderr, NULL,
+            FFMT_QUIET(stderr,
                 "API Token rejected, deleting token.  Run this "
                 "command again to generate a new token.\n"
             );
             derr_t e2 = dunlink_path(&creds_path);
             CATCH(e2, E_ANY){
                 TRACE(&e2, "error removing token\n");
-                FFMT_QUIET(stderr, NULL,
-                    "error removing token:\n %x", FD(&e2.msg)
+                FFMT_QUIET(stderr,
+                    "error removing token:\n %x", FD(e2.msg)
                 );
                 DROP_VAR(&e2);
             }
@@ -784,8 +776,8 @@ static derr_t api_command_main(
 
 
     if(code < 200 || code > 299){
-        FFMT_QUIET(stderr, NULL,
-            "api request rejected: %x %x\n", FI(code), FD(&reason)
+        FFMT_QUIET(stderr,
+            "api request rejected: %x %x\n", FI(code), FD(reason)
         );
         *retval = 10;
         goto cu;
@@ -803,7 +795,7 @@ static derr_t api_command_main(
     DSTR_VAR(errbuf, 1024);
     PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf), cu);
     if(!ok){
-        TRACE(&e, "%x\n", FD(&errbuf));
+        TRACE(&e, "%x\n", FD(errbuf));
         ORIG_GO(&e, E_RESPONSE, "invalid server response", cu);
     }
 
@@ -815,12 +807,7 @@ static derr_t api_command_main(
             if(is_error(e2)){
                 DROP_VAR( &e2 );
             }else if(ok){
-                FFMT_QUIET(
-                    stderr,
-                    NULL,
-                    "REST API call failed: \"%x\"\n",
-                    FD(&why)
-                );
+                FFMT_QUIET(stderr, "REST API call failed: \"%x\"\n", FD(why));
             }
             *retval = 14;
             goto cu;
@@ -876,7 +863,7 @@ static derr_t listener_cb(void *data, dstr_t val){
     DSTR_VAR(errbuf, 512);
     bool ok = parse_addrspec_ex(&l->dstrs[idx], spec, &errbuf);
     if(!ok){
-        FFMT_QUIET(stderr, NULL, "%x\n", FD(&errbuf));
+        FFMT_QUIET(stderr, "%x\n", FD(errbuf));
         l->invalid = true;
         return e;
     }
@@ -884,9 +871,9 @@ static derr_t listener_cb(void *data, dstr_t val){
 
     // --listener requires each of SCHEME, HOST, and PORT
     if(!spec->scheme.len || !spec->host.len || !spec->port.len){
-        FFMT_QUIET(stderr, NULL,
+        FFMT_QUIET(stderr,
             "--listen %x is missing elements, must be SCHEME://HOST:PORT\n",
-            FD(&specstr)
+            FD(specstr)
         );
         l->invalid = true;
     }
@@ -897,11 +884,11 @@ static derr_t listener_cb(void *data, dstr_t val){
     imap_security_e sec;
     ok = imap_scheme_parse(scheme, &sec);
     if(!ok){
-        FFMT_QUIET(stderr, NULL,
+        FFMT_QUIET(stderr,
             "--listen %x has invalid scheme '%x', "
             "must be one of tls, starttls, or insecure\n",
-            FD(&specstr),
-            FD(&scheme)
+            FD(specstr),
+            FD(scheme)
         );
         l->invalid = true;
         return e;
@@ -968,9 +955,9 @@ static int _limit_options(
 static void fdump_opt(opt_spec_t *spec, FILE *f){
     if(!spec->found) return;
     if(spec->val_req){
-        FFMT_QUIET(f, NULL, "%x %x\n", FS(spec->olong), FD(&spec->val));
+        FFMT_QUIET(f, "%x %x\n", FS(spec->olong), FD(spec->val));
     }else{
-        FFMT_QUIET(f, NULL, "%x\n", FS(spec->olong));
+        FFMT_QUIET(f, "%x\n", FS(spec->olong));
     }
 }
 
@@ -1087,15 +1074,14 @@ int do_main(int argc, char* argv[], bool windows_service){
     // load up config files
     if(o_config.found){
         // if `-c` or `--config` was specified, load that only
-        string_builder_t config_path = SB(FD(&o_config.val));
+        string_builder_t config_path = SBD(o_config.val);
         bool ok;
         PROP_GO(&e, harness.file_r_access_path(&config_path, &ok), cu);
         if(!ok){
             FFMT_QUIET(
                 stderr,
-                NULL,
                 "unable to access config file \"%x\"\n",
-                FD(&o_config.val)
+                FD(o_config.val)
             );
             retval = 2;
             goto cu;
@@ -1139,7 +1125,7 @@ int do_main(int argc, char* argv[], bool windows_service){
             // treat --listen specially
             if(strcmp(spec[i]->olong, "listen") == 0){
                 for(size_t i = 0; i < listeners.len; i++){
-                    FFMT_QUIET(stdout, NULL, "listen %x\n", FD(&dstrs[i]));
+                    FFMT_QUIET(stdout, "listen %x\n", FD(dstrs[i]));
                 }
                 continue;
             }
@@ -1200,17 +1186,17 @@ int do_main(int argc, char* argv[], bool windows_service){
 
     // --splintermail-dir option
     if(o_sm_dir.found){
-        PROP_GO(&e, FMT(&sm_dir, "%x", FD(&o_sm_dir.val)), cu);
+        PROP_GO(&e, FMT(&sm_dir, "%x", FD(o_sm_dir.val)), cu);
     }else{
-        PROP_GO(&e, FMT(&sm_dir, "%x", FD(&os_default_sm_dir)), cu);
+        PROP_GO(&e, FMT(&sm_dir, "%x", FD(os_default_sm_dir)), cu);
     }
-    string_builder_t sm_dir_path = SB(FD(&sm_dir));
+    string_builder_t sm_dir_path = SBD(sm_dir);
 
 #ifdef BUILD_DEBUG
     // debug options
     DSTR_VAR(r_host_d, 256);
     if(o_r_host.found){
-        PROP_GO(&e, FMT(&r_host_d, "%x", FD(&o_r_host.val)), cu);
+        PROP_GO(&e, FMT(&r_host_d, "%x", FD(o_r_host.val)), cu);
     }else{
         PROP_GO(&e, FMT(&r_host_d, "splintermail.com"), cu);
     }
@@ -1236,13 +1222,13 @@ int do_main(int argc, char* argv[], bool windows_service){
     if(windows_service || strcmp("citm", argv[1]) == 0){
         // then print to a log file, unless --no-logfile is specifed
         if(o_logfile.found > o_no_logfile.found){
-            PROP_GO(&e, FMT(&logfile_path, "%x", FD(&o_logfile.val)), cu);
+            PROP_GO(&e, FMT(&logfile_path, "%x", FD(o_logfile.val)), cu);
             trim_logfile_quiet(logfile_path.data, 100000000);
             logger_add_filename(log_level, logfile_path.data);
         }
         // log file defaults to on, in ${sm_dir}/citm_log
         else if(!o_logfile.found && !o_no_logfile.found){
-            PROP_GO(&e, FMT(&logfile_path, "%x/citm_log", FD(&sm_dir)), cu);
+            PROP_GO(&e, FMT(&logfile_path, "%x/citm_log", FD(sm_dir)), cu);
             trim_logfile_quiet(logfile_path.data, 100000000);
             logger_add_filename(log_level, logfile_path.data);
         }
@@ -1261,59 +1247,59 @@ int do_main(int argc, char* argv[], bool windows_service){
         if(!listeners.key_required){
             // noop if we don't need a server key/cert
         }else if(o_cert.found){
-            PROP_GO(&e, FMT(&cert, "%x", FD(&o_cert.val)), cu);
+            PROP_GO(&e, FMT(&cert, "%x", FD(o_cert.val)), cu);
         }else{
             // look for the default certificate
             bool ok;
             string_builder_t path = sb_append(
-                &sm_dir_path, FS("citm-127.0.0.1-cert.pem")
+                &sm_dir_path, SBS("citm-127.0.0.1-cert.pem")
             );
             PROP_GO(&e, harness.exists_path(&path, &ok), cu);
             if(!ok){
                 // detect the pre-citm certificate, if present
-                path = sb_append(&sm_dir_path, FS("ditm-127.0.0.1-cert.pem"));
+                path = sb_append(&sm_dir_path, SBS("ditm-127.0.0.1-cert.pem"));
                 PROP_GO(&e, harness.exists_path(&path, &ok), cu);
             }
             if(!ok){
-                FFMT_QUIET(stderr, NULL,
+                FFMT_QUIET(stderr,
                     "did not find certificate file in %x, "
                     "please re-install splintermail or provide a "
                     "certificate explictly via --cert\n",
-                    FD(&sm_dir)
+                    FD(sm_dir)
                 );
                 retval = 12;
                 goto cu;
             }
-            PROP_GO(&e, sb_to_dstr(&path, &slash, &cert), cu);
+            PROP_GO(&e, FMT(&cert, "%x", FSB(path)), cu);
         }
 
         // get key path
         if(!listeners.key_required){
             // noop if we don't need a server key/cert
         }else if(o_key.found){
-            PROP_GO(&e, FMT(&key, "%x", FD(&o_key.val)), cu);
+            PROP_GO(&e, FMT(&key, "%x", FD(o_key.val)), cu);
         }else{
             // look for the default key
             bool ok;
             string_builder_t path = sb_append(
-                &sm_dir_path, FS("citm-127.0.0.1-key.pem")
+                &sm_dir_path, SBS("citm-127.0.0.1-key.pem")
             );
             PROP_GO(&e, harness.exists_path(&path, &ok), cu);
             if(!ok){
                 // detect the pre-citm key, if present
-                path = sb_append(&sm_dir_path, FS("ditm-127.0.0.1-key.pem"));
+                path = sb_append(&sm_dir_path, SBS("ditm-127.0.0.1-key.pem"));
                 PROP_GO(&e, harness.exists_path(&path, &ok), cu);
             }
             if(!ok){
-                FFMT_QUIET(stderr, NULL,
+                FFMT_QUIET(stderr,
                     "did not find key file in %x, please re-install "
                     "splintermail or provide a key explictly via --key\n",
-                    FD(&sm_dir)
+                    FD(sm_dir)
                 );
                 retval = 13;
                 goto cu;
             }
-            PROP_GO(&e, sb_to_dstr(&path, &slash, &key), cu);
+            PROP_GO(&e, FMT(&key, "%x", FSB(path)), cu);
         }
 
         // migrate pre-citm device keys for use with citm
@@ -1325,7 +1311,7 @@ int do_main(int argc, char* argv[], bool windows_service){
 
         PROP_GO(&e, FMT(&remote_svc, "%x", FU(imap_port)), cu);
 
-        string_builder_t citm_path = sb_append(&sm_dir_path, FS("citm"));
+        string_builder_t citm_path = sb_append(&sm_dir_path, SBS("citm"));
 
 #ifdef _WIN32
         if(windows_service == true){

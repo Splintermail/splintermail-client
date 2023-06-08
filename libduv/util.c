@@ -8,18 +8,13 @@
 
 REGISTER_ERROR_TYPE(E_UV, "UVERROR", "error from libuv");
 
-derr_type_t fmthook_uv_error(dstr_t* out, const void* arg){
-    // cast the input
-    const int* err = (const int*)arg;
-    const char *msg = uv_strerror(*err);
+DEF_CONTAINER_OF(_fmt_uverr_t, iface, fmt_i)
+
+derr_type_t _fmt_uverr(const fmt_i *iface, writer_i *out){
+    int err = CONTAINER_OF(iface, _fmt_uverr_t, iface)->err;
+    const char *msg = uv_strerror(err);
     size_t len = strlen(msg);
-    // make sure the message will fit
-    derr_type_t type = dstr_grow_quiet(out, out->len + len);
-    if(type) return type;
-    // copy the message
-    memcpy(out->data + out->len, msg, len);
-    out->len += len;
-    return E_NONE;
+    return out->w->puts(out, msg, len);
 }
 
 // all uv errors, as derr_type_t's
@@ -132,7 +127,7 @@ void async_handle_close_cb(uv_handle_t *handle){
     derr_t e = E_OK; \
     int ret = func(__VA_ARGS__); \
     if(ret < 0){ \
-        ORIG(&e, uv_err_type(ret), #func ": %x\n", FUV(&ret)); \
+        ORIG(&e, uv_err_type(ret), #func ": %x\n", FUV(ret)); \
     }\
     return e
 
@@ -160,7 +155,7 @@ derr_t duv_cancel_work(uv_work_t *work){
 void duv_timer_must_init(uv_loop_t *loop, uv_timer_t *timer){
     int ret = uv_timer_init(loop, timer);
     if(ret < 0){
-        LOG_FATAL("uv_timer_init error: %x\n", FUV(&ret));
+        LOG_FATAL("uv_timer_init error: %x\n", FUV(ret));
     }
 }
 
@@ -170,7 +165,7 @@ void duv_timer_must_start(
     int ret = uv_timer_start(timer, cb, timeout_ms, 0);
     if(ret < 0){
         LOG_FATAL(
-            "uv_timer_start error (was timer closed?): %x\n", FUV(&ret)
+            "uv_timer_start error (was timer closed?): %x\n", FUV(ret)
         );
     }
 }
@@ -178,7 +173,7 @@ void duv_timer_must_start(
 void duv_timer_must_stop(uv_timer_t *timer){
     int ret = uv_timer_stop(timer);
     if(ret < 0){
-        LOG_FATAL("uv_timer_stop error (not possible?): %x\n", FUV(&ret));
+        LOG_FATAL("uv_timer_stop error (not possible?): %x\n", FUV(ret));
     }
 }
 

@@ -1,10 +1,10 @@
 #include "libcitm.h"
 
-#define FPRS_TMP_PATH(p) sb_append(p, FS("fprs_seen.tmp"))
-#define FPRS_PATH(p) sb_append(p, FS("fprs_seen"))
-#define SYNCED_TMP_PATH(p) sb_append(p, FS("mailboxes_synced.tmp"))
-#define SYNCED_PATH(p) sb_append(p, FS("mailboxes_synced"))
-#define XKEYSYNCED_PATH(p) sb_append(p, FS("xkeysync_completed"))
+#define FPRS_TMP_PATH(p) sb_append(p, SBS("fprs_seen.tmp"))
+#define FPRS_PATH(p) sb_append(p, SBS("fprs_seen"))
+#define SYNCED_TMP_PATH(p) sb_append(p, SBS("mailboxes_synced.tmp"))
+#define SYNCED_PATH(p) sb_append(p, SBS("mailboxes_synced"))
+#define XKEYSYNCED_PATH(p) sb_append(p, SBS("xkeysync_completed"))
 
 static derr_t save_fprs(jsw_atree_t *fprs, const string_builder_t *path){
     derr_t e = E_OK;

@@ -26,7 +26,7 @@ static void* async_reader_thread(void* arg){
         if(amnt_read == 0){
             break;
         }else if(amnt_read < 0){
-            DROP_CMD( FFMT(stderr, NULL, "read failed: %x\n", FE(&errno)) );
+            DROP_CMD( FFMT(stderr, "read failed: %x\n", FE(errno)) );
             ORIG_GO(&e, E_OS, "read failed during test", done);
         }
         // add that one character to the buffer
@@ -84,7 +84,7 @@ struct test_case_t {
 
 static derr_t run_test_case(struct test_case_t test){
     derr_t e = E_OK;
-    PROP(&e, FFMT(stderr, NULL, "---- running test case %x ----\n",
+    PROP(&e, FFMT(stderr, "---- running test case %x ----\n",
                  FS(test.test_name)) );
     // first reset several values
     looked_good = true;
@@ -136,7 +136,7 @@ static derr_t run_test_case(struct test_case_t test){
         temp++;
         argc++;
     }
-    PROP(&e, FFMT(stderr, NULL, "running do_main\n") );
+    PROP(&e, FFMT(stderr, "running do_main\n") );
     // start the async_reader
     PROP(&e, start_async_reader(&fds[0]) );
     // run the test
@@ -179,11 +179,11 @@ static derr_t run_test_case(struct test_case_t test){
               FI(test.expect_return), FI(main_ret));
     if(test.expect_out && strcmp(test.expect_out, out_buffer->data))
         UH_OH("run_test_case stdout exp:\n%x but got:\n%x\n",
-              FS(test.expect_out), FD(out_buffer));
+              FS(test.expect_out), FD(*out_buffer));
     // now, finally check if we passed the tests or not
     if(looked_good == false){
         LOG_ERROR("---- FAIL ----\n");
-        TRACE(&e, "test %x failed:\n%x", FS(test.test_name), FD(&reason_log));
+        TRACE(&e, "test %x failed:\n%x", FS(test.test_name), FD(reason_log));
         ORIG_GO(&e, E_VALUE, "test failed", cleanup);
     }else{
         LOG_ERROR("---- PASS ----\n");
@@ -634,7 +634,7 @@ static derr_t test_trim_logfile(void){
     PROP(&e, mkdir_temp("test-ui", &tmp) );
 
     DSTR_VAR(log, 256);
-    PROP_GO(&e, FMT(&log, "%x/logfile", FD(&tmp)), cu);
+    PROP_GO(&e, FMT(&log, "%x/logfile", FD(tmp)), cu);
     char *path = log.data;
     int result;
 

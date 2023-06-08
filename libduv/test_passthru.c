@@ -164,7 +164,7 @@ static void read_cb_phase7(stream_i *s, stream_read_t *req, dstr_t buf){
 
     // we expect EOF situation
     if(buf.len != 0){
-        ORIG_GO(&E, E_VALUE, "stream_read_eof non-eof (%x)", fail, FD(&buf));
+        ORIG_GO(&E, E_VALUE, "stream_read_eof non-eof (%x)", fail, FD(buf));
     }
 
     if(!stream->eof){
@@ -183,7 +183,7 @@ fail:
 static void on_peer_shutdown_phase7(uv_shutdown_t *req, int status){
     (void)req;
     if(status < 0){
-        TRACE(&E, "on_peer_shutdown_phase7: %x\n", FUV(&status));
+        TRACE(&E, "on_peer_shutdown_phase7: %x\n", FUV(status));
         ORIG_GO(&E, E_VALUE, "on_peer_shutdown_phase7 error", fail);
     }
 
@@ -216,7 +216,7 @@ static void peer_read_cb_phase6(
         if(nread != UV_EOF){
             int status = (int)nread;
             TRACE(&E,
-                "phase 6 eof not found: %x (%x)\n", FI(nread), FUV(&status)
+                "phase 6 eof not found: %x (%x)\n", FI(nread), FUV(status)
             );
             ORIG_GO(&E, E_VALUE, "phase 6 eof not found", fail);
             return;
@@ -230,7 +230,7 @@ static void peer_read_cb_phase6(
     if(nread == 0 || nread == UV_ECANCELED) return;
     if(nread < 0){
         int status = (int)nread;
-        TRACE(&E, "peer_read_cb_phase6: %x\n", FUV(&status));
+        TRACE(&E, "peer_read_cb_phase6: %x\n", FUV(status));
         ORIG_GO(&E, E_VALUE, "peer_read_cb_phase6 error", fail);
     }
 
@@ -420,7 +420,7 @@ static void read_cb_phase4(stream_i *s, stream_read_t *req, dstr_t buf){
 
     // we expect EOF situation
     if(buf.len != 0){
-        ORIG_GO(&E, E_VALUE, "stream_read_eof non-eof (%x)", fail, FD(&buf));
+        ORIG_GO(&E, E_VALUE, "stream_read_eof non-eof (%x)", fail, FD(buf));
     }
 
     if(!stream->eof){
@@ -444,7 +444,7 @@ fail:
 static void on_peer_shutdown_phase4(uv_shutdown_t *req, int status){
     (void)req;
     if(status < 0){
-        TRACE(&E, "on_peer_shutdown_phase4: %x\n", FUV(&status));
+        TRACE(&E, "on_peer_shutdown_phase4: %x\n", FUV(status));
         ORIG_GO(&E, E_VALUE, "on_peer_shutdown_phase4 error", fail);
     }
 
@@ -483,7 +483,7 @@ static void peer_read_eof(uv_stream_t *s, ssize_t nread, const uv_buf_t *buf){
     }
 
     int status = (int)nread;
-    TRACE(&E, "peer_read_eof: %x\n", FUV(&status));
+    TRACE(&E, "peer_read_eof: %x\n", FUV(status));
     ORIG_GO(&E, uv_err_type(status), "peer_read_eof error", fail);
 
 fail:
@@ -549,7 +549,7 @@ fail:
 static void peer_write_cb(uv_write_t *req, int status){
     (void)req;
     if(status < 0){
-        TRACE(&E, "peer_write_cb: %x\n", FUV(&status));
+        TRACE(&E, "peer_write_cb: %x\n", FUV(status));
         ORIG_GO(&E, uv_err_type(status), "peer_write_cb error", fail);
     }
     return;
@@ -615,7 +615,7 @@ static void peer_read_cb_phase1(
     if(nread == 0) return;
     if(nread < 0){
         int status = (int)nread;
-        TRACE(&E, "peer_read_cb_phase1: %x\n", FUV(&status));
+        TRACE(&E, "peer_read_cb_phase1: %x\n", FUV(status));
         ORIG_GO(&E, uv_err_type(status), "peer_read_cb_phase1 error", fail);
     }
 
@@ -707,7 +707,7 @@ fail:
 static void on_listener(uv_stream_t *server, int status){
     (void)server;
     if(status < 0){
-        TRACE(&E, "on_listener: %x\n", FUV(&status));
+        TRACE(&E, "on_listener: %x\n", FUV(status));
         ORIG_GO(&E, uv_err_type(status), "on_listener error", fail);
     }
 

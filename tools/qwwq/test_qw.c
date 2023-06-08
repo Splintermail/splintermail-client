@@ -14,11 +14,11 @@ static derr_t test_qwwq(void){
     dstr_t out = {0};
     qw_dynamics_t dynamics = {0};
 
-    string_builder_t test_files = SB(FS(g_test_files));
-    string_builder_t qw_path = sb_append(&test_files, FS("qwwq"));
-    string_builder_t conf_path = sb_append(&qw_path, FS("qw.conf"));
-    string_builder_t templ_path = sb_append(&qw_path, FS("qw.templ"));
-    string_builder_t exp_path = sb_append(&qw_path, FS("qw.exp"));
+    string_builder_t test_files = SBS(g_test_files);
+    string_builder_t qw_path = sb_append(&test_files, SBS("qwwq"));
+    string_builder_t conf_path = sb_append(&qw_path, SBS("qw.conf"));
+    string_builder_t templ_path = sb_append(&qw_path, SBS("qw.templ"));
+    string_builder_t exp_path = sb_append(&qw_path, SBS("qw.exp"));
 
     // we intentionally lie about the confdirname for testing purposes
     DSTR_STATIC(confdirname, "confdirname");
@@ -27,7 +27,7 @@ static derr_t test_qwwq(void){
     size_t ndynstrs = sizeof(dynstrs)/sizeof(*dynstrs);
     PROP_GO(&e, qw_dynamics_init(&dynamics, dynstrs, ndynstrs), cu);
 
-    PROP_GO(&e, sb_to_dstr(&qw_path, &DSTR_LIT("/"), &templdirname), cu);
+    PROP_GO(&e, FMT(&templdirname, "%x", FSB(qw_path)), cu);
 
     PROP_GO(&e, dstr_read_path(&conf_path, &conf), cu);
     PROP_GO(&e, dstr_read_path(&templ_path, &templ),  cu);
@@ -47,7 +47,7 @@ static derr_t test_qwwq(void){
         ),
     cu);
 
-    EXPECT_DM_GO(&e, "out", &out, &exp, cu);
+    EXPECT_DM_GO(&e, "out", out, exp, cu);
 
 cu:
     dstr_free(&conf);

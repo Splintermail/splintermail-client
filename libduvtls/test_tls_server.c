@@ -114,7 +114,7 @@ static derr_t test_tls_server(bool with_preinput){
         fake_stream_write_done(from); \
     } while(0)
 
-    #define SHOW_STATE FFMT_QUIET(stdout, NULL, \
+    #define SHOW_STATE FFMT_QUIET(stdout, \
         "client_wants_read:%x\n" \
         "client_wants_write:%x\n" \
         "server_wants_read:%x\n" \
@@ -191,7 +191,7 @@ static derr_t test_tls_server(bool with_preinput){
     EXPECT_READ_CB;
     EXPECT_WRITE_CB;
     EXPECT_READY_STATE;
-    EXPECT_D_GO(&e, "rbuf", &rbuf, &msg1, cu);
+    EXPECT_D_GO(&e, "rbuf", rbuf, msg1, cu);
 
     // client writes to the server
     DSTR_STATIC(msg2, "secret message 2");
@@ -208,7 +208,7 @@ static derr_t test_tls_server(bool with_preinput){
     EXPECT_READ_CB;
     EXPECT_WRITE_CB;
     EXPECT_READY_STATE;
-    EXPECT_D_GO(&e, "rbuf", &rbuf, &msg2, cu);
+    EXPECT_D_GO(&e, "rbuf", rbuf, msg2, cu);
 
 cu:
     MERGE_CMD(&E, fake_stream_cleanup(&scheduler, c, &fc), "fc");

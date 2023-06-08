@@ -9,15 +9,16 @@
 // helper functions
 
 // same as the sql procedures
-derr_t to_fsid(const dstr_t *uuid, dstr_t *out);
-derr_t to_uuid(const dstr_t *fsid, dstr_t *out);
+derr_t to_fsid(const dstr_t uuid, dstr_t *out);
+derr_t to_uuid(const dstr_t fsid, dstr_t *out);
 
-derr_type_t fmthook_fsid(dstr_t* out, const void* arg);
+typedef struct {
+    fmt_i iface;
+    const dstr_t uuid;
+} _fmt_fsid_t;
 
-static inline fmt_t FSID(const dstr_t* uuid){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)uuid,
-                                     .hook = fmthook_fsid} } };
-}
+derr_type_t _fmt_fsid(const fmt_i *iface, writer_i *out);
+#define FSID(uuid) (&(_fmt_fsid_t){ {_fmt_fsid}, uuid }.iface)
 
 // writes SMSQL_PASSWORD_SALT_SIZE random ASCII bytes
 derr_t random_password_salt(dstr_t *salt);
@@ -25,29 +26,29 @@ derr_t random_password_salt(dstr_t *salt);
 // sha512 password hash
 // silently truncates passwords > 128 bytes before hashing
 derr_t hash_password(
-    const dstr_t *pass, unsigned int rounds, const dstr_t *salt, dstr_t *hash
+    const dstr_t pass, unsigned int rounds, const dstr_t salt, dstr_t *hash
 );
 
 // just the hash validation
 derr_t validate_password_hash(
-    const dstr_t *pass, const dstr_t *true_hash, bool *ok
+    const dstr_t pass, const dstr_t true_hash, bool *ok
 );
 
 // validation functions
 
 // checks characters
-bool valid_username_chars(const dstr_t *username);
+bool valid_username_chars(const dstr_t username);
 
 // checks length, ending, and characters
 // raise E_USERMSG on failure
-derr_t valid_splintermail_email(const dstr_t *email);
+derr_t valid_splintermail_email(const dstr_t email);
 
 // checks characters
-bool valid_password_chars(const dstr_t *pass);
+bool valid_password_chars(const dstr_t pass);
 
 // checks length, characters, and no leading or trailing spaces
 // raise E_USERMSG on failure
-derr_t valid_splintermail_password(const dstr_t *pass);
+derr_t valid_splintermail_password(const dstr_t pass);
 
 // predefined queries
 
@@ -82,11 +83,11 @@ derr_t valid_splintermail_password(const dstr_t *pass);
 #define SMSQL_CSRF_TIMEOUT (24*60*60)
 
 derr_t get_uuid_for_email(
-    MYSQL *sql, const dstr_t *email, dstr_t *uuid, bool *ok
+    MYSQL *sql, const dstr_t email, dstr_t *uuid, bool *ok
 );
 
 derr_t get_email_for_uuid(
-    MYSQL *sql, const dstr_t *uuid, dstr_t *email, bool *ok
+    MYSQL *sql, const dstr_t uuid, dstr_t *email, bool *ok
 );
 
 // aliases
@@ -98,22 +99,22 @@ typedef struct {
 } smsql_alias_t;
 DEF_CONTAINER_OF(smsql_alias_t, link, link_t)
 
-derr_t smsql_alias_new(smsql_alias_t **out, const dstr_t *email, bool paid);
+derr_t smsql_alias_new(smsql_alias_t **out, const dstr_t email, bool paid);
 void smsql_alias_free(smsql_alias_t **old);
 
 // returns a list of smsql_alias_t's
-derr_t list_aliases(MYSQL *sql, const dstr_t *uuid, link_t *out);
+derr_t list_aliases(MYSQL *sql, const dstr_t uuid, link_t *out);
 
 // throws E_USERMSG if max aliases reached
-derr_t add_random_alias(MYSQL *sql, const dstr_t *uuid, dstr_t *alias);
+derr_t add_random_alias(MYSQL *sql, const dstr_t uuid, dstr_t *alias);
 
 // throws E_USERMSG if alias is unavailable
-derr_t add_primary_alias(MYSQL *sql, const dstr_t *uuid, const dstr_t *alias);
+derr_t add_primary_alias(MYSQL *sql, const dstr_t uuid, const dstr_t alias);
 
 // throws E_USERMSG if no alias matched
-derr_t delete_alias(MYSQL *sql, const dstr_t *uuid, const dstr_t *alias);
+derr_t delete_alias(MYSQL *sql, const dstr_t uuid, const dstr_t alias);
 
-derr_t delete_all_aliases(MYSQL *sql, const dstr_t *uuid);
+derr_t delete_all_aliases(MYSQL *sql, const dstr_t uuid);
 
 // devices
 
@@ -123,31 +124,31 @@ typedef struct {
 } smsql_dstr_t;
 DEF_CONTAINER_OF(smsql_dstr_t, link, link_t)
 
-derr_t smsql_dstr_new(smsql_dstr_t **out, const dstr_t *val);
+derr_t smsql_dstr_new(smsql_dstr_t **out, const dstr_t val);
 derr_t smsql_dstr_new_cstr(smsql_dstr_t **out, const char *val);
 void smsql_dstr_free(smsql_dstr_t **old);
 
 /* returns a list of hex-encoded fingerprints (smsql_dstr_t's), ordered
    by fingerprint */
-derr_t list_device_fprs(MYSQL *sql, const dstr_t *uuid, link_t *out);
+derr_t list_device_fprs(MYSQL *sql, const dstr_t uuid, link_t *out);
 
 /* returns a list of pem-encoded public keys (smsql_dstr_t's), ordered
    by fingerprint */
-derr_t list_device_keys(MYSQL *sql, const dstr_t *uuid, link_t *out);
+derr_t list_device_keys(MYSQL *sql, const dstr_t uuid, link_t *out);
 
 // returns a user's device identified by a particular fingerprint
 derr_t get_device(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr, dstr_t *key, bool *ok
+    MYSQL *sql, const dstr_t uuid, const dstr_t fpr, dstr_t *key, bool *ok
 );
 
 // take a PEM-encoded public key, validate it, and add it to an account
 // raises E_USERMSG on invalid or duplicate key
 derr_t add_device(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *pubkey, dstr_t *fpr
+    MYSQL *sql, const dstr_t uuid, const dstr_t pubkey, dstr_t *fpr
 );
 
 // throws E_USERMSG if no device matched
-derr_t delete_device(MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr_hex);
+derr_t delete_device(MYSQL *sql, const dstr_t uuid, const dstr_t fpr_hex);
 
 // tokens
 
@@ -160,32 +161,32 @@ DEF_CONTAINER_OF(smsql_uint_t, link, link_t)
 derr_t smsql_uint_new(smsql_uint_t **out, uint32_t val);
 void smsql_uint_free(smsql_uint_t **old);
 
-derr_t list_tokens(MYSQL *sql, const dstr_t *uuid, link_t *out);
+derr_t list_tokens(MYSQL *sql, const dstr_t uuid, link_t *out);
 
 derr_t add_token(
-    MYSQL *sql, const dstr_t *uuid, uint32_t *token, dstr_t *secret
+    MYSQL *sql, const dstr_t uuid, uint32_t *token, dstr_t *secret
 );
 
 // throws E_USERMSG if no token matched
-derr_t delete_token(MYSQL *sql, const dstr_t *uuid, uint32_t token);
+derr_t delete_token(MYSQL *sql, const dstr_t uuid, uint32_t token);
 
 // misc
 
 // throws E_USERMSG on failure
 derr_t create_account(
     MYSQL *sql,
-    const dstr_t *email,
-    const dstr_t *pass,
+    const dstr_t email,
+    const dstr_t pass,
     dstr_t *uuid
 );
 
 // gateway is responsible for ensuring a password is provided first
 // gateway is also responsible for calling trigger_deleter(), below
-derr_t delete_account(MYSQL *sql, const dstr_t *uuid);
+derr_t delete_account(MYSQL *sql, const dstr_t uuid);
 
 derr_t account_info(
     MYSQL *sql,
-    const dstr_t *uuid,
+    const dstr_t uuid,
     size_t *num_devices,
     size_t *num_primary_aliases,
     size_t *num_random_aliases
@@ -193,12 +194,12 @@ derr_t account_info(
 
 // validate a password for a user against the database
 derr_t validate_user_password(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *pass, bool *ok
+    MYSQL *sql, const dstr_t uuid, const dstr_t pass, bool *ok
 );
 
 // returns uuid or throws E_USERMSG on failure
 derr_t validate_login(
-    MYSQL *sql, const dstr_t *email, const dstr_t *pass, dstr_t *uuid
+    MYSQL *sql, const dstr_t email, const dstr_t pass, dstr_t *uuid
 );
 
 // validate a token against the database, returning uuid and email
@@ -210,23 +211,23 @@ derr_t validate_token_auth(
     MYSQL *sql,
     uint32_t token,
     uint64_t nonce,
-    const dstr_t *payload,
-    const dstr_t *sig,
+    const dstr_t payload,
+    const dstr_t sig,
     dstr_t *uuid
 );
 
 // the gateway should enforce a valid old password is provided first
 // throws E_USERMSG on invalid password
-derr_t change_password(MYSQL *sql, const dstr_t *uuid, const dstr_t *pass);
+derr_t change_password(MYSQL *sql, const dstr_t uuid, const dstr_t pass);
 
 // uses time() for the login and last_seen times.
 /* this API implies that you should always create a fresh session_id on login
    (which is already a mandatory practice to avoid session fixation attacks) */
 derr_t add_session_auth(
-    MYSQL *sql, int server_id, const dstr_t *session_id, const dstr_t *uuid
+    MYSQL *sql, int server_id, const dstr_t session_id, const dstr_t uuid
 );
 
-derr_t session_logout(MYSQL *sql, int server_id, const dstr_t *session_id);
+derr_t session_logout(MYSQL *sql, int server_id, const dstr_t session_id);
 
 /* check if a session id is valid, and get the user_uuid if it is.
    valid sessions meet the following criteria:
@@ -239,21 +240,21 @@ derr_t session_logout(MYSQL *sql, int server_id, const dstr_t *session_id);
    of the session */
 // throws E_USERMSG on bad sessions
 derr_t validate_session_auth(
-    MYSQL *sql, int server_id, const dstr_t *session_id, dstr_t *uuid
+    MYSQL *sql, int server_id, const dstr_t session_id, dstr_t *uuid
 );
 
 // new_csrf returns a token you can embed in a webpage
 derr_t new_csrf(
-    MYSQL *sql, int server_id, const dstr_t *session_id, dstr_t *csrf
+    MYSQL *sql, int server_id, const dstr_t session_id, dstr_t *csrf
 );
 
 // validate_csrf() just checks if the token was valid for this session
 // throws E_USERMSG on bad tokens
-derr_t validate_csrf(MYSQL *sql, const dstr_t *session_id, const dstr_t *csrf);
+derr_t validate_csrf(MYSQL *sql, const dstr_t session_id, const dstr_t csrf);
 
 // returns true if uuid/address matches accounts.email or aliases.alias
 derr_t user_owns_address(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *address, bool *ok
+    MYSQL *sql, const dstr_t uuid, const dstr_t address, bool *ok
 );
 
 /* This will atomically check if the user is allowed to send to this many
@@ -267,7 +268,7 @@ derr_t user_owns_address(
    the limit message. */
 derr_t limit_check(
     MYSQL *sql,
-    const dstr_t *uuid,
+    const dstr_t uuid,
     unsigned int recipients,
     bool *ok,
     bool *msg_sent,
@@ -281,13 +282,13 @@ derr_t gtid_current_pos(MYSQL *sql, dstr_t *out);
 /* AFTER deleting an account, it is safe to try to trigger the deletions
    service.  It is expected that the caller is tolerant of errors, since they
    are often not fatal; the deleter will periodically GC any stray files. */
-derr_t trigger_deleter(MYSQL *sql, const dstr_t *uuid);
+derr_t trigger_deleter(MYSQL *sql, const dstr_t uuid);
 
 // returns a list of uuids to delete (smsql_dstr_t's)
 derr_t list_deletions(MYSQL *sql, int server_id, link_t *out);
 
 // remove a deletions entry for this server_id
-derr_t deletions_finished_one(MYSQL *sql, int server_id, const dstr_t *uuid);
+derr_t deletions_finished_one(MYSQL *sql, int server_id, const dstr_t uuid);
 
 derr_t gc_sessions_and_csrf(MYSQL *sql, int server_id, time_t now);
 

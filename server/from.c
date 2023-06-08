@@ -24,17 +24,17 @@ static derr_t from_parse(const dstr_t *msg, ie_addr_t **out){
             case IMF_STATUS_DONE: should_continue = false; break;
             case IMF_STATUS_SYNTAX_ERROR:
                 TRACE(&e, "syntax error parsing from field.\n");
-                TRACE(&e, "From: %x\n", FD_DBG(msg));
+                TRACE(&e, "From: %x\n", FD_DBG(*msg));
                 ORIG_GO(&e, E_PARAM, "syntax error", cu);
 
             case IMF_STATUS_SEMSTACK_OVERFLOW:
                 TRACE(&e, "semstack overflow parsing from field.\n");
-                TRACE(&e, "From: %x\n", FD_DBG(msg));
+                TRACE(&e, "From: %x\n", FD_DBG(*msg));
                 ORIG_GO(&e, E_NOMEM, "semstack overflow", cu);
 
             case IMF_STATUS_CALLSTACK_OVERFLOW:
                 TRACE(&e, "callstack overflow parsing from field.\n");
-                TRACE(&e, "From: %x\n", FD_DBG(msg));
+                TRACE(&e, "From: %x\n", FD_DBG(*msg));
                 ORIG_GO(&e, E_NOMEM, "semstack overflow", cu);
         }
     } while(should_continue && token_type != IMF_EOF);
@@ -64,9 +64,9 @@ static derr_t parse_stdin(void){
 
     // write the first mailbox to stdout
     PROP_GO(&e,
-        FMT(&out, "%x@%x", FD(&addr->mailbox->dstr), FD(&addr->host->dstr)),
+        FMT(&out, "%x@%x", FD(addr->mailbox->dstr), FD(addr->host->dstr)),
     cu);
-    PROP_GO(&e, FFMT(stdout, NULL, "%x", FD(&out)), cu);
+    PROP_GO(&e, FFMT(stdout, "%x", FD(out)), cu);
 
 
 cu:

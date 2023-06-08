@@ -190,7 +190,7 @@ derr_t maildir_name_write(
     PROP(&e, maildir_name_mod_hostname(host, out) );
 
     if(info != NULL && info->len > 0){
-        PROP(&e, FMT(out, ":%x", FD(info)) );
+        PROP(&e, FMT(out, ":%x", FD(*info)) );
     }
 
     return e;

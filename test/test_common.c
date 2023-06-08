@@ -9,12 +9,14 @@
 
 
 #define EXP_VS_GOT(exp, got) do { \
-    int result = dstr_cmp(exp, got); \
-    if(result != 0){ \
-        TRACE(&e, "expected: '%x'\n" \
-                 "but got:  '%x'\n", FD_DBG(exp), FD_DBG(got)); \
-        ORIG_GO(&e, E_VALUE, "test fail", cleanup); \
-    } \
+    if(dstr_eq(exp, got)) break; \
+    ORIG_GO(&e, \
+        E_VALUE, \
+        "\nexpected: '%x'\n" \
+           "but got:  '%x'\n", \
+        cleanup, \
+        FD_DBG(exp), FD_DBG(got) \
+    ); \
 } while(0)
 
 static derr_t test_dstr_cmp(void){
@@ -25,32 +27,27 @@ static derr_t test_dstr_cmp(void){
     DSTR_STATIC(c, "aba");
     DSTR_STATIC(d, "");
     // compare every permutation of a,b,c,d
-    const dstr_t* list[] = {&a, &b, &c, &d, NULL};
-    int result;
-    int xi = 0;
-    int yi = 0;
-    const dstr_t* x = list[xi++];
-    const dstr_t* y = list[yi++];
-    while(x != NULL){
-        while(y != NULL){
-            result = dstr_cmp(x, y);
+    const dstr_t list[] = {a, b, c, d};
+    size_t nlist = sizeof(list) / sizeof(*list);
+    for(size_t i = 0; i < nlist; i++){
+        const dstr_t x = list[i];
+        for(size_t j = 0; j < nlist; j++){
+            const dstr_t y = list[j];
+            int result = dstr_cmp2(x, y);
             /* dstr_cmp() and glibc strcmp() output -128 to 127
                but valgrind strcmp() outputs -1, 0, or 1
                the simple output is POSIX-compliant and should pass the test */
             int simple = result == 0 ? 0 : (result > 0 ? 1 : -1);
-            int result2 = strcmp(x->data, y->data);
+            int result2 = strcmp(x.data, y.data);
             int simple2 = result2 == 0 ? 0 : (result2 > 0 ? 1 : -1);
-            if(simple != simple2){
-                TRACE(&e, "test_dstr_cmp failed comparing "
-                      "%x to %x\n", FD(x), FD(y));
-                TRACE(&e, "result %x should be %x\n", FI(result), FI(result2));
-                ORIG(&e, E_VALUE, "FAIL");
-            }
-            y = list[yi++];
+            if(simple == simple2) continue;
+            ORIG(&e,
+                E_VALUE,
+                "test_dstr_cmp failed comparing %x to %x\n"
+                "result %x should be %x",
+                FD(x), FD(y), FI(result), FI(result2)
+            );
         }
-        yi = 0;
-        y = list[yi++];
-        x = list[xi++];
     }
     return e;
 }
@@ -82,17 +79,17 @@ static derr_t test_dstr_grow(void){
     // confirm that we can use dstr_copy on an empty dstr
     dstr_t dstr = {0};
     PROP_GO(&e, dstr_copy(&DSTR_LIT("copy"), &dstr), cleanup);
-    EXP_VS_GOT(&dstr, &DSTR_LIT("copy"));
+    EXP_VS_GOT(dstr, DSTR_LIT("copy"));
     dstr_free(&dstr);
     // confirm that dstr freed dstr is equivalent to the empty string
-    EXP_VS_GOT(&dstr, &DSTR_LIT(""));
+    EXP_VS_GOT(dstr, DSTR_LIT(""));
     // confirm that double-free is safe
     dstr_free(&dstr);
     // confirm that dstr_append also works
     PROP_GO(&e, dstr_append(&dstr, &DSTR_LIT("a")), cleanup);
     PROP_GO(&e, dstr_append(&dstr, &DSTR_LIT("b")), cleanup);
     PROP_GO(&e, dstr_append(&dstr, &DSTR_LIT("c")), cleanup);
-    EXP_VS_GOT(&dstr, &DSTR_LIT("abc"));
+    EXP_VS_GOT(dstr, DSTR_LIT("abc"));
 cleanup:
     dstr_free(&dstr);
     return e;
@@ -144,7 +141,7 @@ static derr_t test_dstr_sub2(void){
     sub = dstr_sub2(full, 3, (size_t)-1);
     result = dstr_cmp2(sub, a);
     if(result != 0){
-        TRACE(&e, "got '%x'\n", FD(&sub));
+        TRACE(&e, "got '%x'\n", FD(sub));
         ORIG(&e, E_VALUE, "non-trivial startpoint to end fail");
     }
     // test non-trivial start and end points
@@ -152,7 +149,7 @@ static derr_t test_dstr_sub2(void){
     sub = dstr_sub2(full, 5, 8);
     result = dstr_cmp2(sub, b);
     if(result != 0){
-        TRACE(&e, "got '%x'\n", FD(&sub));
+        TRACE(&e, "got '%x'\n", FD(sub));
         ORIG(&e, E_VALUE, "non-trivial start and end points fail");
     }
     return e;
@@ -186,34 +183,34 @@ static derr_t test_dstr_strip(void){
     {
         dstr_t got = dstr_lstrip_chars(in, ' ');
         dstr_t exp = DSTR_LIT("\nhello world  \n");
-        EXP_VS_GOT(&exp, &got);
+        EXP_VS_GOT(exp, got);
     }
     {
         dstr_t got = dstr_lstrip_chars(in, ' ', '\n');
         dstr_t exp = DSTR_LIT("hello world  \n");
-        EXP_VS_GOT(&exp, &got);
+        EXP_VS_GOT(exp, got);
     }
     // rstrip
     {
         dstr_t got = dstr_rstrip_chars(in, ' ');
         dstr_t exp = DSTR_LIT("  \nhello world  \n");
-        EXP_VS_GOT(&exp, &got);
+        EXP_VS_GOT(exp, got);
     }
     {
         dstr_t got = dstr_rstrip_chars(in, ' ', '\n');
         dstr_t exp = DSTR_LIT("  \nhello world");
-        EXP_VS_GOT(&exp, &got);
+        EXP_VS_GOT(exp, got);
     }
     // strip
     {
         dstr_t got = dstr_strip_chars(in, ' ');
         dstr_t exp = DSTR_LIT("\nhello world  \n");
-        EXP_VS_GOT(&exp, &got);
+        EXP_VS_GOT(exp, got);
     }
     {
         dstr_t got = dstr_strip_chars(in, ' ', '\n');
         dstr_t exp = DSTR_LIT("hello world");
-        EXP_VS_GOT(&exp, &got);
+        EXP_VS_GOT(exp, got);
     }
 cleanup:
     return e;
@@ -312,8 +309,8 @@ static derr_t test_begin_end_with(void){
             fail = true;
             TRACE(&e,
                 "dstr_beginswith('%x','%x') returned %x instead of %x\n",
-                FD_DBG(&str),
-                FD_DBG(&pattern),
+                FD_DBG(str),
+                FD_DBG(pattern),
                 FB(res),
                 FB(test.begins),
             );
@@ -323,8 +320,8 @@ static derr_t test_begin_end_with(void){
             fail = true;
             TRACE(&e,
                 "dstr_beginswith('%x','%x') returned %x instead of %x\n",
-                FD_DBG(&str),
-                FD_DBG(&pattern),
+                FD_DBG(str),
+                FD_DBG(pattern),
                 FB(res),
                 FB(test.ends),
             );
@@ -347,29 +344,29 @@ static derr_t test_dstr_split(void){
     PROP(&e, dstr_split(&text, &pattern,  &list) );
 
     if(list.len != 3) ORIG(&e, E_VALUE, "FAIL");
-    EXP_VS_GOT(&DSTR_LIT("abcd"), &list.data[0]);
-    EXP_VS_GOT(&DSTR_LIT("eeee"), &list.data[1]);
-    EXP_VS_GOT(&DSTR_LIT("fghi"), &list.data[2]);
+    EXP_VS_GOT(DSTR_LIT("abcd"), list.data[0]);
+    EXP_VS_GOT(DSTR_LIT("eeee"), list.data[1]);
+    EXP_VS_GOT(DSTR_LIT("fghi"), list.data[2]);
 
     // see if splitting the pattern on itself results in 2 empty strings
     PROP(&e, dstr_split(&pattern, &pattern,  &list) );
     if(list.len != 2) ORIG(&e, E_VALUE, "FAIL");
-    EXP_VS_GOT(&DSTR_LIT(""), &list.data[0]);
-    EXP_VS_GOT(&DSTR_LIT(""), &list.data[1]);
+    EXP_VS_GOT(DSTR_LIT(""), list.data[0]);
+    EXP_VS_GOT(DSTR_LIT(""), list.data[1]);
 
     // make sure repeat patterns are respected
     PROP(&e, dstr_split(&text, &DSTR_LIT("e"), &list) );
     if(list.len != 5) ORIG(&e, E_VALUE, "FAIL");
-    EXP_VS_GOT(&DSTR_LIT("abcd "), &list.data[0]);
-    EXP_VS_GOT(&DSTR_LIT(""), &list.data[1]);
-    EXP_VS_GOT(&DSTR_LIT(""), &list.data[2]);
-    EXP_VS_GOT(&DSTR_LIT(""), &list.data[3]);
-    EXP_VS_GOT(&DSTR_LIT(" fghi"), &list.data[4]);
+    EXP_VS_GOT(DSTR_LIT("abcd "), list.data[0]);
+    EXP_VS_GOT(DSTR_LIT(""), list.data[1]);
+    EXP_VS_GOT(DSTR_LIT(""), list.data[2]);
+    EXP_VS_GOT(DSTR_LIT(""), list.data[3]);
+    EXP_VS_GOT(DSTR_LIT(" fghi"), list.data[4]);
 
     // make sure empty strings return empty strings
     PROP(&e, dstr_split(&DSTR_LIT(""), &pattern, &list) );
     if(list.len != 1) ORIG(&e, E_VALUE, "FAIL");
-    EXP_VS_GOT(&DSTR_LIT(""), &list.data[0]);
+    EXP_VS_GOT(DSTR_LIT(""), list.data[0]);
 
 cleanup:
     return e;
@@ -402,9 +399,9 @@ static derr_t test_dstr_split_soft(void){
     // retry with soft
     PROP(&e, dstr_split_soft(&text, &pattern, &list) );
 
-    EXP_VS_GOT(&s0, &list.data[0]);
-    EXP_VS_GOT(&s1, &list.data[1]);
-    EXP_VS_GOT(&s2, &list.data[2]);
+    EXP_VS_GOT(s0, list.data[0]);
+    EXP_VS_GOT(s1, list.data[1]);
+    EXP_VS_GOT(s2, list.data[2]);
 
 cleanup:
     return e;
@@ -421,36 +418,36 @@ static derr_t test_dstr_split2(void){
     PROP(&e, dstr_split2(text, pattern, &len, &o0, &o1, &o2, &o3, &o4) );
 
     if(len != 3) ORIG(&e, E_VALUE, "FAIL");
-    EXP_VS_GOT(&DSTR_LIT("abcd"), &o0);
-    EXP_VS_GOT(&DSTR_LIT("eeee"), &o1);
-    EXP_VS_GOT(&DSTR_LIT("fghi"), &o2);
+    EXP_VS_GOT(DSTR_LIT("abcd"), o0);
+    EXP_VS_GOT(DSTR_LIT("eeee"), o1);
+    EXP_VS_GOT(DSTR_LIT("fghi"), o2);
 
     // make sure that NULL outputs are properly ignored
     PROP(&e, dstr_split2(text, pattern, NULL, &o0, NULL, &o2, &o3, &o4) );
-    EXP_VS_GOT(&DSTR_LIT("abcd"), &o0);
-    EXP_VS_GOT(&DSTR_LIT("fghi"), &o2);
-    EXP_VS_GOT(&DSTR_LIT(""), &o3);
-    EXP_VS_GOT(&DSTR_LIT(""), &o4);
+    EXP_VS_GOT(DSTR_LIT("abcd"), o0);
+    EXP_VS_GOT(DSTR_LIT("fghi"), o2);
+    EXP_VS_GOT(DSTR_LIT(""), o3);
+    EXP_VS_GOT(DSTR_LIT(""), o4);
 
     // see if splitting the pattern on itself results in 2 empty strings
     PROP(&e, dstr_split2(pattern, pattern, &len, &o0, &o1, &o2, &o3, &o4) );
     if(len != 2) ORIG(&e, E_VALUE, "FAIL");
-    EXP_VS_GOT(&DSTR_LIT(""), &o0);
-    EXP_VS_GOT(&DSTR_LIT(""), &o1);
+    EXP_VS_GOT(DSTR_LIT(""), o0);
+    EXP_VS_GOT(DSTR_LIT(""), o1);
 
     // make sure repeat patterns are respected
     PROP(&e, dstr_split2(text, DSTR_LIT("e"), &len, &o0, &o1, &o2, &o3, &o4) );
     if(len != 5) ORIG(&e, E_VALUE, "FAIL");
-    EXP_VS_GOT(&DSTR_LIT("abcd "), &o0);
-    EXP_VS_GOT(&DSTR_LIT(""), &o1);
-    EXP_VS_GOT(&DSTR_LIT(""), &o2);
-    EXP_VS_GOT(&DSTR_LIT(""), &o3);
-    EXP_VS_GOT(&DSTR_LIT(" fghi"), &o4);
+    EXP_VS_GOT(DSTR_LIT("abcd "), o0);
+    EXP_VS_GOT(DSTR_LIT(""), o1);
+    EXP_VS_GOT(DSTR_LIT(""), o2);
+    EXP_VS_GOT(DSTR_LIT(""), o3);
+    EXP_VS_GOT(DSTR_LIT(" fghi"), o4);
 
     // make sure empty strings return empty strings
     PROP(&e, dstr_split2(DSTR_LIT(""), pattern, &len, &o0, &o1, &o2, &o3, &o4) );
     if(len != 1) ORIG(&e, E_VALUE, "FAIL");
-    EXP_VS_GOT(&DSTR_LIT(""), &o0);
+    EXP_VS_GOT(DSTR_LIT(""), o0);
 
 cleanup:
     return e;
@@ -485,15 +482,15 @@ static derr_t test_dstr_split2_soft(void){
     dstr_split2_soft(text, pattern, &len, &o0, &o1, &o2);
     if(len != 3) ORIG(&e, E_VALUE, "FAIL");
 
-    EXP_VS_GOT(&s0, &o0);
-    EXP_VS_GOT(&s1, &o1);
-    EXP_VS_GOT(&s2, &o2);
+    EXP_VS_GOT(s0, o0);
+    EXP_VS_GOT(s1, o1);
+    EXP_VS_GOT(s2, o2);
 
     // make sure the final output can be NULL
     dstr_split2_soft(text, pattern, &len, &o0, &o1, NULL);
     if(len != 3) ORIG(&e, E_VALUE, "FAIL");
-    EXP_VS_GOT(&s0, &o0);
-    EXP_VS_GOT(&s1, &o1);
+    EXP_VS_GOT(s0, o0);
+    EXP_VS_GOT(s1, o1);
 
 cleanup:
     return e;
@@ -538,15 +535,15 @@ static derr_t test_dstr_leftshift(void){
     // leftshift, where memmove should be chosen
     PROP(&e, dstr_copy(&a, &buffer) );
     dstr_leftshift(&buffer, 2);
-    EXP_VS_GOT(&b, &buffer);
+    EXP_VS_GOT(b, buffer);
     // leftshift, where memcpy should be chosen
     PROP(&e, dstr_copy(&a, &buffer) );
     dstr_leftshift(&buffer, 7);
-    EXP_VS_GOT(&c, &buffer);
+    EXP_VS_GOT(c, buffer);
     // leftshift, on the boundary where memcpy should be chosen
     PROP(&e, dstr_copy(&a, &buffer) );
     dstr_leftshift(&buffer, 5);
-    EXP_VS_GOT(&d, &buffer);
+    EXP_VS_GOT(d, buffer);
 cleanup:
     return e;
 }
@@ -565,9 +562,9 @@ static derr_t test_list_append(void){
     PROP_GO(&e, LIST_APPEND(dstr_t, &list, b), cleanup);
     PROP_GO(&e, LIST_APPEND(dstr_t, &list, c), cleanup);
 
-    EXP_VS_GOT(&a, &list.data[0]);
-    EXP_VS_GOT(&b, &list.data[1]);
-    EXP_VS_GOT(&c, &list.data[2]);
+    EXP_VS_GOT(a, list.data[0]);
+    EXP_VS_GOT(b, list.data[1]);
+    EXP_VS_GOT(c, list.data[2]);
 
 cleanup:
     LIST_FREE(dstr_t, &list);
@@ -590,7 +587,7 @@ static derr_t test_dstr_append(void){
     PROP(&e, dstr_append(&on_stack, &b) );
     PROP(&e, dstr_append(&on_stack, &c) );
     PROP(&e, dstr_append(&on_stack, &d) );
-    EXP_VS_GOT(&exp, &on_stack);
+    EXP_VS_GOT(exp, on_stack);
 
     dstr_t on_heap;
     PROP(&e, dstr_new(&on_heap, 4096) );
@@ -599,7 +596,7 @@ static derr_t test_dstr_append(void){
     PROP_GO(&e, dstr_append(&on_heap, &b), cleanup);
     PROP_GO(&e, dstr_append(&on_heap, &c), cleanup);
     PROP_GO(&e, dstr_append(&on_heap, &d), cleanup);
-    EXP_VS_GOT(&exp, &on_heap);
+    EXP_VS_GOT(exp, on_heap);
 
 cleanup:
     if(heap_allocated)
@@ -621,8 +618,8 @@ static derr_t test_dstr_recode(void){
         DSTR_STATIC(exp_in, "");
         DSTR_STATIC(exp_out, "abc fed ghi jkl onm pqr stu vwx yz");
         PROP(&e, dstr_recode_stream(&in, &out, &s, &r, false, 0, NULL) );
-        EXP_VS_GOT(&exp_in, &in);
-        EXP_VS_GOT(&exp_out, &out);
+        EXP_VS_GOT(exp_in, in);
+        EXP_VS_GOT(exp_out, out);
     }
 
     // now with partial match
@@ -632,8 +629,8 @@ static derr_t test_dstr_recode(void){
         DSTR_STATIC(exp_in, "mn");
         DSTR_STATIC(exp_out, "abc fed ghi jkl onm pqr stu vwx yz ");
         PROP(&e, dstr_recode_stream(&in, &out, &s, &r, false, 0, NULL) );
-        EXP_VS_GOT(&exp_in, &in);
-        EXP_VS_GOT(&exp_out, &out);
+        EXP_VS_GOT(exp_in, in);
+        EXP_VS_GOT(exp_out, out);
     }
 
     // now with partial match but force_end
@@ -643,8 +640,8 @@ static derr_t test_dstr_recode(void){
         DSTR_STATIC(exp_in, "");
         DSTR_STATIC(exp_out, "abc fed ghi jkl onm pqr stu vwx yz mn");
         PROP(&e, dstr_recode_stream(&in, &out, &s, &r, true, 0, NULL) );
-        EXP_VS_GOT(&exp_in, &in);
-        EXP_VS_GOT(&exp_out, &out);
+        EXP_VS_GOT(exp_in, in);
+        EXP_VS_GOT(exp_out, out);
     }
 
     // now with stop_index
@@ -659,8 +656,8 @@ static derr_t test_dstr_recode(void){
             TRACE(&e, "found_end incorrect\n");
             ORIG(&e, E_VALUE, "FAIL");
         }
-        EXP_VS_GOT(&exp_in, &in);
-        EXP_VS_GOT(&exp_out, &out);
+        EXP_VS_GOT(exp_in, in);
+        EXP_VS_GOT(exp_out, out);
     }
 
     // now repeat the first test with stream mode off
@@ -671,15 +668,15 @@ static derr_t test_dstr_recode(void){
         DSTR_STATIC(exp_in, "abc def ghi jkl mno pqr stu vwx yz");
         DSTR_STATIC(exp_out, "abc fed ghi jkl onm pqr stu vwx yz");
         PROP(&e, dstr_recode(&in, &out, &s, &r, false) );
-        EXP_VS_GOT(&exp_in, &in);
-        EXP_VS_GOT(&exp_out, &out);
+        EXP_VS_GOT(exp_in, in);
+        EXP_VS_GOT(exp_out, out);
 
         // verify that append mode works
         DSTR_STATIC(exp_out2, "abc fed ghi jkl onm pqr stu vwx yz"
                               "abc fed ghi jkl onm pqr stu vwx yz");
         PROP(&e, dstr_recode(&in, &out, &s, &r, true) );
-        EXP_VS_GOT(&exp_in, &in);
-        EXP_VS_GOT(&exp_out2, &out);
+        EXP_VS_GOT(exp_in, in);
+        EXP_VS_GOT(exp_out2, out);
     }
 
     // regression test: dstr_recode() copies partial patterns at the end
@@ -688,7 +685,7 @@ static derr_t test_dstr_recode(void){
         DSTR_PRESET(in, " abc defd");
         DSTR_STATIC(exp_out, " abc fedd");
         PROP(&e, dstr_recode(&in, &out, &s, &r, false) );
-        EXP_VS_GOT(&exp_out, &out);
+        EXP_VS_GOT(exp_out, out);
     }
 cleanup:
     return e;
@@ -720,10 +717,10 @@ static derr_t test_fmt(void){
 
     DSTR_VAR(out, 4096);
     PROP(&e, FMT(&out, "%x|%x|%x|%x|%x|%x|%x|%x|%x|%%|%x|%x",
-                FC(t_char), FS(t_cstr), FD(&t_dstr), FD_DBG(&t_dstrd),
+                FC(t_char), FS(t_cstr), FD(t_dstr), FD_DBG(t_dstrd),
                 FU(t_uint), FU(t_luint), FI(t_int), FI(t_lint), FF(t_dub),
-                FE(&errnum), FX(&DSTR_LIT("hello"))) );
-    EXP_VS_GOT(&exp, &out);
+                FE(errnum), FX(DSTR_LIT("hello"))) );
+    EXP_VS_GOT(exp, out);
 
     #define TEST_FMT_TRUNC(expstr, fmtstr, ...) do { \
         DSTR_VAR(out, 4); \
@@ -738,16 +735,15 @@ static derr_t test_fmt(void){
         } \
         dstr_t exp; \
         DSTR_WRAP(exp, expstr, strlen(expstr), true); \
-        EXP_VS_GOT(&exp, &out); \
+        EXP_VS_GOT(exp, out); \
     } while(0)
 
 
     //             EXP      FMT         ARGS
     TEST_FMT_TRUNC("1234",  "12345",    FI(567));
-    TEST_FMT_TRUNC("1256",  "12%x",     FD(&DSTR_LIT("567")));
-    // TODO: fix this so that snprintf doesn't forcibly null-terminate.
-    TEST_FMT_TRUNC("125",   "12%x",     FS("567"));
-    TEST_FMT_TRUNC("125",   "12%x",     FI(567));
+    TEST_FMT_TRUNC("1256",  "12%x",     FD(DSTR_LIT("567")));
+    TEST_FMT_TRUNC("1256",  "12%x",     FS("567"));
+    TEST_FMT_TRUNC("1256",  "12%x",     FI(567));
 
 cleanup:
     return e;
@@ -794,7 +790,7 @@ static derr_t test_list_append_with_mem(void){
     PROP(&e, list_append_with_mem(&list_fix, &mem_fix, a, false) );
     PROP(&e, list_append_with_mem(&list_fix, &mem_fix, b, false) );
     PROP(&e, list_append_with_mem(&list_fix, &mem_fix, c, false) );
-    EXP_VS_GOT(&ans_no_nt, &mem_fix);
+    EXP_VS_GOT(ans_no_nt, mem_fix);
 
     /* make sure if the backing memory runs out the cleanup works, that is,
        the list and backing memory still have to their original contents */
@@ -808,7 +804,7 @@ static derr_t test_list_append_with_mem(void){
         DROP_VAR(&e2);
         ORIG(&e, E_VALUE, "FAIL");
     }
-    EXP_VS_GOT(&ans_no_nt, &mem_fix);
+    EXP_VS_GOT(ans_no_nt, mem_fix);
 
     // then try again with null terminating option
     mem_fix.len = 0;
@@ -817,7 +813,7 @@ static derr_t test_list_append_with_mem(void){
     PROP(&e, list_append_with_mem(&list_fix, &mem_fix, b, true) );
     PROP(&e, list_append_with_mem(&list_fix, &mem_fix, c, true) );
     PROP(&e, list_append_with_mem(&list_fix, &mem_fix, x, true) );
-    EXP_VS_GOT(&ans_with_nt, &mem_fix);
+    EXP_VS_GOT(ans_with_nt, mem_fix);
 
     // verify clean failure if the list runs out of space
     e2 = list_append_with_mem(&list_fix, &mem_fix, y, true);
@@ -830,7 +826,7 @@ static derr_t test_list_append_with_mem(void){
         DROP_VAR(&e2);
         ORIG(&e, E_VALUE, "FAIL");
     }
-    EXP_VS_GOT(&ans_with_nt, &mem_fix);
+    EXP_VS_GOT(ans_with_nt, mem_fix);
 
     // now allocate the backing memory
     dstr_t mem_heap;
@@ -845,7 +841,7 @@ static derr_t test_list_append_with_mem(void){
     PROP_GO(&e, list_append_with_mem(&list_heap, &mem_heap, b, true), cleanup);
     PROP_GO(&e, list_append_with_mem(&list_heap, &mem_heap, c, true), cleanup);
     PROP_GO(&e, list_append_with_mem(&list_heap, &mem_heap, d, true), cleanup);
-    EXP_VS_GOT(&ans_heap, &mem_heap);
+    EXP_VS_GOT(ans_heap, mem_heap);
 
 cleanup:
     if(list_allocated) LIST_FREE(dstr_t, &list_heap);
@@ -857,38 +853,26 @@ static derr_t test_string_builder(void){
     derr_t e = E_OK;
     LOG_INFO("----- test string_builder ---------------\n");
 
-    string_builder_t sb0 = SB(FS("0"));
-    string_builder_t sb1 = sb_append(&sb0, FS("1"));
-    string_builder_t sb2 = sb_append(&sb1, FS("2"));
-    string_builder_t sb3 = sb_prepend(&sb2, FI(-1));
-    string_builder_t sb4 = sb_prepend(&sb3, FI(-2));
-    string_builder_t sb5 = sb_append(&sb4, FD(&DSTR_LIT("!")));
+    string_builder_t sb0 = SBS("0");
+    string_builder_t sb1 = sb_append(&sb0, SBS("1"));
+    string_builder_t sb2 = sb_append(&sb1, SBS("2"));
+    string_builder_t sb3 = sb_prepend(&sb2, SBI(-1));
+    string_builder_t sb4 = sb_prepend(&sb3, SBI(-2));
+    string_builder_t sb5 = sb_append(&sb4, SBD(DSTR_LIT("!")));
 
-    DSTR_VAR(temp, 4096);
     {
-        // build a string
+        // default joiner
+        DSTR_VAR(temp, 32);
+        DSTR_STATIC(exp, "-2/-1/0/1/2/!");
+        PROP_GO(&e, FMT(&temp, "%x", FSB(sb5)), cleanup);
+        EXP_VS_GOT(exp, temp);
+    }
+    {
+        // custom joiner
+        DSTR_VAR(temp, 32);
         DSTR_STATIC(exp, "-2, -1, 0, 1, 2, !");
-        PROP_GO(&e, sb_to_dstr(&sb5, &DSTR_LIT(", "), &temp), cleanup);
-        EXP_VS_GOT(&exp, &temp);
-    }
-    {
-        // overwrite the string
-        DSTR_STATIC(exp, "-2-1012!");
-        PROP_GO(&e, sb_to_dstr(&sb5, NULL, &temp), cleanup);
-        EXP_VS_GOT(&exp, &temp);
-    }
-    {
-        // append to the string
-        DSTR_STATIC(exp, "-2-1012!-2.-1.0.1.2.!");
-        PROP_GO(&e, sb_append_to_dstr(&sb5, &DSTR_LIT("."), &temp), cleanup);
-        EXP_VS_GOT(&exp, &temp);
-    }
-    {
-        // use as element of FMT()
-        temp.len = 0;
-        DSTR_STATIC(exp, "with fmt(): -2 -1 0 1 2 !\n");
-        PROP_GO(&e, FMT(&temp, "with fmt(): %x\n", FSB(&sb5, &DSTR_LIT(" "))), cleanup);
-        EXP_VS_GOT(&exp, &temp);
+        PROP_GO(&e, FMT(&temp, "%x", FSB_EX(sb5, DSTR_LIT(", "))), cleanup);
+        EXP_VS_GOT(exp, temp);
     }
 
 cleanup:
@@ -904,25 +888,21 @@ static derr_t test_sb_expand(void){
     dstr_t heap = {0};
     dstr_t *buf = NULL;
 
-    string_builder_t base = SB(FS("24chars-----------------"));
-    string_builder_t more = sb_append(&base, FS("24more------------------"));
+    string_builder_t base = SBS("24chars-----------------");
+    string_builder_t more = sb_append(&base, SBS("24more------------------"));
 
-    PROP_GO(&e,
-        sb_expand(&base, &DSTR_LIT("/"), &stack, &heap, &buf),
-    cleanup);
+    PROP_GO(&e, sb_expand(&base, &stack, &heap, &buf), cleanup);
     EXPECT_P_GO(&e, "buf", buf, &stack, cleanup);
     DSTR_STATIC(exp1, "24chars-----------------");
-    EXP_VS_GOT(&exp1, buf);
+    EXP_VS_GOT(exp1, *buf);
 
     stack.len = 0;
     buf = NULL;
 
-    PROP_GO(&e,
-        sb_expand(&more, &DSTR_LIT("/"), &stack, &heap, &buf),
-    cleanup);
+    PROP_GO(&e, sb_expand(&more, &stack, &heap, &buf), cleanup);
     EXPECT_P_GO(&e, "buf", buf, &heap, cleanup);
     DSTR_STATIC(exp2, "24chars-----------------/24more------------------");
-    EXP_VS_GOT(&exp2, buf);
+    EXP_VS_GOT(exp2, *buf);
 
 cleanup:
     dstr_free(&heap);

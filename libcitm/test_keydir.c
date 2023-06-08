@@ -55,7 +55,7 @@ static derr_t count_peers_hook(
         return e;
     }
 
-    ORIG(&e, E_VALUE, "unexpected file %x\n", FD(file));
+    ORIG(&e, E_VALUE, "unexpected file %x\n", FD(*file));
 }
 
 static derr_t count_peers(const string_builder_t *root, size_t *out){
@@ -63,8 +63,8 @@ static derr_t count_peers(const string_builder_t *root, size_t *out){
 
     *out = 0;
 
-    string_builder_t user = sb_append(root, FD(&username));
-    string_builder_t keys = sb_append(&user, FS("keys"));
+    string_builder_t user = sb_append(root, SBD(username));
+    string_builder_t keys = sb_append(&user, SBS("keys"));
     count_peers_t cp = {0};
     PROP(&e, for_each_file_in_dir(&keys, count_peers_hook, &cp) );
     if(!cp.mykey){
@@ -107,10 +107,10 @@ static derr_t count_inbox(const string_builder_t *root, size_t *out){
 
     *out = 0;
 
-    string_builder_t user = sb_append(root, FD(&username));
-    string_builder_t mail = sb_append(&user, FS("mail"));
-    string_builder_t inbox = sb_append(&mail, FS("INBOX"));
-    string_builder_t cur = sb_append(&inbox, FS("cur"));
+    string_builder_t user = sb_append(root, SBD(username));
+    string_builder_t mail = sb_append(&user, SBS("mail"));
+    string_builder_t inbox = sb_append(&mail, SBS("INBOX"));
+    string_builder_t cur = sb_append(&inbox, SBS("cur"));
 
     bool ok;
     PROP(&e, exists_path(&cur, &ok) );
@@ -199,7 +199,8 @@ static derr_t test_keydir(void){
     DSTR_VAR(path, 4096);
     PROP(&e, mkdir_temp("test-keydir", &path) );
 
-    string_builder_t sb = SB(FD(&path));
+    string_builder_t sb = SBD(path);
+    FFMT_QUIET(stdout, "sb = %x\n", FSB(sb));
     keydir_i *kd = NULL;
 
     PROP_GO(&e, keydir_new(&sb, username, &kd), cu);

@@ -32,14 +32,8 @@
 
     void win_perror(void);
 
-    derr_type_t fmthook_win_error(dstr_t* out, const void* arg);
-
-    static inline fmt_t FWINERR(void){
-        return (fmt_t){
-            FMT_EXT_NOCONST,
-            { .ext = { .arg = NULL, .hook = fmthook_win_error } }
-        };
-    }
+    derr_type_t _fmt_win_error(const fmt_i *iface, writer_i *out);
+    #define FWINERR (&(fmt_i){ _fmt_win_error })
 
     ssize_t compat_read(int fd, void *buf, size_t count);
     ssize_t compat_write(int fd, const void *buf, size_t count);
@@ -57,6 +51,10 @@
     int compat_getpid(void);
     #define compat_fstat _fstat64
     #define compat_stat_t struct _stat64
+    #define compat_fputc_unlocked _fputc_nolock
+    #define compat_fwrite_unlocked _fwrite_nolock
+    #define compat_flockfile _lock_file
+    #define compat_funlockfile _unlock_file
 
     // use the "new" functions... with same prototypes and behaviors
     #define compat_rmdir _rmdir
@@ -104,6 +102,10 @@
     #define compat_rmdir rmdir
     #define compat_lseek lseek
     #define compat_fstat fstat
+    #define compat_fputc_unlocked fputc_unlocked
+    #define compat_fwrite_unlocked fwrite_unlocked
+    #define compat_flockfile flockfile
+    #define compat_funlockfile funlockfile
     #define compat_stat_t struct stat
     #define compat_dup dup
     #define compat_getpid getpid

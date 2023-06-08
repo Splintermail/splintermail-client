@@ -31,8 +31,8 @@ void win_perror(void){
     LOG_ERROR("%x\n", FS(buf));
 }
 
-derr_type_t fmthook_win_error(dstr_t* out, const void* arg){
-    (void)arg;
+derr_type_t _fmt_win_error(const fmt_i *iface, writer_i *out){
+    (void)iface;
     char buf[256];
     size_t buflen = sizeof(buf) / sizeof(*buf);
     DWORD winerr = GetLastError();
@@ -42,13 +42,7 @@ derr_type_t fmthook_win_error(dstr_t* out, const void* arg){
                 buf, (DWORD)buflen, NULL);
     buf[buflen - 1] = '\0';
     size_t len = strlen(buf);
-    // make sure the message will fit
-    derr_type_t type = dstr_grow_quiet(out, out->len + len + 1);
-    if(type) return type;
-    // copy the message
-    memcpy(out->data + out->len, buf, len + 1);
-    out->len += len;
-    return E_NONE;
+    return out->w->puts(out, buf, len);
 }
 
 FILE* compat_fopen(const char* pathname, const char* mode);

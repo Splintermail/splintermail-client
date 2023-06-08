@@ -29,13 +29,13 @@ static void qw_handle_error(
     // 80 * 4 * 2 = 640
     DSTR_VAR(context, 1024);
     get_token_context(&context, sem.loc, 80);
-    FFMT_QUIET(stderr, NULL, "at location:\n%x\n", FD(&context));
-    FFMT_QUIET(stderr, NULL, "while parsing: %x\n", FS(loc_summary));
-    FFMT_QUIET(stderr, NULL,
+    FFMT_QUIET(stderr, "at location:\n%x\n", FD(context));
+    FFMT_QUIET(stderr, "while parsing: %x\n", FS(loc_summary));
+    FFMT_QUIET(stderr,
         "found %x, but expected one of: [", FS(qw_token_name(qw_token))
     );
     qw_fprint_mask(stderr, expected_mask, ", ");
-    FFMT_QUIET(stderr, NULL, "]\n");
+    FFMT_QUIET(stderr, "]\n");
     qw_error(env.engine, "syntax error");
 }
 

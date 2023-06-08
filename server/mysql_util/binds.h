@@ -1,8 +1,10 @@
+// string_bind_in_* requires a dstr_t* to return pointers to valid memory
 MYSQL_BIND string_bind_in_ex(const dstr_t *dstr, char *is_null);
 MYSQL_BIND string_bind_in(const dstr_t *dstr);
 MYSQL_BIND string_bind_out_ex(dstr_t *dstr, char *is_null);
 MYSQL_BIND string_bind_out(dstr_t *dstr);
 
+// blob_bind_in_* requires a dstr_t* to return pointers to valid memory
 MYSQL_BIND blob_bind_in_ex(const dstr_t *dstr, char *is_null);
 MYSQL_BIND blob_bind_in(const dstr_t *dstr);
 MYSQL_BIND blob_bind_out_ex(dstr_t *dstr, char *is_null);

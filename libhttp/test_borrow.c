@@ -24,7 +24,7 @@ static void await_cb(rstream_i *rstream, derr_t e, link_t *reads){
 static void read_cb3(rstream_i *rstream, rstream_read_t *read, dstr_t buf){
     (void)read;
     // expect eof
-    EXPECT_D_GO(&E, "buf", &buf, &DSTR_LIT(""), fail);
+    EXPECT_D_GO(&E, "buf", buf, DSTR_LIT(""), fail);
     return;
 
 fail:
@@ -33,7 +33,7 @@ fail:
 
 static void read_cb2(rstream_i *rstream, rstream_read_t *read, dstr_t buf){
     (void)read;
-    EXPECT_D_GO(&E, "buf", &buf, &DSTR_LIT("world!"), fail);
+    EXPECT_D_GO(&E, "buf", buf, DSTR_LIT("world!"), fail);
     // trigger the final read
     buf.len = 0;
     stream_must_read(rstream, read, buf, read_cb3);
@@ -45,7 +45,7 @@ fail:
 
 static void read_cb1(rstream_i *rstream, rstream_read_t *read, dstr_t buf){
     (void)read;
-    EXPECT_D_GO(&E, "buf", &buf, &DSTR_LIT("hello "), fail);
+    EXPECT_D_GO(&E, "buf", buf, DSTR_LIT("hello "), fail);
     return;
 
 fail:

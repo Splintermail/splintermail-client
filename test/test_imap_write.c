@@ -84,8 +84,8 @@ static derr_t do_writer_test(const test_case_t *tc){
 
         // check the output
         if(dstr_cmp(&buffer, &dstr_out) != 0){
-            TRACE(&e, "expected: %x\nbut got:  %x\n", FD_DBG(&dstr_out),
-                    FD_DBG(&buffer));
+            TRACE(&e, "expected: %x\nbut got:  %x\n", FD_DBG(dstr_out),
+                    FD_DBG(buffer));
             ORIG(&e, E_VALUE, "incorrect value written");
         }
 
@@ -1472,8 +1472,8 @@ static derr_t test_imap_print(void){
     {
         DSTR_STATIC(tgt, "tag LOGIN \"\\\\user\" pass\r\n");
         if(dstr_cmp(&buf, &tgt) != 0){
-            TRACE(&e, "expected: %x\nbut got:  %x\n", FD_DBG(&tgt),
-                    FD_DBG(&buf));
+            TRACE(&e, "expected: %x\nbut got:  %x\n", FD_DBG(tgt),
+                    FD_DBG(buf));
             ORIG(&e, E_VALUE, "incorrect value written");
         }
     }

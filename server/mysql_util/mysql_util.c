@@ -35,21 +35,17 @@ static derr_type_t stmt_err(MYSQL_STMT *stmt){
     return _read_errno(mysql_stmt_errno(stmt));
 }
 
-derr_type_t fmthook_sql_error(dstr_t* out, void* arg){
-    MYSQL *sql = arg;
+DEF_CONTAINER_OF(_fmt_sql_t, iface, fmt_i)
+
+derr_type_t _fmt_sql(const fmt_i *iface, writer_i *out){
+    MYSQL *sql = CONTAINER_OF(iface, _fmt_sql_t, iface)->sql;
     const char *msg = mysql_error(sql);
     // dereferencing msg really is the cannonical way to check for an error
     if(!*msg){
         msg = "(no error)";
     }
     size_t len = strlen(msg);
-    // make sure the message will fit
-    derr_type_t type = dstr_grow_quiet(out, out->len + len + 1);
-    if(type) return type;
-    // copy the message
-    memcpy(out->data + out->len, msg, len + 1);
-    out->len += len;
-    return E_NONE;
+    return out->w->puts(out, msg, len);
 }
 
 derr_t sql_connect_unix_ex(
@@ -123,15 +119,15 @@ derr_t sql_connect_unix(
     return e;
 }
 
-derr_t sql_query(MYSQL *sql, const dstr_t *query){
+derr_t sql_query(MYSQL *sql, const dstr_t query){
     derr_t e = E_OK;
 
     // mariadb will puke if you pass a zero length string
-    if(!query->len){
+    if(!query.len){
         ORIG(&e, E_INTERNAL, "empty queries not allowed");
     }
 
-    int ret = mysql_real_query(sql, query->data, query->len ? query->len : 1);
+    int ret = mysql_real_query(sql, query.data, query.len ? query.len : 1);
     if(ret){
         TRACE_SQL(&e, sql);
         TRACE(&e, "while running: %x\n", FD(query));
@@ -142,7 +138,7 @@ derr_t sql_query(MYSQL *sql, const dstr_t *query){
 }
 
 
-derr_t sql_exec_multi(MYSQL *sql, const dstr_t *stmts){
+derr_t sql_exec_multi(MYSQL *sql, const dstr_t stmts){
     derr_t e = E_OK;
 
     // multi-statements on
@@ -239,13 +235,13 @@ derr_t sql_stmt_init(MYSQL *sql, MYSQL_STMT **stmt){
     return e;
 }
 
-derr_t sql_stmt_prepare(MYSQL_STMT *stmt, const dstr_t *text){
+derr_t sql_stmt_prepare(MYSQL_STMT *stmt, const dstr_t query){
     derr_t e = E_OK;
 
-    int ret = mysql_stmt_prepare(stmt, text->data, text->len);
+    int ret = mysql_stmt_prepare(stmt, query.data, query.len);
     if(ret){
         TRACE_STMT(&e, stmt);
-        TRACE(&e, "while preparing: %x\n", FD(text));
+        TRACE(&e, "while preparing: %x\n", FD(query));
         ORIG(&e, stmt_err(stmt), "failed to prepare statement");
     }
 
@@ -340,7 +336,7 @@ static derr_t _stmt_rows_affected(MYSQL_STMT *stmt, size_t *out){
 
 derr_t _sql_norow_query(
     MYSQL *sql,
-    const dstr_t *query,
+    const dstr_t query,
     unsigned long *affected,
     MYSQL_BIND *args,
     size_t nargs
@@ -378,7 +374,7 @@ cu_stmt:
 }
 
 derr_t _sql_onerow_query(
-    MYSQL *sql, const dstr_t *query, bool *ok, MYSQL_BIND *args, size_t nargs
+    MYSQL *sql, const dstr_t query, bool *ok, MYSQL_BIND *args, size_t nargs
 ){
     derr_t e = E_OK;
     if(ok) *ok = false;
@@ -469,7 +465,7 @@ cu_stmt:
 derr_t _sql_multirow_stmt(
     MYSQL *sql,
     MYSQL_STMT **stmt,
-    const dstr_t *query,
+    const dstr_t query,
     MYSQL_BIND *args,
     size_t nargs
 ){
@@ -552,26 +548,26 @@ void sql_stmt_fetchall(MYSQL_STMT *stmt){
 
 derr_t sql_txn_start(MYSQL *sql){
     derr_t e = E_OK;
-    PROP(&e, sql_query(sql, &DSTR_LIT("START TRANSACTION")));
+    PROP(&e, sql_query(sql, DSTR_LIT("START TRANSACTION")));
     return e;
 }
 
 derr_t sql_txn_commit(MYSQL *sql){
     derr_t e = E_OK;
-    PROP(&e, sql_query(sql, &DSTR_LIT("COMMIT")));
+    PROP(&e, sql_query(sql, DSTR_LIT("COMMIT")));
     return e;
 }
 
 derr_t sql_txn_rollback(MYSQL *sql){
     derr_t e = E_OK;
-    PROP(&e, sql_query(sql, &DSTR_LIT("ROLLBACK")));
+    PROP(&e, sql_query(sql, DSTR_LIT("ROLLBACK")));
     return e;
 }
 
 // if txn rollback fails, it closes the mysql object
 void sql_txn_abort(MYSQL *sql){
     derr_t e = E_OK;
-    IF_PROP(&e, sql_query(sql, &DSTR_LIT("ROLLBACK"))) {
+    IF_PROP(&e, sql_query(sql, DSTR_LIT("ROLLBACK"))) {
         // this seems by far most likely due to connection issues, so just
         // drop the error; that will be obvious already.
         DROP_VAR(&e);

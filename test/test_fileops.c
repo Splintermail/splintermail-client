@@ -116,7 +116,7 @@ static derr_t test_dirname_basename(void){
         if(!case_ok){
             TRACE(&e,
                 "\"%x\" became (%x, %x) but expected (%x, %x)\n",
-                FD(&in), FD(&gotdir), FD(&gotbase), FD(&dir), FD(&base)
+                FD(in), FD(gotdir), FD(gotbase), FD(dir), FD(base)
             );
         }
     }
@@ -150,15 +150,15 @@ static derr_t test_mkdirs(void){
 
     // test with relative path
     {
-        string_builder_t base = SB(FS("test_mkdirs"));
-        string_builder_t path = sb_append(&base, FS("a/b/c/d/e/f"));
+        string_builder_t base = SBS("test_mkdirs");
+        string_builder_t path = sb_append(&base, SBS("a/b/c/d/e/f"));
         PROP(&e, do_test_mkdirs(&path, &base, 0755) );
     }
 
     // test with absolute path
     {
-        string_builder_t base = SB(FS("/tmp/test_mkdirs"));
-        string_builder_t path = sb_append(&base, FS("a/b/c/d/e/f"));
+        string_builder_t base = SBS("/tmp/test_mkdirs");
+        string_builder_t path = sb_append(&base, SBS("a/b/c/d/e/f"));
         PROP(&e, do_test_mkdirs(&path, &base, 0755) );
     }
 
@@ -186,12 +186,12 @@ static derr_t test_mkdirs_failure_handling(void){
     };
 
     // test failure deletion behavior by making the second mkdir fail via mode
-    string_builder_t base = SB(FS("test_mkdirs"));
-    string_builder_t mid = sb_append(&base, FS("a/b/c"));
+    string_builder_t base = SBS("test_mkdirs");
+    string_builder_t mid = sb_append(&base, SBS("a/b/c"));
 
     // By the end, d/ will have been created but should be deleted on cleanup
-    string_builder_t path1 = sb_append(&mid, FS("d"));
-    string_builder_t path2 = sb_append(&path1, FS("e/f"));
+    string_builder_t path1 = sb_append(&mid, SBS("d"));
+    string_builder_t path2 = sb_append(&path1, SBS("e/f"));
 
     // make a directory which should not be deleted after the failure
     PROP_GO(&e, mkdirs_path(&mid, 0755), cu);

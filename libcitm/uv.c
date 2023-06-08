@@ -39,7 +39,7 @@ static void on_listener(uv_stream_t *listener, int status){
             uv_err_type(status),
             "on_listener failed, shutting down: %x\n",
             fail,
-            FUV(&status)
+            FUV(status)
         );
     }
 
@@ -220,7 +220,7 @@ static derr_t bind_addrspec(
         // we need family for IPv4 vs IPv6, but we override type and proto
         fd = socket(ai->ai_family, type, proto);
         if(fd < 0){
-            ORIG_GO(&e, E_OS, "socket(): %x", fail, FE(&errno));
+            ORIG_GO(&e, E_OS, "socket(): %x", fail, FE(errno));
         }
 
         #ifndef _WIN32
@@ -237,7 +237,7 @@ static derr_t bind_addrspec(
         void *onptr = &on;
         int ret = setsockopt(fd, SOL_SOCKET, flag, onptr, sizeof(on));
         if(ret){
-            ORIG_GO(&e, E_OS, "setsockopt: %x", fail, FE(&errno));
+            ORIG_GO(&e, E_OS, "setsockopt: %x", fail, FE(errno));
         }
 
         ret = bind(fd, ai->ai_addr, ai->ai_addrlen);
@@ -258,7 +258,7 @@ static derr_t bind_addrspec(
     // nothing was bound
     dstr_t fullspec = dstr_from_off(dstr_off_extend(spec.scheme, spec.port));
     ORIG_GO(&e,
-        E_OS, "unable to bind to addrspec: %x", fail, FD_DBG(&fullspec)
+        E_OS, "unable to bind to addrspec: %x", fail, FD_DBG(fullspec)
     );
 
 fail:
@@ -281,20 +281,20 @@ static derr_t citm_listener_init(
     dstr_t specstr = dstr_from_off(dstr_off_extend(spec.scheme, spec.port));
 
     bool ok = imap_scheme_parse(scheme, &listener->security);
-    if(!ok) ORIG(&e, E_PARAM, "invalid scheme: %x", FD(&specstr));
+    if(!ok) ORIG(&e, E_PARAM, "invalid scheme: %x", FD(specstr));
 
     if(listener->security != IMAP_SEC_INSECURE){
         // make sure we have a key and a cert
         if(!key){
             TRACE(&e,
                 "--listen %x with scheme %x requires a --key\n",
-                FD(&specstr), FD(&scheme)
+                FD(specstr), FD(scheme)
             );
         }
         if(!cert){
             TRACE(&e,
                 "--listen %x with scheme %x requires a --cert\n",
-                FD(&specstr), FD(&scheme)
+                FD(specstr), FD(scheme)
             );
         }
         if(!key || !cert) ORIG(&e, E_PARAM, "invalid configuration");
@@ -406,7 +406,7 @@ static void _stop_citm(void){
     int uvret = uv_async_send(&global_uv_citm->async_cancel);
     if(uvret < 0){
         LOG_FATAL(
-            "failed to shut down gracefully: uv_async_send: %x\n", FUV(&uvret)
+            "failed to shut down gracefully: uv_async_send: %x\n", FUV(uvret)
         );
     }
 }
@@ -460,7 +460,7 @@ derr_t uv_citm(
         bool ok = imap_scheme_parse(rscheme, &client_sec);
         if(!ok){
             ORIG_GO(&e,
-                E_PARAM, "invalid remote scheme: %x\n", cu, FD(&rscheme)
+                E_PARAM, "invalid remote scheme: %x\n", cu, FD(rscheme)
             );
         }
     }
@@ -520,10 +520,10 @@ derr_t uv_citm(
             dstr_off_extend(lspecs[i].scheme, lspecs[i].port)
         );
         if(indicate_ready){
-            LOG_INFO("listening on %x\n", FD(&specstr));
+            LOG_INFO("listening on %x\n", FD(specstr));
         }else{
             // always indicate on DEBUG-level logs
-            LOG_DEBUG("listening on %x\n", FD(&specstr));
+            LOG_DEBUG("listening on %x\n", FD(specstr));
         }
     }
 

@@ -34,7 +34,7 @@ static derr_t test_trace(void){
     temp.len = temp.size;
 
     // test that TRACE works nicely with a realloc
-    TRACE(&e_test, "%x", FD(&temp));
+    TRACE(&e_test, "%x", FD(temp));
     if(e_test.msg.len != temp.len + strlen("Hello world\n")){
         ORIG_GO(&e, E_VALUE, "TRACE onto filled msg failed", free_temp);
     }
@@ -62,7 +62,7 @@ static derr_t test_orig(void){
     if(!dstr_eq(e_test.msg, exp)){
         ORIG_GO(&e,
             E_VALUE, "\nexpected: \"%x\"\nbut got:  \"%x\"", fail,
-            FD_DBG(&exp), FD_DBG(&e_test.msg)
+            FD_DBG(exp), FD_DBG(e_test.msg)
         );
     }
 
@@ -280,7 +280,7 @@ static derr_t test_log_stack_and_heap(void){
     DSTR_VAR(log, 256);
 
     PROP(&e, mkdir_temp("test-logger", &temp) );
-    PROP_GO(&e, FMT(&log, "%x/log", FD(&temp)), cu);
+    PROP_GO(&e, FMT(&log, "%x/log", FD(temp)), cu);
     PROP_GO(&e, logger_add_filename(LOG_LVL_DEBUG, log.data), cu);
 
     char *s =
@@ -309,10 +309,10 @@ static derr_t test_log_stack_and_heap(void){
     DSTR_VAR(got, 4096);
     PROP_GO(&e, dstr_read_file(log.data, &got), cu);
 
-    EXPECT_DM_GO(&e, "logfile", &got, &exp, cu);
+    EXPECT_DM_GO(&e, "logfile", got, exp, cu);
 
 cu:
-    DROP_CMD( rm_rf_path(&SB(FD(&temp))) );
+    DROP_CMD( rm_rf_path(&SBD(temp)) );
     logger_clear_outputs();
     logger_add_fileptr(LOG_LVL_WARN, stdout);
 

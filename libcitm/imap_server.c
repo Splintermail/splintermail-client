@@ -91,11 +91,11 @@ static derr_t advance_reads(imap_server_t *s, bool starttls, bool *ok){
             dstr_t sub = dstr_sub2(s->rbuf, 0, skip);
             /* because we only want to print what was valid starttls, we can't
                print until after we've read, unfortunately */
-            LOG_DEBUG("%x recv dn: %x", FP(s), FD(&sub));
+            LOG_DEBUG("%x recv dn: %x", FP(s), FD(sub));
             // leave unread data in read_buf for preinput to the duv_tls_t
             dstr_leftshift(&s->rbuf, skip);
         }else{
-            LOG_DEBUG("%x recv dn: %x", FP(s), FD(&s->rbuf));
+            LOG_DEBUG("%x recv dn: %x", FP(s), FD(s->rbuf));
             PROP(&e, imap_cmd_read(&s->reader, s->rbuf, &s->cmds) );
         }
     }
@@ -105,7 +105,7 @@ static derr_t advance_reads(imap_server_t *s, bool starttls, bool *ok){
 }
 
 static void do_write(imap_server_t *s){
-    LOG_DEBUG("%x send dn: %x", FP(s), FD(&s->wbuf));
+    LOG_DEBUG("%x send dn: %x", FP(s), FD(s->wbuf));
     stream_must_write(s->stream, &s->write_req, &s->wbuf, 1, write_cb);
 }
 

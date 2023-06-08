@@ -102,7 +102,7 @@ int main(int argc, char **argv){
     return 0;
 
 fail:
-    badbadbad_alert(&DSTR_LIT("unknown error in gc_sessions"), &e.msg);
+    badbadbad_alert(DSTR_LIT("unknown error in gc_sessions"), e.msg);
     DUMP(e);
     DROP_VAR(&e);
     return 1;

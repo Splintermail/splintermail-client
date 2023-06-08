@@ -47,6 +47,6 @@ void extension_assert_available_builder(
 bool extension_trigger(extensions_t *exts, extension_e type);
 
 // get the token that would represent an extension
-const dstr_t *extension_token(extension_e ext);
+dstr_t extension_token(extension_e ext);
 
 const char *extension_msg(extension_e ext);

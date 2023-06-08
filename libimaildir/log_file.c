@@ -42,8 +42,8 @@ static derr_t maybe_compact(log_t *log){
     // (negated integer form of: updates/lines > 3/4)
     if(log->lines * 3 > log->updates * 4) return e;
 
-    string_builder_t path = sb_append(log->dirpath, FS(".cache"));
-    string_builder_t tmppath = sb_append(log->dirpath, FS(".cache.tmp"));
+    string_builder_t path = sb_append(log->dirpath, SBS(".cache"));
+    string_builder_t tmppath = sb_append(log->dirpath, SBS(".cache.tmp"));
 
     // close the log file
     fclose(log->f);
@@ -61,7 +61,7 @@ static derr_t maybe_compact(log_t *log){
         if(line == NULL){
             if(ferror(f)){
                 int error = ferror(f);
-                TRACE(&e, "error reading logfile: %x\n", FE(&error));
+                TRACE(&e, "error reading logfile: %x\n", FE(error));
                 ORIG_GO(&e, E_OS, "error reading logfile while compacting", cu);
             }
             // EOF
@@ -92,7 +92,7 @@ static derr_t maybe_compact(log_t *log){
         size_t n;
         dstr_split2_soft(dline, DSTR_LIT("|"), &n, &key, &val);
         if(n != 2){
-            TRACE(&e, "missing '|' in logfile line: %x\n", FD_DBG(&dline));
+            TRACE(&e, "missing '|' in logfile line: %x\n", FD_DBG(dline));
             ORIG_GO(&e, E_PARAM, "missing '|' in logfile line", cu);
         }
 
@@ -121,7 +121,7 @@ static derr_t maybe_compact(log_t *log){
     elem = hashmap_pop_iter(&trav, &h);
     for(; elem != NULL; elem = hashmap_pop_next(&trav)){
         mss = CONTAINER_OF(elem, map_str_str_t, elem);
-        PROP_GO(&e, FFMT(f, NULL, "%x|%x\n", FD(&mss->key), FD(&mss->val)), cu);
+        PROP_GO(&e, FFMT(f, "%x|%x\n", FD(mss->key), FD(mss->val)), cu);
         map_str_str_free(&mss);
         lines++;
     }
@@ -315,7 +315,7 @@ static void iface_close(maildir_log_i *iface){
 static derr_t read_one_value(
     log_t *log,
     msg_key_t key,
-    dstr_t *value,
+    const dstr_t value,
     jsw_atree_t *msgs,
     jsw_atree_t *expunged,
     jsw_atree_t *mods
@@ -397,7 +397,7 @@ static derr_t read_all_keys(
         if(line == NULL){
             if(ferror(f)){
                 int error = ferror(f);
-                TRACE(&e, "error reading logfile: %x\n", FE(&error));
+                TRACE(&e, "error reading logfile: %x\n", FE(error));
                 ORIG(&e, E_OS, "error reading logfile");
             }
             // EOF
@@ -431,7 +431,7 @@ static derr_t read_all_keys(
         size_t n;
         dstr_split2_soft(dline, DSTR_LIT("|"), &n, &key, &val);
         if(n != 2){
-            TRACE(&e, "missing '|' in logfile line: %x\n", FD_DBG(&dline));
+            TRACE(&e, "missing '|' in logfile line: %x\n", FD_DBG(dline));
             ORIG(&e, E_PARAM, "missing '|' in logfile line");
         }
 
@@ -442,7 +442,7 @@ static derr_t read_all_keys(
             case LOG_KEY_UIDVLDS:
                 if(log->uidvld_up > 0) log->updates++;
                 PROP(&e,
-                    parse_uidvlds(&val, &log->uidvld_up, &log->uidvld_dn)
+                    parse_uidvlds(val, &log->uidvld_up, &log->uidvld_dn)
                 );
                 break;
 
@@ -465,7 +465,7 @@ static derr_t read_all_keys(
                     read_one_value(
                         log,
                         lk.arg.msg_key,
-                        &val,
+                        val,
                         msgs,
                         expunged,
                         mods
@@ -521,8 +521,8 @@ derr_t imaildir_log_open(
         .dirpath = dirpath,
     };
 
-    string_builder_t path = sb_append(dirpath, FS(".cache"));
-    string_builder_t tmppath = sb_append(dirpath, FS(".cache.tmp"));
+    string_builder_t path = sb_append(dirpath, SBS(".cache"));
+    string_builder_t tmppath = sb_append(dirpath, SBS(".cache.tmp"));
 
     // create the file if it doesn't exist
     PROP_GO(&e, touch_path(&path), cu);
@@ -596,7 +596,7 @@ cu:
 
 derr_t imaildir_log_rm(const string_builder_t *dirpath){
     derr_t e = E_OK;
-    string_builder_t path = sb_append(dirpath, FS(".cache"));
+    string_builder_t path = sb_append(dirpath, SBS(".cache"));
     PROP(&e, remove_path(&path) );
     return e;
 }

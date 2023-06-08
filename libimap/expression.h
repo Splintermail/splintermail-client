@@ -822,11 +822,11 @@ typedef enum {
 } keep_type_t;
 
 // convert enum's to dstr_t's
-const dstr_t *ie_status_to_dstr(ie_status_t s);
-const dstr_t *ie_select_param_type_to_dstr(ie_select_param_type_t type);
-const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa);
-const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type);
-const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type);
+dstr_t ie_status_to_dstr(ie_status_t s);
+dstr_t ie_select_param_type_to_dstr(ie_select_param_type_t type);
+dstr_t ie_status_attr_to_dstr(ie_status_attr_t sa);
+dstr_t imap_cmd_type_to_dstr(imap_cmd_type_t type);
+dstr_t imap_resp_type_to_dstr(imap_resp_type_t type);
 
 dstr_t token_extend(dstr_t start, dstr_t end);
 

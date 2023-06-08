@@ -18,6 +18,7 @@ sm_lib(
     json.c
     jspec.c
     fmt.c
+    sb.c
     NOASAN libs
 )
 
@@ -37,3 +38,5 @@ elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
 elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
     # msvc: noop
 endif()
+
+sm_test(test_fmt.c DEPS dstr)

@@ -76,10 +76,10 @@ static derr_t cli_encrypt(int argc, char** argv){
         // this is for debug
         DSTR_VAR(hex, 256);
         bin2hex(kp->fingerprint, &hex);
-        LOG_DEBUG("%x : %x\n", FS(argv[i]), FD(&hex));
+        LOG_DEBUG("%x : %x\n", FS(argv[i]), FD(hex));
         DSTR_VAR(pemout, 4096);
         PROP(&e, keypair_get_public_pem(kp, &pemout) );
-        LOG_DEBUG("%x\n", FD(&pemout));
+        LOG_DEBUG("%x\n", FD(pemout));
     }
 
     // ready to start encrypting
@@ -127,12 +127,12 @@ static derr_t _mysql_encrypt(MYSQL *sql, const dstr_t user){
     dstr_split2_soft(user, DSTR_LIT("@"), NULL, &fsid, &domain);
 
     if(dstr_cmp(&domain, &DSTR_LIT("x.splintermail.com")) != 0){
-        TRACE(&e, "user=%x, domain=%x\n", FD(&user), FD(&domain));
+        TRACE(&e, "user=%x, domain=%x\n", FD(user), FD(domain));
         ORIG(&e, E_INTERNAL, "unknown domain");
     }
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, to_uuid(&fsid, &uuid) );
+    PROP(&e, to_uuid(fsid, &uuid) );
 
     link_t pems;
     link_init(&pems);
@@ -141,7 +141,7 @@ static derr_t _mysql_encrypt(MYSQL *sql, const dstr_t user){
     link_t *link;
 
     // returns a list of pem-encoded public keys (smsql_dstr_t's)
-    PROP(&e, list_device_keys(sql, &uuid, &pems) );
+    PROP(&e, list_device_keys(sql, uuid, &pems) );
 
     // convert each pem-encoded key into a keypair_t
     while(!link_list_isempty(&pems)){
@@ -282,7 +282,7 @@ exit:
         DUMP(e);
         DSTR_STATIC(summary, "error in encrypt_message");
         // badbadbad_alert will print to the log file directly
-        badbadbad_alert(&summary, &e.msg);
+        badbadbad_alert(summary, e.msg);
         // put a line break in log file for ease of reading
         LOG_ERROR("\n");
     }

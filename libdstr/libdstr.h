@@ -9,6 +9,8 @@
 #include <stdbool.h>
 
 #include "common.h"
+#include "fmt.h"
+#include "sb.h"
 
 #include "win_compat.h"
 
@@ -27,6 +29,5 @@
 #include "unicode.h"
 #include "json.h"
 #include "jspec.h"
-#include "fmt.h"
 
 #endif // LIBDSTR_H

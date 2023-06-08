@@ -133,7 +133,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx){
         EXPECT_NOT_NULL_GO(&e, "imap client read cb", resp, cu); \
         DSTR_VAR(buf, 1024); \
         PROP_GO(&e, imap_resp_print(resp, &buf, &c->exts), cu); \
-        EXPECT_D3_GO(&e, "resp body", &buf, &DSTR_LIT(text), cu); \
+        EXPECT_D3_GO(&e, "resp body", buf, DSTR_LIT(text), cu); \
     } while(0)
 
     #define EXPECT_IWRITE_CB(i) \
@@ -149,7 +149,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx){
         fake_stream_write_done(from); \
     } while(0)
 
-    #define SHOW_STATE FFMT_QUIET(stdout, NULL, \
+    #define SHOW_STATE FFMT_QUIET(stdout, \
         "client_wants_read:%x\n" \
         "client_wants_write:%x\n" \
         "server_wants_read:%x\n" \
@@ -186,7 +186,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx){
     ADVANCE_TEST();
 
     EXPECT_READ_CB;
-    EXPECT_D3_GO(&e, "rbuf", &rbuf, &DSTR_LIT("STLS1 STARTTLS\r\n"), cu);
+    EXPECT_D3_GO(&e, "rbuf", rbuf, DSTR_LIT("STLS1 STARTTLS\r\n"), cu);
 
     // respond to STARTTLS
     DSTR_STATIC(stlsresp, "STLS1 OK let's goooo\r\n");
@@ -219,7 +219,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx){
 
     EXPECT_IWRITE_CB(1);
     EXPECT_READ_CB;
-    EXPECT_D3_GO(&e, "rbuf", &rbuf, &DSTR_LIT("yo NOOP\r\n"), cu);
+    EXPECT_D3_GO(&e, "rbuf", rbuf, DSTR_LIT("yo NOOP\r\n"), cu);
 
     // read the server's response through the client
     DSTR_STATIC(noopresp, "yo OK whatever\r\n");

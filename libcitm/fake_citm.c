@@ -365,7 +365,7 @@ derr_t establish_imap_server(manual_scheduler_t *m, fake_stream_t *fs){
         "* OK [CAPABILITY IMAP4rev1 IDLE AUTH=PLAIN LOGIN] "
         "greetings, friend!\r\n"
     );
-    EXPECT_D3(&e, "greeting", &msg, &exp);
+    EXPECT_D3(&e, "greeting", msg, exp);
     fake_stream_write_done(fs);
     manual_scheduler_run(m);
 

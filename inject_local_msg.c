@@ -24,13 +24,13 @@ static derr_t inject_local_msg(
     dirmgr_hold_t *hold = NULL;
     imaildir_t *m = NULL;
 
-    string_builder_t root = SB(FD(&maildir_root));
+    string_builder_t root = SBD(maildir_root);
     // root/user
-    string_builder_t user_path = sb_append(&root, FD(&user));
+    string_builder_t user_path = sb_append(&root, SBD(user));
     // root/user/mail
-    string_builder_t mail_path = sb_append(&user_path, FS("mail"));
+    string_builder_t mail_path = sb_append(&user_path, SBSN("mail", 4));
     // root/PID
-    string_builder_t msg_path = sb_append(&root, FI(compat_getpid()));
+    string_builder_t msg_path = sb_append(&root, SBI(compat_getpid()));
 
     PROP(&e, mkdirs_path(&mail_path, 0700) );
 
@@ -65,7 +65,7 @@ static derr_t inject_local_msg(
     cu);
 
     // report which UID was created
-    PROP_GO(&e, PFMT("%x\n", FU(uid_dn)), cu);
+    PROP_GO(&e, FFMT(stdout, "%x\n", FU(uid_dn)), cu);
 
 cu:
     DROP_CMD( remove_path(&msg_path) );
@@ -77,18 +77,16 @@ cu:
 }
 
 static void print_help(FILE *f){
-    DROP_CMD(
-        FFMT(f, NULL,
-            "inject_local_msg: a tool for customizing mailboxes for tests\n"
-            "\n"
-            "usage: inject_local_msg OPTIONS < plaintext\n"
-            "\n"
-            "where OPTIONS are any of:\n"
-            "  -h, --help\n"
-            "  -r, --root=ARG          (required)\n"
-            "  -u, --user=ARG          (required)\n"
-            "  -m, --mailbox=ARG       (required)\n"
-        )
+    FFMT_QUIET(f,
+        "inject_local_msg: a tool for customizing mailboxes for tests\n"
+        "\n"
+        "usage: inject_local_msg OPTIONS < plaintext\n"
+        "\n"
+        "where OPTIONS are any of:\n"
+        "  -h, --help\n"
+        "  -r, --root=ARG          (required)\n"
+        "  -u, --user=ARG          (required)\n"
+        "  -m, --mailbox=ARG       (required)\n"
     );
 }
 

@@ -65,7 +65,7 @@ void auto_log_flush(bool val){
 // do the format once for all log outputs, into a static buffer if possible
 static derr_type_t pre_log_fmt(
     const char* format,
-    const fmt_t* args,
+    const fmt_i **args,
     size_t nargs,
     dstr_t* stack,
     dstr_t* heap,
@@ -77,7 +77,7 @@ static derr_type_t pre_log_fmt(
     derr_type_t etype;
 
     // try and expand into stack_dstr
-    etype = pvt_fmt_quiet(stack, format, args, nargs);
+    etype = _fmt_quiet(WD(stack), format, args, nargs);
     if(etype == E_FIXEDSIZE) goto use_heap;
     if(etype) return etype;
     // it worked, return stack_dstr as *out
@@ -89,7 +89,7 @@ use_heap:
     // we will need to allocate the heap_dstr to be bigger than stack_dstr
     etype = dstr_new_quiet(heap, stack->size * 2);
     if(etype) return etype;
-    etype = pvt_fmt_quiet(heap, format, args, nargs);
+    etype = _fmt_quiet(WD(heap), format, args, nargs);
     if(etype) goto fail_heap;
     *out = *heap;
     *done = true;
@@ -103,7 +103,7 @@ fail_heap:
 // this ALWAYS return 0, for use in the CATCH macro
 // don't use any error-handling macros because they would recurse infinitely
 int pvt_do_log(
-    log_level_t level, const char* fstr, const fmt_t* args, size_t nargs
+    log_level_t level, const char* fstr, const fmt_i **args, size_t nargs
 ){
     DSTR_VAR(stack, 1024);
     dstr_t heap = {0};
@@ -148,8 +148,143 @@ int pvt_do_log(
     return 0;
 }
 
-void pvt_do_log_fatal(const char* fstr, const fmt_t* args, size_t nargs){
+void pvt_do_log_fatal(const char* fstr, const fmt_i **args, size_t nargs){
     pvt_do_log(LOG_LVL_FATAL, fstr, args, nargs);
     log_flush();
     abort();
+}
+
+void DUMP(derr_t e){
+    if(is_error(e)){
+        LOG_ERROR("error trace (%x):\n", FD(error_to_dstr(e.type)));
+        if(e.msg.len > 0){
+            LOG_ERROR("%x", FD((e).msg));
+        }
+    }
+}
+
+// TRACE() and friends are best-effort append-to-derr_t.msg functions
+derr_type_t pvt_trace_quiet(
+    derr_t *e, const char* fstr, const fmt_i **args, size_t nargs
+){
+    // if e is yet-unallocated, allocate it first
+    if(e->msg.data == NULL){
+        derr_type_t etype = dstr_new_quiet(&e->msg, 1024);
+        if(etype) return etype;
+    }
+    // attempt to append to the trace
+    derr_type_t etype = _fmt_quiet(WD(&e->msg), fstr, args, nargs);
+    return etype;
+}
+
+// ORIG() and friends set the derr_t.type and append to derr_t.msg
+void pvt_orig(
+    derr_t *e,
+    derr_type_t code,
+    const char *fstr,
+    const fmt_i **args,
+    size_t nargs,
+    const char *file,
+    const char *func,
+    int line
+){
+    e->type = code;
+    pvt_trace_quiet(e, fstr, args, nargs);
+    TRACE(e,
+        "originating %x from file %x: %x(), line %x\n",
+        FD(error_to_dstr(code)), FS(file), FS(func), FI(line)
+    );
+}
+
+/* MERGE and friends don't do control flow because they are only used when
+   gathering errors from multiple threads.
+
+   The only difference between MERGE_CMD and MERGE_VAR is that MERGE_VAR takes
+   a pointer to a derr_t instead of a derr_t value, so that it set the variable
+   to E_OK. */
+
+void pvt_merge_cmd(
+    derr_t *e,
+    derr_t cmd,
+    const char* message,
+    const char* file,
+    const char* func,
+    int line
+){
+    // prefer the old type
+    if(e->type == E_NONE){
+        e->type = cmd.type;
+    }
+    // if e has no message, just use the new one
+    if(e->msg.data == NULL){
+        e->msg = cmd.msg;
+        if(e->msg.data != NULL){
+            // if the new one is non-NULL, extend it with some context
+            TRACE(e, "merging %x from %x at file %x: %x(), line %x\n",
+                FD(error_to_dstr(cmd.type)), FS(message), FS(file),
+                FS(func), FI(line));
+        }
+
+    }else{
+        // otherwise, embed the new message into the old one
+        if(is_error(cmd) || cmd.msg.data != NULL){
+            // embed the new error trace with a message
+            TRACE(e, "merging %x from %x at file %x: %x(), line %x\n%x",
+                FD(error_to_dstr(cmd.type)), FS(message), FS(file),
+                FS(func), FI(line), FD(cmd.msg));
+        }
+        // done with the old msg
+        dstr_free(&cmd.msg);
+    }
+}
+
+void pvt_merge_var(
+    derr_t *e,
+    derr_t *var,
+    const char* message,
+    const char* file,
+    const char* func,
+    int line
+){
+    pvt_merge_cmd(e, *var, message, file, func, line);
+    // pvt_merge_cmd will dstr_free() the msg but we need to erase the pointer
+    *var = E_OK;
+}
+
+/* SPLIT effectively duplicates an error object.  It is used in multi-threaded
+   situations where a single error causes two different things to fail, such
+   as a session and the entire loop. */
+derr_t pvt_split(derr_t *orig, const char *file, const char *func, int line){
+    // be smart if orig is not even an error
+    if(orig->type == E_NONE){
+        return E_OK;
+    }
+    // do TRACE before duplication
+    TRACE(orig, "splitting %x at file %x: %x(), line %x\n",
+        FD(error_to_dstr(orig->type)), FS(file), FS(func), FI(line));
+    // copy type and zero msg
+    derr_t out = {.type = orig->type, .msg = (dstr_t){0}};
+    // duplicate message (best effort)
+    dstr_append_quiet(&out.msg, &orig->msg);
+    return out;
+}
+
+/* BROADCAST duplicates an error object, like SPLIT, except with a different
+   implication.  BROADCAST implies a shared reasource failed and all of its
+   accessors will receive the same error. */
+derr_t pvt_broadcast(
+    derr_t *orig, const char *file, const char *func, int line
+){
+    // be smart if orig is not even an error
+    if(orig->type == E_NONE){
+        return E_OK;
+    }
+    // do TRACE before duplication
+    TRACE(orig, "broadcasting %x at file %x: %x(), line %x\n",
+        FD(error_to_dstr(orig->type)), FS(file), FS(func), FI(line));
+    // copy type and zero msg
+    derr_t out = {.type = orig->type, .msg = (dstr_t){0}};
+    // duplicate message (best effort)
+    dstr_append_quiet(&out.msg, &orig->msg);
+    return out;
 }

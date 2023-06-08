@@ -74,21 +74,21 @@ derr_t file_cmp_dstr(
 
 // for multiline dstr, zoom in on the first difference
 static inline void firstdiff(
-    const dstr_t *a, const dstr_t *b, dstr_t *aout, dstr_t *bout, dstr_t *caret
+    const dstr_t a, const dstr_t b, dstr_t *aout, dstr_t *bout, dstr_t *caret
 ){
     // find the index of the first difference
     // note, if we never find a difference it's probably due to lengths
     size_t i = 0;
-    for(; i < a->len && i < b->len; i++){
-        if(a->data[i] != b->data[i]) break;
+    for(; i < a.len && i < b.len; i++){
+        if(a.data[i] != b.data[i]) break;
     }
     size_t backtrack = MIN(i, 20);
-    *aout = dstr_sub2(*a, i - backtrack, i - backtrack + 80);
-    *bout = dstr_sub2(*b, i - backtrack, i - backtrack + 80);
+    *aout = dstr_sub2(a, i - backtrack, i - backtrack + 80);
+    *bout = dstr_sub2(b, i - backtrack, i - backtrack + 80);
     // measure the print length of the common string
-    dstr_t common = dstr_sub2(*a, i-backtrack, i);
+    dstr_t common = dstr_sub2(a, i-backtrack, i);
     DSTR_VAR(buf, 20*4);
-    FMT_QUIET(&buf, "%x", FD_DBG(&common));
+    FMT_QUIET(&buf, "%x", FD_DBG(common));
     DSTR_STATIC(
         spaces_caret,
         "          ""          ""          ""          "
@@ -287,210 +287,148 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 } while(0)
 
 // single line output for short strings
-#define EXPECT_D(e, name, got, exp) do { \
-    const dstr_t *_got = (got); \
-    const dstr_t *_exp = (exp); \
-    if(dstr_cmp(_got, _exp) != 0){ \
-        ORIG(e, \
-            E_VALUE, \
-            "expected %x == %x but got %x", \
-            FS(name), FD_DBG(_exp), FD_DBG(_got) \
-        ); \
-    } \
+#define _EXPECT_D(e, name, got, exp, action) do { \
+    const dstr_t _got = (got); \
+    const dstr_t _exp = (exp); \
+    if(dstr_eq(_got, _exp)) break; \
+    TRACE_ORIG(e, \
+        E_VALUE, \
+        "expected %x == %x but got %x", \
+        FS(name), FD_DBG(_exp), FD_DBG(_got) \
+    ); \
+    action; \
 } while (0)
 
-#define EXPECT_D_GO(e, name, got, exp, label) do { \
-    const dstr_t *_got = (got); \
-    const dstr_t *_exp = (exp); \
-    if(dstr_cmp(_got, _exp) != 0){ \
-        ORIG_GO(e, \
-            E_VALUE, \
-            "expected %x == %x but got %x", \
-            label, \
-            FS(name), FD_DBG(_exp), FD_DBG(_got) \
-        ); \
-    } \
-} while (0)
+#define EXPECT_D(e, name, got, exp) \
+    _EXPECT_D(e, name, got, exp, return *(e))
+#define EXPECT_D_GO(e, name, got, exp, label) \
+    _EXPECT_D(e, name, got, exp, goto label)
 
 // triple line output for mid-length strings
-#define EXPECT_D3(e, name, got, exp) do { \
-    const dstr_t *_got = (got); \
-    const dstr_t *_exp = (exp); \
-    if(dstr_cmp(_got, _exp) != 0){ \
-        ORIG(e, \
-            E_VALUE, \
-            "for value '%x'\n" \
-            "expected: %x\n" \
-            "but got:  %x", \
-            FS(name), FD_DBG(_exp), FD_DBG(_got) \
-        ); \
-    } \
+#define _EXPECT_D3(e, name, got, exp, action) do { \
+    const dstr_t _got = (got); \
+    const dstr_t _exp = (exp); \
+    if(dstr_eq(_got, _exp)) break; \
+    TRACE_ORIG(e, \
+        E_VALUE, \
+        "for value '%x'\n" \
+        "expected: %x\n" \
+        "but got:  %x", \
+        FS(name), FD_DBG(_exp), FD_DBG(_got) \
+    ); \
+    action; \
 } while (0)
 
-#define EXPECT_D3_GO(e, name, got, exp, label) do { \
-    const dstr_t *_got = (got); \
-    const dstr_t *_exp = (exp); \
-    if(dstr_cmp(_got, _exp) != 0){ \
-        ORIG_GO(e, \
-            E_VALUE, \
-            "for value '%x'\n" \
-            "expected: %x\n" \
-            "but got:  %x", \
-            label, \
-            FS(name), FD_DBG(_exp), FD_DBG(_got) \
-        ); \
-    } \
-} while (0)
+#define EXPECT_D3(e, name, got, exp) \
+    _EXPECT_D3(e, name, got, exp, return *(e))
+
+#define EXPECT_D3_GO(e, name, got, exp, label) \
+    _EXPECT_D3(e, name, got, exp, goto label)
 
 // multiline string support
-#define EXPECT_DM(e, name, got, exp) do { \
-    const dstr_t *_got = (got); \
-    const dstr_t *_exp = (exp); \
-    if(dstr_cmp(_got, _exp) != 0){ \
-        char *_line_end = "\n";  \
-        if(dstr_endswith(_got, &DSTR_LIT("\n"))) \
-            if(dstr_endswith(_exp, &DSTR_LIT("\n"))) \
-                _line_end = ""; \
-        dstr_t zoom_exp, zoom_got, caret; \
-        firstdiff(_exp, _got, &zoom_exp, &zoom_got, &caret); \
-        ORIG(e, \
-            E_VALUE, \
-            "-- for value '%x', expected:\n" \
-            "%x%x" \
-            "-- but got:\n" \
-            "%x%x-- (end) --" \
-            "-- first difference: --\n" \
-            "expected: \"%x\"\n" \
-            "but got:  \"%x\"\n" \
-            "           %x\n", \
-            FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end), \
-            FD_DBG(&zoom_exp), FD_DBG(&zoom_got), FD(&caret) \
-        ); \
-    } \
+#define _EXPECT_DM(e, name, got, exp, action) do { \
+    const dstr_t _got = (got); \
+    const dstr_t _exp = (exp); \
+    if(dstr_eq(_got, _exp)) break; \
+    char *_line_end = "\n";  \
+    if(dstr_endswith2(_got, DSTR_LIT("\n"))) \
+        if(dstr_endswith2(_exp, DSTR_LIT("\n"))) \
+            _line_end = ""; \
+    dstr_t zoom_exp, zoom_got, caret; \
+    firstdiff(_exp, _got, &zoom_exp, &zoom_got, &caret); \
+    TRACE_ORIG(e, \
+        E_VALUE, \
+        "-- for value '%x', expected:\n" \
+        "%x%x" \
+        "-- but got:\n" \
+        "%x%x-- (end) --" \
+        "-- first difference: --\n" \
+        "expected: \"%x\"\n" \
+        "but got:  \"%x\"\n" \
+        "           %x\n", \
+        FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end), \
+        FD_DBG(zoom_exp), FD_DBG(zoom_got), FD(caret) \
+    ); \
+    action; \
 } while (0)
 
-#define EXPECT_DM_GO(e, name, got, exp, label) do { \
-    const dstr_t *_got = (got); \
-    const dstr_t *_exp = (exp); \
-    if(dstr_cmp(_got, _exp) != 0){ \
-        char *_line_end = "\n";  \
-        if(dstr_endswith(_got, &DSTR_LIT("\n"))) \
-            if(dstr_endswith(_exp, &DSTR_LIT("\n"))) \
-                _line_end = ""; \
-        dstr_t zoom_exp, zoom_got, caret; \
-        firstdiff(_exp, _got, &zoom_exp, &zoom_got, &caret); \
-        ORIG_GO(e, \
-            E_VALUE, \
-            "-- for value '%x', expected:\n" \
-            "%x%x" \
-            "-- but got:\n" \
-            "%x%x-- (end) --\n" \
-            "-- first difference: --\n" \
-            "expected: \"%x\"\n" \
-            "but got:  \"%x\"\n" \
-            "           %x\n", \
-            label, \
-            FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end), \
-            FD_DBG(&zoom_exp), FD_DBG(&zoom_got), FD(&caret) \
-        ); \
-    } \
-} while (0)
+#define EXPECT_DM(e, name, got, exp) \
+    _EXPECT_DM(e, name, got, exp, return *(e))
 
-#define EXPECT_NULL(e, name, got) do { \
+#define EXPECT_DM_GO(e, name, got, exp, label) \
+    _EXPECT_DM(e, name, got, exp, goto label)
+
+#define _EXPECT_NULL(e, name, got, action) do { \
     const void *_got = (got); \
-    if(_got != NULL){ \
-        ORIG(e, \
-            E_VALUE, \
-            "expected %x == NULL but got %x", \
-            FS(name), \
-            FP(_got) \
-        ); \
-    } \
+    if(_got == NULL) break; \
+    TRACE_ORIG(e, \
+        E_VALUE, \
+        "expected %x == NULL but got %x", \
+        FS(name), \
+        FP(_got) \
+    ); \
+    action; \
 } while (0)
 
-#define EXPECT_NULL_GO(e, name, got, label) do { \
+#define EXPECT_NULL(e, name, got) \
+    _EXPECT_NULL(e, name, got, return *(e))
+
+#define EXPECT_NULL_GO(e, name, got, label) \
+    _EXPECT_NULL(e, name, got, goto label)
+
+#define _EXPECT_NOT_NULL(e, name, got, action) do { \
     const void *_got = (got); \
-    if(_got != NULL){ \
-        ORIG_GO(e, \
-            E_VALUE, \
-            "expected %x == NULL but got %x", \
-            label, \
-            FS(name), \
-            FP(_got) \
-        ); \
-    } \
+    if(_got != NULL) break; \
+    TRACE_ORIG(e, \
+        E_VALUE, \
+        "expected %x != NULL", \
+        FS(name) \
+    ); \
+    action; \
 } while (0)
 
-#define EXPECT_NOT_NULL(e, name, got) do { \
-    const void *_got = (got); \
-    if(_got == NULL){ \
-        ORIG(e, \
-            E_VALUE, \
-            "expected %x != NULL", \
-            FS(name) \
-        ); \
-    } \
-} while (0)
+#define EXPECT_NOT_NULL(e, name, got) \
+    _EXPECT_NOT_NULL(e, name, got, return *(e))
 
-#define EXPECT_NOT_NULL_GO(e, name, got, label) do { \
-    const void *_got = (got); \
-    if(_got == NULL){ \
-        ORIG_GO(e, \
-            E_VALUE, \
-            "expected %x != NULL", \
-            label, \
-            FS(name) \
-        ); \
-    } \
-} while (0)
+#define EXPECT_NOT_NULL_GO(e, name, got, label) \
+    _EXPECT_NOT_NULL(e, name, got, goto label)
 
-#define EXPECT_P(e, name, got, exp) do { \
+#define _EXPECT_P(e, name, got, exp, action) do { \
     const void *_got = (got); \
     const void *_exp = (exp); \
-    if(_got != _exp){ \
-        ORIG(e, \
-            E_VALUE, \
-            "expected %x == %x but got %x", \
-            FS(name), FP(_exp),  FP(_got) \
-        ); \
-    } \
+    if(_got == _exp) break; \
+    TRACE_ORIG(e, \
+        E_VALUE, \
+        "expected %x == %x but got %x", \
+        FS(name), FP(_exp),  FP(_got) \
+    ); \
+    action; \
 } while(0)
 
-#define EXPECT_P_GO(e, name, got, exp, label) do { \
-    const void *_got = (got); \
-    const void *_exp = (exp); \
-    if(_got != _exp){ \
-        ORIG_GO(e, \
-            E_VALUE, \
-            "expected %x == %x but got %x", \
-            label, \
-            FS(name), FP(_exp),  FP(_got) \
-        ); \
-    } \
-} while(0)
+#define EXPECT_P(e, name, got, exp) \
+    _EXPECT_P(e, name, got, exp, return *(e))
 
-#define EXPECT_E_VAR(e, name, got, exp) do { \
+#define EXPECT_P_GO(e, name, got, exp, label) \
+    _EXPECT_P(e, name, got, exp, goto label)
+
+#define _EXPECT_E_VAR(e, name, got, exp, action) do { \
     derr_t *_got = (got); \
     const derr_type_t _exp = (exp); \
     if(_got->type == _exp){ \
         DROP_VAR(_got); \
-    } else if(is_error(*_got)) { \
-        PROP_VAR((e), _got); \
+    }else if(is_error(*_got)) { \
+        TRACE_PROP_VAR((e), _got); \
+        action; \
     }else{ \
-        ORIG((e), E_VALUE, "expected an error"); \
+        TRACE_ORIG((e), E_VALUE, "expected an error"); \
+        action; \
     } \
 } while(0)
 
-#define EXPECT_E_VAR_GO(e, name, got, exp, label) do { \
-    derr_t *_got = (got); \
-    const derr_type_t _exp = (exp); \
-    if(_got->type == _exp){ \
-        DROP_VAR(_got); \
-    } else if(is_error(*_got)) { \
-        PROP_VAR_GO((e), _got, label); \
-    }else{ \
-        ORIG_GO((e), E_VALUE, "expected an error", label); \
-    } \
-} while(0)
+#define EXPECT_E_VAR(e, name, got, exp) \
+    _EXPECT_E_VAR(e, name, got, exp, return *(e))
+
+#define EXPECT_E_VAR_GO(e, name, got, exp, label) \
+    _EXPECT_E_VAR(e, name, got, exp, goto label)
 
 #endif // TEST_UTILS_H

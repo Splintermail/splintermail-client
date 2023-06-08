@@ -10,7 +10,7 @@
         /* write the scannable */ \
         DSTR_VAR(scannable, 256); \
         get_scannable(&scanner, &scannable); \
-        TRACE(&e, "on input: '%x'\n", FD(&scannable));  \
+        TRACE(&e, "on input: '%x'\n", FD(scannable));  \
         ORIG(&e, E_VALUE, "unexpected *more"); \
     } \
     if(exp_more == false && exp_type != s.type){ \
@@ -19,7 +19,7 @@
         /* write the last token + scannable */ \
         DSTR_VAR(scannable, 256); \
         get_scannable(&scanner, &scannable); \
-        TRACE(&e, "on input: '%x%x'\n", FD(&s.token), FD(&scannable));  \
+        TRACE(&e, "on input: '%x%x'\n", FD(s.token), FD(scannable));  \
         ORIG(&e, E_VALUE, "unexpected token type"); \
     } \
 } while(0)
@@ -104,7 +104,7 @@ static derr_t test_imap_scan(void){
     // "ABCDEFGHIJKLMNOP" -> RAW
     // case of consuming all of leftovers and all of input simultaneously
     s = imap_scan(&scanner, SCAN_MODE_STD);
-    EXPECT_D(&e, "token", &s.token, &DSTR_LIT("ABCDEFGHIJKLMN"));
+    EXPECT_D(&e, "token", s.token, DSTR_LIT("ABCDEFGHIJKLMN"));
     EXPECT(false, IMAP_RAW);
 
     s = imap_scan(&scanner, SCAN_MODE_STD);
@@ -116,7 +116,7 @@ static derr_t test_imap_scan(void){
 
     s = imap_scan(&scanner, SCAN_MODE_STD);
     EXPECT(false, IMAP_RAW);
-    EXPECT_D(&e, "token", &s.token, &DSTR_LIT("OP"));
+    EXPECT_D(&e, "token", s.token, DSTR_LIT("OP"));
 
     s = imap_scan(&scanner, SCAN_MODE_STD);
     EXPECT(false, IMAP_SP);
@@ -128,11 +128,11 @@ static derr_t test_imap_scan(void){
 
     s = imap_scan(&scanner, SCAN_MODE_STD);
     EXPECT(false, IMAP_RAW);
-    EXPECT_D(&e, "token", &s.token, &DSTR_LIT("ABCDEFGHIJKLMN"));
+    EXPECT_D(&e, "token", s.token, DSTR_LIT("ABCDEFGHIJKLMN"));
 
     s = imap_scan(&scanner, SCAN_MODE_STD);
     EXPECT(false, IMAP_RAW);
-    EXPECT_D(&e, "token", &s.token, &DSTR_LIT("OPQRSTUVWXYZ"));
+    EXPECT_D(&e, "token", s.token, DSTR_LIT("OPQRSTUVWXYZ"));
 
     s = imap_scan(&scanner, SCAN_MODE_STD);
     EXPECT(false, IMAP_EOL);
@@ -152,7 +152,7 @@ static derr_t test_imap_scan(void){
     imap_feed(&scanner, long_token);
     s = imap_scan(&scanner, SCAN_MODE_STD);
     EXPECT(false, IMAP_RAW);
-    EXPECT_D3(&e, "token", &s.token, &long_token);
+    EXPECT_D3(&e, "token", s.token, long_token);
 
     s = imap_scan(&scanner, SCAN_MODE_STD);
     EXPECT(true, 0);
@@ -166,7 +166,7 @@ static derr_t test_imap_scan(void){
     imap_feed(&scanner, DSTR_LIT("y"));
     s = imap_scan(&scanner, SCAN_MODE_DATETIME);
     EXPECT(false, IMAP_MAY);
-    EXPECT_D3(&e, "token", &s.token, &DSTR_LIT("May"));
+    EXPECT_D3(&e, "token", s.token, DSTR_LIT("May"));
 
     s = imap_scan(&scanner, SCAN_MODE_DATETIME);
     EXPECT(true, 0);
@@ -199,7 +199,7 @@ static derr_t test_starttls(void){
     EXPECT(false, IMAP_EOL);
 
     dstr_t leftover = dstr_sub2(input, get_starttls_skip(&scanner), SIZE_MAX);
-    EXPECT_D(&e, "leftover", &leftover, &DSTR_LIT("a bunch of junk"));
+    EXPECT_D(&e, "leftover", leftover, DSTR_LIT("a bunch of junk"));
 
     s = imap_scan(&scanner, SCAN_MODE_STD);
     EXPECT(true, 0);

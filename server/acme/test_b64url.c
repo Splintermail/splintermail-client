@@ -22,13 +22,13 @@ static derr_t test_b64url(void){
     PROP(&e, hex2bin(&hex, &bin) );
     DSTR_VAR(b64url, 512);
     PROP(&e, bin2b64url(bin, &b64url) );
-    EXPECT_D3(&e, "b64url", &b64url, &exp);
+    EXPECT_D3(&e, "b64url", b64url, exp);
 
     bin.len = 0;
     PROP(&e, b64url2bin(b64url, &bin) );
     DSTR_VAR(hexout, 512);
     PROP(&e, bin2hex(&bin, &hexout) );
-    EXPECT_D3(&e, "hexout", &hexout, &hex);
+    EXPECT_D3(&e, "hexout", hexout, hex);
 
     return e;
 }

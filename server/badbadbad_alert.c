@@ -21,7 +21,7 @@ static derr_t get_tag(dstr_t* tag){
     int fd = open("/dev/urandom", O_RDONLY);
     if(fd < 0){
         // just return a non-empty trace
-        TRACE(&e, "unable to open /dev/urandom: %x\n", FE(&errno));
+        TRACE(&e, "unable to open /dev/urandom: %x\n", FE(errno));
         ORIG(&e, E_OS, "failed in get_tag");
     }
 
@@ -30,7 +30,7 @@ static derr_t get_tag(dstr_t* tag){
     ssize_t amnt_read = read(fd, bin.data, bin.size);
     if(amnt_read < 5){
         // just return a non-empty trace
-        TRACE(&e, "unable to read from /dev/urandom: %x\n", FE(&errno));
+        TRACE(&e, "unable to read from /dev/urandom: %x\n", FE(errno));
         ORIG(&e, E_OS, "failed in get_tag");
     }
     bin.len = 5;
@@ -70,7 +70,7 @@ static derr_t get_timestamp(dstr_t* ts){
     size_t len;
     len = strftime(d, sizeof(d), "%a, %d %b %Y %H:%M:%S %z", &tnow);
     if(len == 0){
-        TRACE(&e, "error formatting time string: %x\n", FE(&errno));
+        TRACE(&e, "error formatting time string: %x\n", FE(errno));
         ORIG(&e, E_INTERNAL, "failed in get_timestamp");
     }
 
@@ -91,7 +91,7 @@ static void badbadbad_write_log(dstr_t* blob){
     // open file
     int fd = open(LOGFILE, O_WRONLY | O_APPEND);
     if(fd < 0){
-        TRACE(&e, LOGFILE ": %x\n", FE(&errno));
+        TRACE(&e, LOGFILE ": %x\n", FE(errno));
         ORIG_GO(&e, E_OPEN, "unable to open file", fail);
     }
     // append to file
@@ -107,7 +107,7 @@ fail:
     }
 }
 
-static void badbadbad_log(dstr_t* tag, dstr_t* summary, dstr_t* body,
+static void badbadbad_log(dstr_t tag, dstr_t summary, dstr_t body,
         dstr_t* buff){
     derr_t e = E_OK;
     // get a timestamp for this error
@@ -126,7 +126,7 @@ static void badbadbad_log(dstr_t* tag, dstr_t* summary, dstr_t* body,
          "---------------------------------------------------\n"
          "%x\n"
          "%x",
-         FD(&ts), FD(tag), FD(summary), FD(body))
+         FD(ts), FD(tag), FD(summary), FD(body))
     ){}
 
     CATCH(e, E_ANY){
@@ -141,7 +141,9 @@ static void badbadbad_log(dstr_t* tag, dstr_t* summary, dstr_t* body,
     badbadbad_write_log(buff);
 }
 
-static void send_to_badbadbad_server(dstr_t* tag, dstr_t* summary, dstr_t* body, dstr_t* buff){
+static void send_to_badbadbad_server(
+    dstr_t tag, dstr_t summary, dstr_t body, dstr_t* buff
+){
     derr_t e = E_OK;
     derr_t e2;
     // open a socket
@@ -164,7 +166,7 @@ static void send_to_badbadbad_server(dstr_t* tag, dstr_t* summary, dstr_t* body,
             "###################################################\n"
             "alert %x dropped by client due to connect error: %x\n"
             "###################################################\n",
-            FD(tag), FE(&errno))){}
+            FD(tag), FE(errno))){}
         // write buffer
         badbadbad_write_log(buff);
         // can't continue without a connection
@@ -194,7 +196,7 @@ static void send_to_badbadbad_server(dstr_t* tag, dstr_t* summary, dstr_t* body,
             "###################################################\n"
             "alert %x dropped by client due to write error: %x\n"
             "###################################################\n",
-            FD(tag), FE(&errno))){}
+            FD(tag), FE(errno))){}
         // write buffer
         badbadbad_write_log(buff);
         RETHROW_GO(&e, &e2, E_OS, fail_sock);
@@ -203,7 +205,7 @@ static void send_to_badbadbad_server(dstr_t* tag, dstr_t* summary, dstr_t* body,
     // indicate we are done sending
     ret = shutdown(sock, SHUT_WR);
     if(ret){
-        TRACE(&e, "data sent, but failed to shutdown: %x\n", FE(&errno));
+        TRACE(&e, "data sent, but failed to shutdown: %x\n", FE(errno));
         ORIG_GO(&e, E_OS, "shutdown failed", fail_sock);
     }
 
@@ -211,7 +213,7 @@ static void send_to_badbadbad_server(dstr_t* tag, dstr_t* summary, dstr_t* body,
     char* ignore_buff[10];
     ssize_t amnt_read = read(sock, ignore_buff, sizeof(ignore_buff));
     if(amnt_read < 0){
-        TRACE(&e, "data sent, but got error on read: %x\n", FE(&errno));
+        TRACE(&e, "data sent, but got error on read: %x\n", FE(errno));
         ORIG_GO(&e, E_OS, "post-shutdown read failed", fail_sock);
     }
 
@@ -229,14 +231,8 @@ fail:
     DROP_VAR(&e);
 }
 
-void badbadbad_alert(dstr_t* summary, dstr_t* body){
+void badbadbad_alert(dstr_t summary, dstr_t body){
     derr_t e = E_OK;
-
-    // allow the body to be null or to contain a null pointer
-    DSTR_STATIC(emptybody, "");
-    if(body == NULL || body->data == NULL){
-        body = &emptybody;
-    }
 
     // first allocate a multipurpose buffer
     dstr_t buff;
@@ -250,13 +246,13 @@ void badbadbad_alert(dstr_t* summary, dstr_t* body){
     }
 
     // write to this program's log file, to enable cross-checking
-    LOG_ERROR("logging badbadbad error, tag %x\n", FD(&tag));
+    LOG_ERROR("logging badbadbad error, tag %x\n", FD(tag));
 
     // write to the badbadbad log file
-    badbadbad_log(&tag, summary, body, &buff);
+    badbadbad_log(tag, summary, body, &buff);
 
     // then communicate to the badbadbad server
-    send_to_badbadbad_server(&tag, summary, body, &buff);
+    send_to_badbadbad_server(tag, summary, body, &buff);
 
     dstr_free(&buff);
 

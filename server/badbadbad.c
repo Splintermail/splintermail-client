@@ -33,7 +33,7 @@ send:
         DUMP(e);
         DROP_VAR(&e);
     }
-    badbadbad_alert(&summary, &body);
+    badbadbad_alert(summary, body);
 
     // this is always safe because we zeroed the dstr before allocating it
     dstr_free(&body);

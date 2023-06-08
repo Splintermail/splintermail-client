@@ -13,14 +13,13 @@ fileops_harness_t fileops_harness = {
 
 static char* dot = ".";
 static char* dotdot = "..";
-DSTR_STATIC(slash, "/");
 
 static inline bool do_dir_access(const char* path, bool create, int flags){
     // check if path is a valid directory
     struct stat s;
     int ret = stat(path, &s);
     if(ret != 0){
-        LOG_DEBUG("%x: %x\n", FS(path), FE(&errno));
+        LOG_DEBUG("%x: %x\n", FS(path), FE(errno));
         // if stat failed and we don't want to create the directory, fail
         if(!create){
             return false;
@@ -28,7 +27,7 @@ static inline bool do_dir_access(const char* path, bool create, int flags){
         // we might be able to create the directory
         ret = fileops_harness.mkdir(path, 0770);
         if(ret != 0){
-            LOG_DEBUG("%x: %x\n", FS(path), FE(&errno));
+            LOG_DEBUG("%x: %x\n", FS(path), FE(errno));
             LOG_DEBUG("%x: unable to stat or create directory\n", FS(path));
             return false;
         }else{
@@ -46,7 +45,7 @@ static inline bool do_dir_access(const char* path, bool create, int flags){
     // lastly, make sure we have access
     ret = compat_access(path, flags);
     if(ret != 0){
-        LOG_DEBUG("%x: %x\n", FS(path), FE(&errno));
+        LOG_DEBUG("%x: %x\n", FS(path), FE(errno));
         LOG_DEBUG("%x: incorrect permissions\n", FS(path));
         return false;
     }
@@ -68,13 +67,13 @@ static inline bool do_file_access(const char* path, int flags){
     struct stat s;
     int ret = stat(path, &s);
     if(ret != 0){
-        LOG_DEBUG("%x: %x\n", FS(path), FE(&errno));
+        LOG_DEBUG("%x: %x\n", FS(path), FE(errno));
         // if we can't stat it, that is the end of the test
         return false;
     }
     ret = compat_access(path, flags);
     if(ret != 0){
-        LOG_DEBUG("%x: %x\n", FS(path), FE(&errno));
+        LOG_DEBUG("%x: %x\n", FS(path), FE(errno));
         // could be that it doesn't exist, could be bad permissions
         return false;
     }
@@ -103,7 +102,7 @@ derr_t dfstat(int fd, compat_stat_t *s){
     int ret = compat_fstat(fd, s);
     if(ret != 0){
         derr_type_t etype = errno == ENOMEM ? E_NOMEM : E_OS;
-        ORIG(&e, etype, "failed in fstat: %x", FE(&errno));
+        ORIG(&e, etype, "failed in fstat: %x", FE(errno));
     }
 
     return e;
@@ -132,7 +131,7 @@ derr_t dstat(const char *path, struct stat *s, bool *exists){
             return e;
         }
 
-        TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
+        TRACE(&e, "%x: %x\n", FS(path), FE(errno));
         ORIG(&e, E_OS, "failed in stat");
     }
 
@@ -145,7 +144,7 @@ derr_t dstat_path(const string_builder_t *sb, struct stat *s, bool *exists){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, dstat(path->data, s, exists), cu);
 
@@ -172,7 +171,7 @@ derr_t is_file_path(const string_builder_t *sb, bool *res){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, is_file(path->data, res), cu);
 
@@ -199,7 +198,7 @@ derr_t is_dir_path(const string_builder_t *sb, bool *res){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, is_dir(path->data, res), cu);
 
@@ -426,9 +425,9 @@ derr_t for_each_file_in_dir(const string_builder_t* path,
     derr_t e = E_OK;
 
     // search spec is "path/*"
-    string_builder_t search_spec = sb_append(path, FS("*"));
+    string_builder_t search_spec = sb_append(path, SBS("*"));
     dstr_t *search = NULL;
-    PROP(&e, sb_expand(&search_spec, &slash, &stack, &heap, &search) );
+    PROP(&e, sb_expand(&search_spec, &stack, &heap, &search) );
 
     WIN32_FIND_DATA ffd;
     HANDLE hFind = FindFirstFile(search->data, &ffd);
@@ -468,7 +467,7 @@ cu_heap:
         if(!entry){
             if(errno){
                 // this can only throw EBADF, which should never happen
-                TRACE(&e, "%x: %x\n", FS("readdir"), FE(&errno));
+                TRACE(&e, "%x: %x\n", FS("readdir"), FE(errno));
                 ORIG_GO(&e, E_INTERNAL, "unable to readdir()", cleanup);
             }else{
                 break;
@@ -499,7 +498,7 @@ static derr_t rm_rf_hook(
     (void)userdata;
     derr_t e = E_OK;
 
-    string_builder_t path = sb_append(base, FD(file));
+    string_builder_t path = sb_append(base, SBD(*file));
 
     // base/file is a directory?
     if(isdir){
@@ -528,7 +527,7 @@ derr_t rm_rf(const char* path){
         // nothing to delete
     }else if(S_ISDIR(s.st_mode)){
         // directory case
-        string_builder_t sb = SB(FS(path));
+        string_builder_t sb = SBS(path);
         PROP(&e, for_each_file_in_dir(&sb, rm_rf_hook, NULL) );
         // now delete the directory itself
         PROP(&e, drmdir(path) );
@@ -583,7 +582,7 @@ static inline derr_t do_chown_path(const string_builder_t* sb, uid_t uid,
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     int ret;
     if(l){
@@ -595,7 +594,7 @@ static inline derr_t do_chown_path(const string_builder_t* sb, uid_t uid,
         if(errno == ENOMEM){
             ORIG_GO(&e, E_NOMEM, "No memory for chown", cu);
         }else{
-            TRACE(&e, "chown %x: %x\n", FD(path), FE(&errno));
+            TRACE(&e, "chown %x: %x\n", FD(*path), FE(errno));
             ORIG_GO(&e, E_OS, "chown failed\n", cu);
         }
     }
@@ -619,11 +618,11 @@ derr_t opendir_path(const string_builder_t* sb, DIR** out){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     DIR* d = opendir(path->data);
     if(!d){
-        TRACE(&e, "opendir(%x): %x\n", FS(path->data), FE(&errno));
+        TRACE(&e, "opendir(%x): %x\n", FS(path->data), FE(errno));
         if(errno == ENOMEM){
             ORIG_GO(&e, E_NOMEM, "unable to opendir()", cu);
         }else if(errno == EMFILE || errno == ENFILE){
@@ -646,7 +645,7 @@ derr_t readlink_path(const string_builder_t* sb, dstr_t* stack_out,
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     // now try and read
     ssize_t len = readlink(path->data, stack_out->data, stack_out->size);
@@ -654,7 +653,7 @@ derr_t readlink_path(const string_builder_t* sb, dstr_t* stack_out,
         if(errno == ENOMEM){
             ORIG_GO(&e, E_NOMEM, "no memory for readlink", cu_path);
         }else{
-            TRACE(&e, "readlink %x: %x\n", FD(path), FE(&errno));
+            TRACE(&e, "readlink %x: %x\n", FD(*path), FE(errno));
             ORIG_GO(&e, E_FS, "unable to readlink", cu_path);
         }
     }
@@ -673,7 +672,7 @@ derr_t readlink_path(const string_builder_t* sb, dstr_t* stack_out,
                 if(errno == ENOMEM){
                     ORIG_GO(&e, E_NOMEM, "no memory for readlink", cu_heap);
                 }else{
-                    TRACE(&e, "readlink %x: %x\n", FD(path), FE(&errno));
+                    TRACE(&e, "readlink %x: %x\n", FD(*path), FE(errno));
                     ORIG_GO(&e, E_FS, "unable to readlink", cu_heap);
                 }
             }
@@ -700,13 +699,12 @@ derr_t symlink_path(const string_builder_t* to, const string_builder_t* at){
     DSTR_VAR(stack_at, 256);
     dstr_t heap_at = {0};
     dstr_t* at_out;
-    PROP(&e, sb_expand(at, &slash, &stack_at, &heap_at, &at_out) );
+    PROP(&e, sb_expand(at, &stack_at, &heap_at, &at_out) );
 
     DSTR_VAR(stack_to, 256);
     dstr_t heap_to = {0};
     dstr_t* to_out;
-    PROP_GO(&e, sb_expand(to, &slash, &stack_to, &heap_to,
-                       &to_out), cu_at);
+    PROP_GO(&e, sb_expand(to, &stack_to, &heap_to, &to_out), cu_at);
 
     int ret = symlink(to_out->data, at_out->data);
     if(ret != 0){
@@ -714,7 +712,7 @@ derr_t symlink_path(const string_builder_t* to, const string_builder_t* at){
             ORIG_GO(&e, E_NOMEM, "no memory for symlink", cu_to);
         }else{
             TRACE(&e, "symlink %x -> %x: %x\n",
-                      FD(at_out), FD(to_out), FE(&errno));
+                      FD(*at_out), FD(*to_out), FE(errno));
             ORIG_GO(&e, E_FS, "unable to symlink", cu_to);
         }
     }
@@ -732,14 +730,14 @@ derr_t chmod_path(const string_builder_t* sb, mode_t mode){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     int ret = compat_chmod(path->data, mode);
     if(ret != 0){
         if(errno == ENOMEM){
             ORIG_GO(&e, E_NOMEM, "No memory for chmod", cu);
         }else{
-            TRACE(&e, "chmod %x: %x\n", FD(path), FE(&errno));
+            TRACE(&e, "chmod %x: %x\n", FD(*path), FE(errno));
             ORIG_GO(&e, E_OS, "chmod failed\n", cu);
         }
     }
@@ -755,7 +753,7 @@ static inline derr_t do_stat_path(const string_builder_t* sb, struct stat* out,
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     errno = 0;
     int ret;
@@ -774,7 +772,7 @@ static inline derr_t do_stat_path(const string_builder_t* sb, struct stat* out,
             ORIG_GO(&e, E_NOMEM, "no memory for stat", cu);
         // only throw E_FS if calling function doesn't check *eno
         }else if(eno == NULL){
-            TRACE(&e, "unable to stat %x: %x\n", FD(path), FE(&errno));
+            TRACE(&e, "unable to stat %x: %x\n", FD(*path), FE(errno));
             ORIG_GO(&e, E_FS, "unable to stat", cu);
         }
     }
@@ -815,7 +813,7 @@ derr_t dmkdir(const char *path, mode_t mode, bool soft){
                 ORIG(&e, E_FS, "unable to mkdir");
             }
         }else{
-            TRACE(&e, "unable to mkdir %x: %x\n", FS(path), FE(&errno));
+            TRACE(&e, "unable to mkdir %x: %x\n", FS(path), FE(errno));
             ORIG(&e, E_FS, "unable to mkdir");
         }
     }
@@ -828,7 +826,7 @@ derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, dmkdir(path->data, mode, soft), cu);
 
@@ -842,7 +840,7 @@ derr_t mkdirs_path(const string_builder_t* sb, mode_t mode){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t *path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     // if the directory already exists, do nothing
     if(exists(path->data)){
@@ -856,7 +854,7 @@ derr_t mkdirs_path(const string_builder_t* sb, mode_t mode){
     while(true){
         tpath = ddirname(tpath);
         bool ok;
-        PROP_GO(&e, exists_path(&SB(FD(&tpath)), &ok), cu);
+        PROP_GO(&e, exists_path(&SBD(tpath), &ok), cu);
         if(ok){
             // no need to make this parent
             break;
@@ -879,7 +877,7 @@ derr_t mkdirs_path(const string_builder_t* sb, mode_t mode){
             tpath = ddirname(tpath);
         }
         // create the ith parent
-        PROP_GO(&e, mkdir_path(&SB(FD(&tpath)), mode, true), fail);
+        PROP_GO(&e, mkdir_path(&SBD(tpath), mode, true), fail);
         ncreated++;
     }
 
@@ -896,7 +894,7 @@ fail:
         for(int j = 0; j < (nparents - i); j++){
             tpath = ddirname(tpath);
         }
-        DROP_CMD( drmdir_path(&SB(FD(&tpath))) );
+        DROP_CMD( drmdir_path(&SBD(tpath)) );
     }
     return e;
 }
@@ -907,7 +905,7 @@ static inline derr_t do_dir_access_path(const string_builder_t* sb, bool create,
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     *ret = do_dir_access(path->data, create, flags);
 
@@ -935,7 +933,7 @@ static inline derr_t do_file_access_path(const string_builder_t* sb, bool* ret, 
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     *ret = do_file_access(path->data, flags);
 
@@ -972,7 +970,7 @@ derr_t exists_path(const string_builder_t* sb, bool* ret){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     *ret = exists(path->data);
 
@@ -988,7 +986,7 @@ derr_t dremove(const char* path){
         if(errno == ENOMEM){
             ORIG(&e, E_NOMEM, "no memory for remove");
         }else{
-            TRACE(&e, "remove(%x): %x\n", FS(path), FE(&errno));
+            TRACE(&e, "remove(%x): %x\n", FS(path), FE(errno));
             ORIG(&e, E_FS, "unable to remove");
         }
     }
@@ -1001,7 +999,7 @@ derr_t remove_path(const string_builder_t* sb){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, dremove(path->data), cu);
 
@@ -1018,7 +1016,7 @@ derr_t dunlink(const char *path){
         if(errno == ENOMEM){
             ORIG(&e, E_NOMEM, "no memory for unlink");
         }else{
-            TRACE(&e, "unlink(%x): %x\n", FS(path), FE(&errno));
+            TRACE(&e, "unlink(%x): %x\n", FS(path), FE(errno));
             ORIG(&e, E_FS, "unable to unlink");
         }
     }
@@ -1031,7 +1029,7 @@ derr_t dunlink_path(const string_builder_t* sb){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, dunlink(path->data), cu);
 
@@ -1048,7 +1046,7 @@ derr_t drmdir(const char *path){
         if(errno == ENOMEM){
             ORIG(&e, E_NOMEM, "no memory for rmdir");
         }else{
-            TRACE(&e, "rmdir(%x): %x\n", FS(path), FE(&errno));
+            TRACE(&e, "rmdir(%x): %x\n", FS(path), FE(errno));
             ORIG(&e, E_FS, "unable to rmdir");
         }
     }
@@ -1061,7 +1059,7 @@ derr_t drmdir_path(const string_builder_t* sb){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, drmdir(path->data), cu);
 
@@ -1080,7 +1078,7 @@ derr_t file_copy(const char* from, const char* to, mode_t mode){
         if(errno == ENOMEM){
             ORIG(&e, E_NOMEM, "no memory for open");
         }else{
-            TRACE(&e, "%x: %x\n", FS(from), FE(&errno));
+            TRACE(&e, "%x: %x\n", FS(from), FE(errno));
             ORIG(&e, E_OPEN, "unable to open file");
         }
     }
@@ -1090,7 +1088,7 @@ derr_t file_copy(const char* from, const char* to, mode_t mode){
         if(errno == ENOMEM){
             ORIG_GO(&e, E_NOMEM, "no memory for open", cu_fdin);
         }else{
-            TRACE(&e, "%x: %x\n", FS(to), FE(&errno));
+            TRACE(&e, "%x: %x\n", FS(to), FE(errno));
             ORIG_GO(&e, E_OPEN, "unable to open file", cu_fdin);
         }
     }
@@ -1118,12 +1116,12 @@ derr_t file_copy_path(const string_builder_t* sb_from,
     DSTR_VAR(stack_from, 256);
     dstr_t heap_from = {0};
     dstr_t* path_from;
-    PROP(&e, sb_expand(sb_from, &slash, &stack_from, &heap_from, &path_from) );
+    PROP(&e, sb_expand(sb_from, &stack_from, &heap_from, &path_from) );
 
     DSTR_VAR(stack_to, 256);
     dstr_t heap_to = {0};
     dstr_t* path_to;
-    PROP_GO(&e, sb_expand(sb_to, &slash, &stack_to, &heap_to, &path_to), cu_from);
+    PROP_GO(&e, sb_expand(sb_to, &stack_to, &heap_to, &path_to), cu_from);
 
     PROP_GO(&e, file_copy(path_from->data, path_to->data, mode), cu_to);
 
@@ -1142,7 +1140,7 @@ derr_t touch(const char* path){
         if(errno == ENOMEM){
             ORIG(&e, E_NOMEM, "no memory for open");
         }else{
-            TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
+            TRACE(&e, "%x: %x\n", FS(path), FE(errno));
             ORIG(&e, E_OPEN, "unable to open file");
         }
     }
@@ -1150,7 +1148,7 @@ derr_t touch(const char* path){
     // use uitme to update the file's timestamp
     int ret = utime(path, NULL);
     if(ret != 0){
-        TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
+        TRACE(&e, "%x: %x\n", FS(path), FE(errno));
         ORIG(&e, E_FS, "utime failed");
     }
     return e;
@@ -1161,7 +1159,7 @@ derr_t touch_path(const string_builder_t* sb){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, touch(path->data), cu);
 
@@ -1175,7 +1173,7 @@ derr_t drename(const char *src, const char *dst){
 
     int ret = rename(src, dst);
     if(ret != 0){
-        TRACE(&e, "rename(%x, %x): %x\n", FS(src), FS(dst), FE(&errno));
+        TRACE(&e, "rename(%x, %x): %x\n", FS(src), FS(dst), FE(errno));
         ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OS, "unable to rename file");
     }
 
@@ -1187,13 +1185,12 @@ derr_t drename_path(const string_builder_t *src, const string_builder_t *dst){
     DSTR_VAR(stack_src, 256);
     dstr_t heap_src = {0};
     dstr_t* path_src;
-    PROP(&e, sb_expand(src, &slash, &stack_src, &heap_src, &path_src) );
+    PROP(&e, sb_expand(src, &stack_src, &heap_src, &path_src) );
 
     DSTR_VAR(stack_dst, 256);
     dstr_t heap_dst = {0};
     dstr_t* path_dst;
-    PROP_GO(&e, sb_expand(dst, &slash, &stack_dst, &heap_dst, &path_dst),
-            cu_src);
+    PROP_GO(&e, sb_expand(dst, &stack_dst, &heap_dst, &path_dst), cu_src);
 
     PROP_GO(&e, drename(path_src->data, path_dst->data), cu_dst);
 
@@ -1228,7 +1225,7 @@ derr_t drename_atomic(const char *src, const char *dst){
     // no backup or flags, and two (!) NULL reserved values
     int ret = ReplaceFileA(dst, src, NULL, 0, NULL, NULL);
     if(ret == 0){
-        TRACE(&e, "ReplaceFileA(%x -> %x): %x\n", FS(src), FS(dst), FWINERR());
+        TRACE(&e, "ReplaceFileA(%x -> %x): %x\n", FS(src), FS(dst), FWINERR);
         ORIG(&e, E_OS, "ReplaceFileA failed");
     }
     return e;
@@ -1247,8 +1244,8 @@ derr_t drename_atomic_path(
 
     derr_t e = E_OK;
 
-    PROP_GO(&e, sb_expand(src, &slash, &stack_src, &heap_src, &path_src), cu);
-    PROP_GO(&e, sb_expand(dst, &slash, &stack_dst, &heap_dst, &path_dst), cu);
+    PROP_GO(&e, sb_expand(src, &stack_src, &heap_src, &path_src), cu);
+    PROP_GO(&e, sb_expand(dst, &stack_dst, &heap_dst, &path_dst), cu);
     PROP_GO(&e, drename_atomic(path_src->data, path_dst->data), cu);
 
 cu:
@@ -1262,7 +1259,7 @@ derr_t dfopen(const char *path, const char *mode, FILE **out){
 
     *out = compat_fopen(path, mode);
     if(!*out){
-        TRACE(&e, "fopen(%x): %x\n", FS(path), FE(&errno));
+        TRACE(&e, "fopen(%x): %x\n", FS(path), FE(errno));
         ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
     }
 
@@ -1277,7 +1274,7 @@ derr_t dfopen_path(const string_builder_t *sb, const char *mode, FILE **out){
 
     *out = NULL;
 
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, dfopen(path->data, mode, out), cu);
 
@@ -1294,7 +1291,7 @@ derr_t dopen(const char *path, int flags, int mode, int *fd){
         if(errno == ENOMEM){
             ORIG(&e, E_NOMEM, "no memory for open");
         }
-        TRACE(&e, "open(%x): %x\n", FS(path), FE(&errno));
+        TRACE(&e, "open(%x): %x\n", FS(path), FE(errno));
         ORIG(&e, E_OPEN, "unable to open file");
     }
 
@@ -1307,7 +1304,7 @@ derr_t dopen_path(const string_builder_t *sb, int flags, int mode, int *fd){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, dopen(path->data, flags, mode, fd), cu);
 
@@ -1321,7 +1318,7 @@ derr_t dfsync(int fd){
 
     int ret = compat_fsync(fd);
     if(ret != 0){
-        TRACE(&e, "fsync: %x\n", FE(&errno));
+        TRACE(&e, "fsync: %x\n", FE(errno));
         ORIG(&e, E_OPEN, "fsync failed");
     }
 
@@ -1333,7 +1330,7 @@ derr_t dffsync(FILE *f){
 
     int ret = fflush(f);
     if(ret != 0){
-        TRACE(&e, "fflush: %x\n", FE(&errno));
+        TRACE(&e, "fflush: %x\n", FE(errno));
         ORIG(&e, E_OPEN, "fflush failed");
     }
 
@@ -1341,7 +1338,7 @@ derr_t dffsync(FILE *f){
     // windows fflush() already does this
     ret = compat_fsync(fileno(f));
     if(ret != 0){
-        TRACE(&e, "fsync: %x\n", FE(&errno));
+        TRACE(&e, "fsync: %x\n", FE(errno));
         ORIG(&e, E_OPEN, "fsync failed");
     }
     #endif
@@ -1354,7 +1351,7 @@ derr_t dfseek(FILE *f, long offset, int whence){
 
     int ret = fseek(f, offset, whence);
     if(ret != 0){
-        TRACE(&e, "fseek: %x\n", FE(&errno));
+        TRACE(&e, "fseek: %x\n", FE(errno));
         ORIG(&e, E_OS, "fseek failed");
     }
 
@@ -1368,7 +1365,7 @@ derr_t dfgetc(FILE *f, int *c){
     if(*c == EOF){
         int error = ferror(f);
         if(error){
-            TRACE(&e, "fgetc: %x\n", FE(&error));
+            TRACE(&e, "fgetc: %x\n", FE(error));
             ORIG(&e, E_OS, "fgetc failed");
         }
     }
@@ -1382,7 +1379,7 @@ derr_t dfputc(FILE *f, int c){
     int ret = fputc(c, f);
     if(ret == EOF){
         int error = ferror(f);
-        TRACE(&e, "fputc: %x\n", FE(&error));
+        TRACE(&e, "fputc: %x\n", FE(error));
         ORIG(&e, E_OS, "fputc failed");
     }
 
@@ -1394,7 +1391,7 @@ derr_t dclose(int fd){
 
     int ret = compat_close(fd);
     if(ret){
-        TRACE(&e, "close: %x\n", FE(&errno));
+        TRACE(&e, "close: %x\n", FE(errno));
         ORIG(&e, E_OPEN, "close failed");
     }
 
@@ -1406,7 +1403,7 @@ derr_t dfclose(FILE *f){
 
     int ret = fclose(f);
     if(ret){
-        TRACE(&e, "fclose: %x\n", FE(&errno));
+        TRACE(&e, "fclose: %x\n", FE(errno));
         ORIG(&e, E_OS, "fclose failed");
     }
 
@@ -1418,7 +1415,7 @@ derr_t dstr_read_file(const char* filename, dstr_t* buffer){
 
     int fd = compat_open(filename, O_RDONLY);
     if(fd < 0){
-        TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
+        TRACE(&e, "%x: %x\n", FS(filename), FE(errno));
         ORIG(&e, E_OPEN, "unable to open file");
     }
     // if the buffer is intially full, grow it before we start dstr_read()
@@ -1448,7 +1445,7 @@ derr_t dstr_read_path(const string_builder_t* sb, dstr_t* buffer){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, dstr_read_file(path->data, buffer), cu);
 
@@ -1462,7 +1459,7 @@ derr_t dstr_write_file(const char* filename, const dstr_t* buffer){
 
     int fd = compat_open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if(fd < 0){
-        TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
+        TRACE(&e, "%x: %x\n", FS(filename), FE(errno));
         ORIG(&e, E_OPEN, "unable to open file");
     }
     PROP_GO(&e, dstr_write(fd, buffer), cleanup);
@@ -1475,14 +1472,14 @@ cleanup:
     ret = compat_close(fd);
     // check for closing error
     if(ret != 0 && !is_error(e)){
-        TRACE(&e, "compat_close(%x): %x\n", FS(filename), FE(&errno));
+        TRACE(&e, "compat_close(%x): %x\n", FS(filename), FE(errno));
         TRACE_ORIG(&e, E_OS, "failed to write file");
     }
     if(is_error(e)){
         // make a feeble attempt to delete the file
         ret = compat_unlink(filename);
         LOG_ERROR(
-            "failed to remove failed file after failed write: %x\n", FE(&errno)
+            "failed to remove failed file after failed write: %x\n", FE(errno)
         );
     }
     return e;
@@ -1493,7 +1490,7 @@ derr_t dstr_write_path(const string_builder_t *sb, const dstr_t* buffer){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, dstr_write_file(path->data, buffer), cu);
 

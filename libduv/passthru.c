@@ -2,15 +2,8 @@
 
 #include "libduv/libduv.h"
 
-#define ORIG_UV(e, uvret) \
-    pvt_orig( \
-        (e), \
-        derr_type_from_uv_status(uvret), \
-        "ERROR: %x\n", \
-        (fmt_t[]){FS(uv_strerror(uvret))}, \
-        1, \
-        FILE_LOC \
-    )
+#define TRACE_ORIG_UV(e, uvret) \
+    TRACE_ORIG((e), derr_type_from_uv_status(uvret), "%x", FUV(uvret))
 
 static void advance_state(duv_passthru_t *p);
 
@@ -136,7 +129,7 @@ static void _do_read_cb(duv_passthru_t *p, ssize_t nread, const uv_buf_t *buf){
                 return;
             default:
                 // this stream is donezo
-                ORIG_UV(&p->e, (int)nread);
+                TRACE_ORIG_UV(&p->e, (int)nread);
                 return;
         }
     }
@@ -182,7 +175,7 @@ static void write_cb(uv_write_t *uvw, int status){
     stream_write_t *req = mem->req;
 
     if(status < 0 && !failing(p)){
-        ORIG_UV(&p->e, status);
+        TRACE_ORIG_UV(&p->e, status);
     }
 
     if(!p->writes.inflight){
@@ -208,7 +201,7 @@ static void _shutdown_cb(uv_shutdown_t *shutdown_req, int status){
     duv_passthru_t *p = shutdown_req->data;
     p->shutdown.complete = true;
     if(status < 0 && !failing(p)){
-        ORIG_UV(&p->e, status);
+        TRACE_ORIG_UV(&p->e, status);
     }
     advance_state(p);
 }
@@ -244,7 +237,7 @@ static void advance_state(duv_passthru_t *p){
             // return req to the front of pending
             link_list_prepend(&p->writes.pending, &req->link);
             // now we are in a closing state
-            ORIG_UV(&p->e, ret);
+            TRACE_ORIG_UV(&p->e, ret);
             goto closing;
         }
         // write was successful
@@ -260,7 +253,7 @@ static void advance_state(duv_passthru_t *p){
         int ret = uv_shutdown(&p->shutdown.req, p->uvstream, _shutdown_cb);
         if(ret < 0){
             // now we are in a closing state
-            ORIG_UV(&p->e, ret);
+            TRACE_ORIG_UV(&p->e, ret);
             goto closing;
         }
     }
@@ -346,7 +339,7 @@ static bool passthru_read(
         // now we can read_start
         int ret = uv_read_start(p->uvstream, _alloc_cb, _read_cb);
         if(ret < 0){
-            ORIG_UV(&p->e, ret);
+            TRACE_ORIG_UV(&p->e, ret);
             schedule(p);
         }
         p->reading = true;
@@ -401,7 +394,7 @@ static bool passthru_write(
     if(ret < 0){
         // write failed, return write_mem_t to the list
         link_list_append(&p->pool, &mem->link);
-        ORIG_UV(&p->e, ret);
+        TRACE_ORIG_UV(&p->e, ret);
         schedule(p);
         goto closing;
     }
@@ -427,7 +420,7 @@ static void passthru_shutdown(stream_i *iface, stream_shutdown_cb shutdown_cb){
     if(!p->writes.inflight){
         int ret = uv_shutdown(&p->shutdown.req, p->uvstream, _shutdown_cb);
         if(ret < 0){
-            ORIG_UV(&p->e, ret);
+            TRACE_ORIG_UV(&p->e, ret);
             schedule(p);
         }
     }

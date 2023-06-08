@@ -32,22 +32,24 @@ jctx_t jctx_fork(jctx_t *base, json_node_t *node, bool *ok, dstr_t *errbuf);
 jctx_t jctx_sub_index(jctx_t *base, size_t index, json_node_t *node);
 jctx_t jctx_sub_key(jctx_t *base, dstr_t text, json_node_t *node);
 
-derr_type_t fmthook_jpath(dstr_t *out, const void *arg);
-static inline fmt_t FJP(const jctx_t* arg){
-    return (fmt_t){
-        FMT_EXT, { .ext = { .arg = (const void*)arg, .hook = fmthook_jpath } },
-    };
-}
+typedef struct {
+    fmt_i iface;
+    const jctx_t *ctx;
+} _fmt_jpath_t;
+
+derr_type_t _fmt_jpath(const fmt_i *iface, writer_i *out);
+
+#define FJP(ctx) (&(_fmt_jpath_t){ {_fmt_jpath}, ctx }.iface)
 
 derr_type_t _jctx_error(
-    jctx_t *ctx, const char *fstr, const fmt_t *args, size_t nargs
+    jctx_t *ctx, const char *fstr, const fmt_i **args, size_t nargs
 );
 #define jctx_error(ctx, fstr, ...) \
     _jctx_error( \
         ctx, \
         "at %x: " fstr, \
-        (const fmt_t[]){FJP(ctx), __VA_ARGS__}, \
-        sizeof((const fmt_t[]){FJP(ctx), __VA_ARGS__}) / sizeof(fmt_t) \
+        (const fmt_i*[]){FJP(ctx), __VA_ARGS__}, \
+        sizeof((const fmt_i*[]){FJP(ctx), __VA_ARGS__}) / sizeof(fmt_i*) \
     )
 
 // returns bool ok indicating if the type is right

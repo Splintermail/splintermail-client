@@ -11,7 +11,7 @@ derr_t dsock(int domain, int type, int protocol, int *fd){
 
     *fd = socket(domain, type, protocol);
     if(*fd < 0){
-        TRACE(&e, "socket: %x\n", FE(&errno));
+        TRACE(&e, "socket: %x\n", FE(errno));
         ORIG(&e, E_OS, "socket failed");
     }
 
@@ -35,7 +35,7 @@ static derr_t dsockaddr_un(
 
     dstr_t sockpath;
     DSTR_WRAP_ARRAY(sockpath, sun->sun_path);
-    PROP(&e, FMT(&sockpath, "%x", FD(path)) );
+    PROP(&e, FMT(&sockpath, "%x", FD(*path)) );
 
     // return backing memory as sockaddr
     *sa = (struct sockaddr*)storage;
@@ -52,7 +52,7 @@ derr_t dconnect_unix(int sockfd, const dstr_t *path){
 
     int ret = connect(sockfd, sa, sizeof(storage));
     if(ret){
-        TRACE(&e, "connect(%x): %x\n", FD(path), FE(&errno));
+        TRACE(&e, "connect(%x): %x\n", FD(*path), FE(errno));
         ORIG(&e, E_OS, "connect failed");
     }
 

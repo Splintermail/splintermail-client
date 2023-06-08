@@ -37,35 +37,36 @@ jctx_t jctx_sub_key(jctx_t *base, dstr_t text, json_node_t *node){
     return ctx;
 }
 
-// recursive layer under fmthook_jpath
-static derr_type_t jpath_render_quiet(dstr_t* out, const jctx_t *ctx){
+// recursive layer under _fmt_jpath
+static derr_type_t jpath_render_quiet(const jctx_t *ctx, writer_i *out){
     if(!ctx->parent){
         // root item
-        return dstr_append_quiet(out, &DSTR_LIT("<root>"));
+        return out->w->puts(out, "<root>", 6);
     }
     // print parent first
-    derr_type_t etype = jpath_render_quiet(out, ctx->parent);
+    derr_type_t etype = jpath_render_quiet(ctx->parent, out);
     if(etype) return etype;
     if(ctx->istext){
-        return FMT_QUIET(out, ".%x", FD_DBG(&ctx->text));
+        return FMT_UNLOCKED(out, ".%x", FD_DBG(ctx->text));
     }else{
-        return FMT_QUIET(out, "[%x]", FU(ctx->index));
+        return FMT_UNLOCKED(out, "[%x]", FU(ctx->index));
     }
 }
 
-derr_type_t fmthook_jpath(dstr_t *out, const void *arg){
-    // cast the input
-    const jctx_t *ctx = (const jctx_t*)arg;
+DEF_CONTAINER_OF(_fmt_jpath_t, iface, fmt_i)
+
+derr_type_t _fmt_jpath(const fmt_i *iface, writer_i *out){
+    const jctx_t *ctx = CONTAINER_OF(iface, _fmt_jpath_t, iface)->ctx;
     // call recursive layer
-    return jpath_render_quiet(out, ctx);
+    return jpath_render_quiet(ctx, out);
 }
 
 derr_type_t _jctx_error(
-    jctx_t *ctx, const char *fstr, const fmt_t *args, size_t nargs
+    jctx_t *ctx, const char *fstr, const fmt_i **args, size_t nargs
 ){
     *ctx->ok = false;
     if(!ctx->errbuf) return E_NONE;
-    return pvt_fmt_quiet(ctx->errbuf, fstr, args, nargs);
+    return _fmt_quiet(WD(ctx->errbuf), fstr, args, nargs);
 }
 
 bool _jctx_require_type(jctx_t *ctx, json_type_e *types, size_t ntypes){
@@ -88,7 +89,7 @@ bool _jctx_require_type(jctx_t *ctx, json_type_e *types, size_t ntypes){
         }
         jctx_error(ctx,
             "expected one of [%x] types but found %x-type\n",
-            FD(&buf),
+            FD(buf),
             FD(json_type_to_dstr(node_type))
         );
     }
@@ -178,7 +179,7 @@ derr_t jspec_object_read(jspec_t *jspec, jctx_t *ctx){
             if(dstr_cmp2(prev, key) > -1){
                 LOG_FATAL(
                     "JOBJ keys are not presorted; \"%x\" is before \"%x\"\n",
-                    FD(&prev), FD(&key)
+                    FD(prev), FD(key)
                 );
             }
             prev = key;
@@ -196,14 +197,14 @@ derr_t jspec_object_read(jspec_t *jspec, jctx_t *ctx){
         );
         if(!match){
             if(!j->allow_extras){
-                jctx_error(ctx, "unexpected key: \"%x\"\n", FD(&keytext));
+                jctx_error(ctx, "unexpected key: \"%x\"\n", FD(keytext));
             }
             continue;
         }
 
         if(match->found){
             jctx_error(ctx,
-                "duplicate entries for key: \"%x\"\n", FD(&keytext)
+                "duplicate entries for key: \"%x\"\n", FD(keytext)
             );
             continue;
         }
@@ -224,7 +225,7 @@ derr_t jspec_object_read(jspec_t *jspec, jctx_t *ctx){
                 *jkey->present = false;
             }else{
                 jctx_error(ctx,
-                    "missing required key: \"%x\"\n", FD(&jkey->key)
+                    "missing required key: \"%x\"\n", FD(jkey->key)
                 );
             }
         }
@@ -329,7 +330,7 @@ derr_t jspec_jptr_read(jspec_t *jspec, jctx_t *ctx){
         derr_type_t etype = dstr_to ## suffix ## _quiet(text, j->out, 10); \
         if(etype != E_NONE){ \
             jctx_error(ctx, \
-                "unable to convert \"%x\" into " #type "\n", FD(&text) \
+                "unable to convert \"%x\" into " #type "\n", FD(text) \
             ); \
         } \
         return e; \
@@ -347,7 +348,7 @@ INTEGERS_MAP(DEFINE_INTEGERS)
         derr_type_t etype = dstr_to ## suffix ## _quiet(text, j->out); \
         if(etype != E_NONE){ \
             jctx_error(ctx, \
-                "unable to convert to \"%x\" into " #type "\n", FD(&text) \
+                "unable to convert to \"%x\" into " #type "\n", FD(text) \
             ); \
         } \
         return e; \

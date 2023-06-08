@@ -82,8 +82,11 @@ bool qw_val_eq(qw_engine_t *engine, qw_val_t *a, qw_val_t *b);
 
 dstr_t parse_string_literal(qw_env_t env, dstr_t in);
 
-derr_type_t fmthook_qwval(dstr_t *out, const void *arg);
-static inline fmt_t FQ(const qw_val_t* val){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)val,
-                                     .hook = fmthook_qwval} } };
-}
+typedef struct {
+    fmt_i iface;
+    const qw_val_t *val;
+} _fmt_qwval_t;
+
+derr_type_t _fmt_qwval(const fmt_i *iface, writer_i *out);
+
+#define FQ(val) (&(_fmt_qwval_t){ {_fmt_qwval}, val }.iface)

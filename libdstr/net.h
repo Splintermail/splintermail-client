@@ -1,29 +1,32 @@
-derr_type_t fmthook_ntop(dstr_t* out, const void* arg);
+typedef struct {
+    fmt_i iface;
+    const struct sockaddr *sa;
+} _fmt_ntop_t;
 
-static inline fmt_t FNTOP(const struct sockaddr *arg){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
-                                     .hook = fmthook_ntop} } };
-}
+typedef struct {
+    fmt_i iface;
+    const struct sockaddr_storage *ss;
+} _fmt_ntops_t;
 
-// sockaddr_storage version; still calls fmthook_ntop
-static inline fmt_t FNTOPS(const struct sockaddr_storage *arg){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
-                                     .hook = fmthook_ntop} } };
-}
+typedef struct {
+    fmt_i iface;
+    const struct sockaddr_in *sin;
+} _fmt_ntop4_t;
 
-derr_type_t fmthook_ntop4(dstr_t* out, const void* arg);
+typedef struct {
+    fmt_i iface;
+    const struct sockaddr_in6 *sin6;
+} _fmt_ntop6_t;
 
-static inline fmt_t FNTOP4(const struct sockaddr_in *arg){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
-                                     .hook = fmthook_ntop4} } };
-}
+derr_type_t _fmt_ntop(const fmt_i *iface, writer_i *out);
+derr_type_t _fmt_ntops(const fmt_i *iface, writer_i *out);
+derr_type_t _fmt_ntop4(const fmt_i *iface, writer_i *out);
+derr_type_t _fmt_ntop6(const fmt_i *iface, writer_i *out);
 
-derr_type_t fmthook_ntop6(dstr_t* out, const void* arg);
-
-static inline fmt_t FNTOP6(const struct sockaddr_in6 *arg){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
-                                     .hook = fmthook_ntop6} } };
-}
+#define FNTOP(sa) (&((_fmt_ntop_t){ {_fmt_ntop}, sa }.iface))
+#define FNTOPS(ss) (&((_fmt_ntops_t){ {_fmt_ntops}, ss }.iface))
+#define FNTOP4(sin) (&((_fmt_ntop4_t){ {_fmt_ntop4}, sin }.iface))
+#define FNTOP6(sin6) (&((_fmt_ntop6_t){ {_fmt_ntop6}, sin6 }.iface))
 
 const struct sockaddr *ss2sa(const struct sockaddr_storage *ss);
 

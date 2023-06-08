@@ -39,7 +39,7 @@ derr_t post_new_account(
     key_i *k,
     const dstr_t nonce,
     const dstr_t contact_email,
-    // eab_kid may be empty to not use external acount binding
+    // eab_kid may be empty to not use external account binding
     const dstr_t eab_kid,
     const dstr_t eab_hmac_key,
     post_new_account_cb cb,

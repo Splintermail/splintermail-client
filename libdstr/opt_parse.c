@@ -271,7 +271,7 @@ derr_t conf_parse(const dstr_t* text, opt_spec_t* spec[], size_t speclen){
                     }
                 }
                 if(s == NULL){
-                    TRACE(&e, "Unrecongnized option: %x\n", FD(&dopt));
+                    TRACE(&e, "Unrecongnized option: %x\n", FD(dopt));
 /*1*/               ORIG(&e, E_VALUE, "error in config file");
                 }
 
@@ -279,7 +279,7 @@ derr_t conf_parse(const dstr_t* text, opt_spec_t* spec[], size_t speclen){
                     // option with a value
                     if(s->val_req == false){
                         TRACE(&e, "Option \"%x\" does not require a value\n",
-                              FD(&dopt));
+                              FD(dopt));
 /*2*/                   ORIG(&e, E_VALUE, "error in config file");
                     }
                     s->found = found_order++;
@@ -291,7 +291,7 @@ derr_t conf_parse(const dstr_t* text, opt_spec_t* spec[], size_t speclen){
                     // option with no value
                     if(s->val_req == true){
                         TRACE(&e, "Option \"%x\" requires a value\n",
-                              FD(&dopt));
+                              FD(dopt));
 /*3*/                   ORIG(&e, E_VALUE, "error in config file");
                     }
                     s->found = found_order++;

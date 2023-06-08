@@ -185,15 +185,15 @@ static void advance_state(new_account_t *n, derr_t e){
     PROP_GO(&n->e, n->key->to_jwk_pvt(n->key, &pvt), failing);
 
     PROP_GO(&n->e,
-        FFMT(stdout, NULL,
+        FFMT(stdout,
             "{"
                 "\"key\":%x,"
                 "\"kid\":\"%x\","
                 "\"orders\":\"%x\""
             "}",
-            FD(&pvt),
-            FD_JSON(&n->kid),
-            FD_JSON(&n->orders),
+            FD(pvt),
+            FD_JSON(n->kid),
+            FD_JSON(n->orders),
         ),
     failing);
 
@@ -329,7 +329,7 @@ int main(int argc, char **argv){
     DSTR_VAR(eab_hmac_key, 256);
     if(eabpath){
         DSTR_VAR(eabbuf, 256);
-        PROP_GO(&e, dstr_read_path(&SB(FS(eabpath)), &eabbuf), fail);
+        PROP_GO(&e, dstr_read_path(&SBS(eabpath), &eabbuf), fail);
         DSTR_VAR(jtext, 256);
         json_node_t nodemem[8];
         size_t nnodes = sizeof(nodemem)/sizeof(*nodemem);

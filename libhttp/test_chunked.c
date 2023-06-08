@@ -75,8 +75,8 @@ static void hdr_cb(chunked_rstream_t *c, const http_pair_t hdr){
         ORIG_GO(&tr->e, E_VALUE, "too many hdrs", done);
     }
     size_t i = tr->nhdrs++;
-    EXPECT_D_GO(&tr->e, "hdr.key", &hdr.key, &tr->exp_hdrs[i].key, done);
-    EXPECT_D_GO(&tr->e, "hdr.value", &hdr.value, &tr->exp_hdrs[i].value, done);
+    EXPECT_D_GO(&tr->e, "hdr.key", hdr.key, tr->exp_hdrs[i].key, done);
+    EXPECT_D_GO(&tr->e, "hdr.value", hdr.value, tr->exp_hdrs[i].value, done);
 
 done:
     return;
@@ -172,7 +172,7 @@ static derr_t _do_test(
         TRACE_ORIG(&e, E_VALUE, "await_cb was not called");
     }
 
-    EXPECT_D(&e, "body", &body, &exp_body);
+    EXPECT_D(&e, "body", body, exp_body);
 
     return e;
 }

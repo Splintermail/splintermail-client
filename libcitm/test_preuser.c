@@ -257,7 +257,7 @@ static derr_t do_test_preuser(size_t cancel_after, bool *finished){
             FMT(&buf,
                 "preuser3 XKEYADD {%x+}\r\n%x\r\n",
                 FU(mykey_pem.len),
-                FD(&mykey_pem)
+                FD(mykey_pem)
             ),
         fail);
         PROP_GO(&e, fake_stream_expect_read(&m, &c, buf), fail);
@@ -301,7 +301,7 @@ static derr_t do_test_preuser(size_t cancel_after, bool *finished){
             FMT(&buf,
                 "* XKEYSYNC CREATED {%x}\r\n%x\r\n",
                 FU(peer3_pem.len),
-                FD(&peer3_pem)
+                FD(peer3_pem)
             ),
         fail);
         PROP_GO(&e, fake_stream_write(&m, &c, buf), fail);
@@ -349,7 +349,7 @@ static derr_t do_test_preuser(size_t cancel_after, bool *finished){
     // ensure we got our callback
     EXPECT_U_GO(&e, "cb_count", cb_count, 1, fail);
     EXPECT_E_VAR_GO(&e, "e_result", &e_result, E_NONE, fail);
-    EXPECT_D_GO(&e, "u_result", &u_result, &DSTR_LIT("user"), fail);
+    EXPECT_D_GO(&e, "u_result", u_result, DSTR_LIT("user"), fail);
     EXPECT_LIST_LENGTH_GO(&e, "s_result", &s_result, 2, fail);
     EXPECT_LIST_LENGTH_GO(&e, "c_result", &c_result, 2, fail);
     EXPECT_NOT_NULL_GO(&e, "kd_result", kd_result, fail);

@@ -217,7 +217,7 @@ static derr_t expect_rr(
     // expect the rdata that was provided
     dstr_t rdata;
     DSTR_WRAP(rdata, s.buf.data + ans.rdoff, ans.rdlen, false);
-    EXPECT_D3_GO(&e, "rdata", &rdata, &rdata_exp, cu);
+    EXPECT_D3_GO(&e, "rdata", rdata, rdata_exp, cu);
 
     complete_sentmsg(&s);
 

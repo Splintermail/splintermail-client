@@ -148,7 +148,7 @@ imap_scanned_t imap_scan(imap_scanner_t *s, scan_mode_t mode){
                 );
                 LOG_FATAL(
                     "not all of leftovers (%x) was consumed by the%x\n",
-                    FD_DBG(&temp), FS(imap_token_name(out.type))
+                    FD_DBG(temp), FS(imap_token_name(out.type))
                 );
             }
             // transition to src = input
@@ -172,7 +172,7 @@ imap_scanned_t imap_scan(imap_scanner_t *s, scan_mode_t mode){
             dstr_t temp = dstr_from_cstrn(
                 s->leftovers, s->orig_nleftovers, false
             );
-            LOG_FATAL("would left-shift leftovers (%x)\n", FD_DBG(&temp));
+            LOG_FATAL("would left-shift leftovers (%x)\n", FD_DBG(temp));
         }else{
             memcpy(s->leftovers, src + s->skip, nremains);
         }

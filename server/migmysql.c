@@ -49,12 +49,12 @@ static derr_t migration_new(
 
     PROP_GO(&e, dstr_copy(file, &migration->file), fail);
 
-    migration->path = sb_append(path, FD(&migration->file));
+    migration->path = sb_append(path, SBD(migration->file));
 
     PROP_GO(&e, dstr_new(&migration->content, 256), fail_file);
 
     // actually read the migration from file
-    string_builder_t fullpath = sb_append(path, FD(file));
+    string_builder_t fullpath = sb_append(path, SBD(*file));
     PROP_GO(&e, dstr_read_path(&fullpath, &migration->content), fail_content);
 
     *out = migration;
@@ -218,21 +218,21 @@ static derr_t sql_file_hook(
         up = false;
         exe = true;
     }else{
-        TRACE(&gsd->e, "invalid migration file name: %x\n", FD(file));
+        TRACE(&gsd->e, "invalid migration file name: %x\n", FD(*file));
         *gsd->ok = false;
         return e;
     }
 
     unsigned int id = get_id(file);
     if(!id){
-        TRACE(&gsd->e, "invalid migration file name: %x\n", FD(file));
+        TRACE(&gsd->e, "invalid migration file name: %x\n", FD(*file));
         *gsd->ok = false;
         return e;
     }
 
     const dstr_t name = get_name(file);
     if(!name.len){
-        TRACE(&gsd->e, "invalid sql file name: %x\n", FD(file));
+        TRACE(&gsd->e, "invalid sql file name: %x\n", FD(*file));
         *gsd->ok = false;
         return e;
     }
@@ -244,7 +244,7 @@ static derr_t sql_file_hook(
     if(node){
         migration_t *old = CONTAINER_OF(node, migration_t, node);
         TRACE(&gsd->e,
-            "duplicated sql file ids: %x and %x\n", FD(file), FD(&old->file)
+            "duplicated sql file ids: %x and %x\n", FD(*file), FD(old->file)
         );
         *gsd->ok = false;
         return e;
@@ -258,8 +258,8 @@ static derr_t sql_file_hook(
         if(dstr_cmp(&old_name, &name) == 0){
             TRACE(&gsd->e,
                 "duplicated sql file names: %x and %x\n",
-                FD(file),
-                FD(&old->file)
+                FD(*file),
+                FD(old->file)
             );
             *gsd->ok = false;
             return e;
@@ -285,7 +285,7 @@ static derr_t check_ups_vs_dns(get_sql_data_t *gsd){
         // find matching dn
         node = jsw_afind(gsd->dns, &up->id, NULL);
         if(!node){
-            TRACE(&gsd->e, "unmatched up migration: %x\n", FD(&up->file));
+            TRACE(&gsd->e, "unmatched up migration: %x\n", FD(up->file));
             *gsd->ok = false;
             continue;
         }
@@ -297,8 +297,8 @@ static derr_t check_ups_vs_dns(get_sql_data_t *gsd){
         if(dstr_cmp(&up_name, &dn_name) != 0){
             TRACE(&gsd->e,
                 "mismatch name in sql file pair: %x and %x\n",
-                FD(&up->file),
-                FD(&dn->file)
+                FD(up->file),
+                FD(dn->file)
             );
             *gsd->ok = false;
         }
@@ -309,7 +309,7 @@ static derr_t check_ups_vs_dns(get_sql_data_t *gsd){
         migration_t *dn = CONTAINER_OF(node, migration_t, node);
         node = jsw_afind(gsd->ups, &dn->id, NULL);
         if(!node){
-            TRACE(&gsd->e, "unmatched dn migration: %x\n", FD(&dn->file));
+            TRACE(&gsd->e, "unmatched dn migration: %x\n", FD(dn->file));
             *gsd->ok = false;
         }
     }
@@ -326,7 +326,7 @@ static derr_t get_sql_files(
 
     get_sql_data_t gsd = { .ups = ups, .dns = dns, .e = E_OK, .ok = &ok };
 
-    string_builder_t sb = SB(FD(path));
+    string_builder_t sb = SBD(*path);
     PROP_GO(&e, for_each_file_in_dir(&sb, sql_file_hook, &gsd), fail);
 
     PROP_GO(&e, check_ups_vs_dns(&gsd), fail);
@@ -375,7 +375,7 @@ static derr_t mig_bootstrap(MYSQL *sql){
         "    `undo` BLOB NOT NULL"
         ");\n"
     );
-    PROP(&e, sql_exec_multi(sql, &script) );
+    PROP(&e, sql_exec_multi(sql, script) );
 
     return e;
 }
@@ -396,14 +396,14 @@ static derr_t mig_override(MYSQL *sql, const dstr_t *path){
     // read content of file
     dstr_t content;
     PROP(&e, dstr_new(&content, 256) );
-    PROP_GO(&e, dstr_read_path(&SB(FD(path)), &content), cu);
+    PROP_GO(&e, dstr_read_path(&SBD(*path), &content), cu);
 
     DSTR_STATIC(query,
         "INSERT INTO migmysql (id, name, exe, `undo`) VALUES (?,?,?,?)"
     );
     PROP_GO(&e,
         sql_norow_query(sql,
-            &query,
+            query,
             NULL,
             uint_bind_in(&id),
             string_bind_in(&name),
@@ -423,7 +423,7 @@ static derr_t get_mig_states(MYSQL *sql, jsw_atree_t *states){
     derr_t e = E_OK;
 
     PROP(&e,
-        sql_query(sql, &DSTR_LIT("SELECT id, name, exe, `undo` FROM migmysql"))
+        sql_query(sql, DSTR_LIT("SELECT id, name, exe, `undo` FROM migmysql"))
     );
 
     // get result
@@ -487,13 +487,13 @@ static derr_t exec_content_child(
 
     dstr_t empty = DSTR_LIT("");
     PROP(&e,
-        FMT(&sock, "SQL_SOCK=%x", FD(config->sock ? config->sock : &empty))
+        FMT(&sock, "SQL_SOCK=%x", FD(config->sock ? *config->sock : empty))
     );
     PROP(&e,
-        FMT(&user, "SQL_USER=%x", FD(config->user ? config->user : &empty))
+        FMT(&user, "SQL_USER=%x", FD(config->user ? *config->user : empty))
     );
     PROP(&e,
-        FMT(&pass, "SQL_PASS=%x", FD(config->pass ? config->pass : &empty))
+        FMT(&pass, "SQL_PASS=%x", FD(config->pass ? *config->pass : empty))
     );
 
     DSTR_STATIC(dbname, "SQL_DB=splintermail");
@@ -543,7 +543,7 @@ static derr_t maybe_exec_content(
     DSTR_VAR(bin, 8);
     PROP(&e, urandom_bytes(&bin, 8) );
     DSTR_VAR(tempname, 64);
-    PROP(&e, FMT(&tempname, "/tmp/migmysql-%x", FX(&bin)) );
+    PROP(&e, FMT(&tempname, "/tmp/migmysql-%x", FX(bin)) );
 
     // write the tempfile
     PROP_GO(&e, write_content_file(tempname.data, content), cu_file);
@@ -585,7 +585,7 @@ static derr_t migmysql_apply_one(
     derr_t e = E_OK;
 
     dstr_t name = get_name(&up->file);
-    LOG_INFO("-- \x1b[32mapplying %x:\x1b[m\n", FD(&name));
+    LOG_INFO("-- \x1b[32mapplying %x:\x1b[m\n", FD(name));
 
     dstr_t exe_output = {0};
     const dstr_t *content = NULL;
@@ -595,10 +595,10 @@ static derr_t migmysql_apply_one(
         ),
     cu);
 
-    LOG_INFO("%x", FD(content));
+    LOG_INFO("%x", FD(*content));
 
     // run the migration
-    PROP_GO(&e, sql_exec_multi(sql, content), cu);
+    PROP_GO(&e, sql_exec_multi(sql, *content), cu);
 
     // then, add an undo entry to the migmysql table via a prepared statement
     DSTR_STATIC(query,
@@ -606,7 +606,7 @@ static derr_t migmysql_apply_one(
     );
     PROP_GO(&e,
         sql_norow_query(sql,
-            &query,
+            query,
             NULL,
             uint_bind_in(&dn->id),
             string_bind_in(&name),
@@ -626,7 +626,7 @@ static derr_t migmysql_undo_one(
 ){
     derr_t e = E_OK;
 
-    LOG_INFO("-- \x1b[32mreverting %x:\x1b[m\n", FD(&state->name));
+    LOG_INFO("-- \x1b[32mreverting %x:\x1b[m\n", FD(state->name));
 
     dstr_t exe_output = {0};
     const dstr_t *content;
@@ -636,15 +636,15 @@ static derr_t migmysql_undo_one(
         )
     );
 
-    LOG_INFO("%x", FD(content));
+    LOG_INFO("%x", FD(*content));
 
     // apply the undo operation
-    PROP_GO(&e, sql_exec_multi(sql, content), cu);
+    PROP_GO(&e, sql_exec_multi(sql, *content), cu);
 
     // erase the state
     PROP_GO(&e,
         sql_norow_query(sql,
-            &DSTR_LIT("DELETE FROM migmysql where id = ?"),
+            DSTR_LIT("DELETE FROM migmysql where id = ?"),
             NULL,
             uint_bind_in(&state->id)
         ),
@@ -838,22 +838,22 @@ int main(int argc, char **argv){
         bool ok;
         PROP_GO(&e, is_file(path.data, &ok), fail);
         if(!ok){
-            LOG_ERROR("--override provided but %x is not a file\n", FD(&path));
+            LOG_ERROR("--override provided but %x is not a file\n", FD(path));
             return 1;
         }
         dstr_t base = dbasename(path);
         dstr_t name = get_name(&base);
         unsigned int id = get_id(&base);
         if(!endswith(&base, ".dn.sql") || !name.len || !id){
-            LOG_ERROR("--override file (%x) must end in .dn.sql\n", FD(&base));
-            LOG_ERROR("should match NUM-NAME.dn.sql\n", FD(&base));
+            LOG_ERROR("--override file (%x) must end in .dn.sql\n", FD(base));
+            LOG_ERROR("should match NUM-NAME.dn.sql\n", FD(base));
             return 1;
         }
     }else{
         bool ok;
         PROP_GO(&e, is_dir(path.data, &ok), fail);
         if(!ok){
-            LOG_ERROR("%x is not a directory\n", FD(&path));
+            LOG_ERROR("%x is not a directory\n", FD(path));
             return 1;
         }
     }

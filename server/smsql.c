@@ -21,11 +21,11 @@ static dstr_t get_arg(char **argv, size_t idx){
 }
 
 // handle (EMAIL|FSID)-like args
-static derr_t get_uuid_from_id(MYSQL *sql, const dstr_t *id, dstr_t *uuid){
+static derr_t get_uuid_from_id(MYSQL *sql, const dstr_t id, dstr_t *uuid){
     derr_t e = E_OK;
 
     // check for '@' characters
-    if(dstr_count(id, &DSTR_LIT("@")) > 0){
+    if(dstr_count2(id, DSTR_LIT("@")) > 0){
         // probably email
         bool ok;
         PROP(&e, get_uuid_for_email(sql, id, uuid, &ok) );
@@ -51,11 +51,11 @@ static derr_t get_uuid_action(MYSQL *sql, int argc, char **argv){
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
     bool ok;
 
-    PROP(&e, get_uuid_for_email(sql, &email, &uuid, &ok) );
+    PROP(&e, get_uuid_for_email(sql, email, &uuid, &ok) );
     if(ok){
-        PFMT("%x\n", FSID(&uuid));
+        PFMT("%x\n", FSID(uuid));
     }else{
-        FFMT(stderr, NULL, "no results\n");
+        FFMT(stderr, "no results\n");
     }
 
     return e;
@@ -72,16 +72,16 @@ static derr_t get_email_action(MYSQL *sql, int argc, char **argv){
 
     // convert fsid to uuid
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, to_uuid(&fsid, &uuid) );
+    PROP(&e, to_uuid(fsid, &uuid) );
 
     DSTR_VAR(email, SMSQL_EMAIL_SIZE);
     bool ok;
 
-    PROP(&e, get_email_for_uuid(sql, &uuid, &email, &ok) );
+    PROP(&e, get_email_for_uuid(sql, uuid, &email, &ok) );
     if(ok){
-        PFMT("%x\n", FD(&email));
+        PFMT("%x\n", FD(email));
     }else{
-        FFMT(stderr, NULL, "no results\n");
+        FFMT(stderr, "no results\n");
     }
 
     return e;
@@ -99,9 +99,9 @@ static derr_t hash_password_action(MYSQL *sql, int argc, char **argv){
     dstr_t salt = get_arg(argv, 1);
 
     DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
-    PROP(&e, hash_password(&pass, 5000, &salt, &hash) );
+    PROP(&e, hash_password(pass, 5000, salt, &hash) );
 
-    PFMT("%x\n", FD(&hash));
+    PFMT("%x\n", FD(hash));
 
     return e;
 }
@@ -118,13 +118,13 @@ static derr_t list_aliases_action(MYSQL *sql, int argc, char **argv){
     dstr_t id = get_arg(argv, 0);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
     link_t aliases;
     link_init(&aliases);
-    PROP(&e, list_aliases(sql, &uuid, &aliases) );
+    PROP(&e, list_aliases(sql, uuid, &aliases) );
     if(link_list_isempty(&aliases)){
-        FFMT(stderr, NULL, "NO ALIASES\n");
+        FFMT(stderr, "NO ALIASES\n");
         return e;
     }
 
@@ -132,7 +132,7 @@ static derr_t list_aliases_action(MYSQL *sql, int argc, char **argv){
     while((link = link_list_pop_first(&aliases))){
         smsql_alias_t *alias = CONTAINER_OF(link, smsql_alias_t, link);
         PFMT(
-            "%x (%x)\n", FD(&alias->alias), FS(alias->paid ? "paid" : "free")
+            "%x (%x)\n", FD(alias->alias), FS(alias->paid ? "paid" : "free")
         );
         smsql_alias_free(&alias);
     }
@@ -150,12 +150,12 @@ static derr_t add_random_alias_action(MYSQL *sql, int argc, char **argv){
     dstr_t id = get_arg(argv, 0);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
     DSTR_VAR(alias, SMSQL_EMAIL_SIZE);
 
-    PROP(&e, add_random_alias(sql, &uuid, &alias) );
-    PFMT("%x\n", FD(&alias));
+    PROP(&e, add_random_alias(sql, uuid, &alias) );
+    PFMT("%x\n", FD(alias));
 
     return e;
 }
@@ -171,8 +171,8 @@ static derr_t add_primary_alias_action(MYSQL *sql, int argc, char **argv){
     dstr_t alias = get_arg(argv, 1);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
-    PROP(&e, add_primary_alias(sql, &uuid, &alias) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
+    PROP(&e, add_primary_alias(sql, uuid, alias) );
     PFMT("OK\n");
 
     return e;
@@ -189,8 +189,8 @@ static derr_t delete_alias_action(MYSQL *sql, int argc, char **argv){
     dstr_t alias = get_arg(argv, 1);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
-    PROP(&e, delete_alias(sql, &uuid, &alias) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
+    PROP(&e, delete_alias(sql, uuid, alias) );
 
     PFMT("DELETED\n");
 
@@ -207,9 +207,9 @@ static derr_t delete_all_aliases_action(MYSQL *sql, int argc, char **argv){
     dstr_t id = get_arg(argv, 0);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
-    PROP(&e, delete_all_aliases(sql, &uuid) );
+    PROP(&e, delete_all_aliases(sql, uuid) );
 
     PFMT("DONE\n");
 
@@ -228,16 +228,16 @@ static derr_t list_device_fprs_action(MYSQL *sql, int argc, char **argv){
     dstr_t id = get_arg(argv, 0);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
     link_t dstrs;
     link_init(&dstrs);
-    PROP(&e, list_device_fprs(sql, &uuid, &dstrs) );
+    PROP(&e, list_device_fprs(sql, uuid, &dstrs) );
 
     link_t *link;
     while((link = link_list_pop_first(&dstrs))){
         smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
-        PFMT("%x\n", FD(&dstr->dstr));
+        PFMT("%x\n", FD(dstr->dstr));
         smsql_dstr_free(&dstr);
     }
 
@@ -254,16 +254,16 @@ static derr_t list_device_keys_action(MYSQL *sql, int argc, char **argv){
     dstr_t id = get_arg(argv, 0);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
     link_t dstrs;
     link_init(&dstrs);
-    PROP(&e, list_device_keys(sql, &uuid, &dstrs) );
+    PROP(&e, list_device_keys(sql, uuid, &dstrs) );
 
     link_t *link;
     while((link = link_list_pop_first(&dstrs))){
         smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
-        PFMT("%x\n", FD(&dstr->dstr));
+        PFMT("%x\n", FD(dstr->dstr));
         smsql_dstr_free(&dstr);
     }
 
@@ -281,16 +281,16 @@ static derr_t get_device_action(MYSQL *sql, int argc, char **argv){
     dstr_t fpr = get_arg(argv, 1);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
     DSTR_VAR(pubkey, SMSQL_PUBKEY_SIZE);
     bool ok;
-    PROP(&e, get_device(sql, &uuid, &fpr, &pubkey, &ok) );
+    PROP(&e, get_device(sql, uuid, fpr, &pubkey, &ok) );
 
     if(ok){
-        PFMT("%x\n", FD(&pubkey));
+        PFMT("%x\n", FD(pubkey));
     }else{
-        FFMT(stderr, NULL, "no results\n");
+        FFMT(stderr, "no results\n");
     }
 
     return e;
@@ -306,15 +306,15 @@ static derr_t add_device_action(MYSQL *sql, int argc, char **argv){
     dstr_t id = get_arg(argv, 0);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
     DSTR_VAR(pubkey, SMSQL_PUBKEY_SIZE);
     PROP(&e, dstr_read_all(0, &pubkey) );
 
     DSTR_VAR(fpr, SMSQL_FPR_SIZE);
-    PROP(&e, add_device(sql, &uuid, &pubkey, &fpr) );
+    PROP(&e, add_device(sql, uuid, pubkey, &fpr) );
 
-    PFMT("%x\n", FD(&fpr));
+    PFMT("%x\n", FD(fpr));
 
     return e;
 }
@@ -330,9 +330,9 @@ static derr_t delete_device_action(MYSQL *sql, int argc, char **argv){
     dstr_t fpr_hex = get_arg(argv, 1);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
-    PROP(&e, delete_device(sql, &uuid, &fpr_hex) );
+    PROP(&e, delete_device(sql, uuid, fpr_hex) );
 
     PFMT("DONE\n");
 
@@ -351,11 +351,11 @@ static derr_t list_tokens_action(MYSQL *sql, int argc, char **argv){
     dstr_t id = get_arg(argv, 0);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
     link_t tokens;
     link_init(&tokens);
-    PROP(&e, list_tokens(sql, &uuid, &tokens) );
+    PROP(&e, list_tokens(sql, uuid, &tokens) );
 
     link_t *link;
     while((link = link_list_pop_first(&tokens))){
@@ -377,14 +377,14 @@ static derr_t add_token_action(MYSQL *sql, int argc, char **argv){
     dstr_t id = get_arg(argv, 0);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
     unsigned int token;
     DSTR_VAR(secret, SMSQL_APISECRET_SIZE);
 
-    PROP(&e, add_token(sql, &uuid, &token, &secret) );
+    PROP(&e, add_token(sql, uuid, &token, &secret) );
 
-    PFMT("token:%x, secret:%x\n", FU(token), FD(&secret));
+    PFMT("token:%x, secret:%x\n", FU(token), FD(secret));
 
     return e;
 }
@@ -400,12 +400,12 @@ static derr_t delete_token_action(MYSQL *sql, int argc, char **argv){
     dstr_t token_str = get_arg(argv, 1);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
     unsigned int token;
     PROP(&e, dstr_tou(&token_str, &token, 10) );
 
-    PROP(&e, delete_token(sql, &uuid, token) );
+    PROP(&e, delete_token(sql, uuid, token) );
 
     PFMT("DONE\n");
 
@@ -426,9 +426,9 @@ static derr_t create_account_action(MYSQL *sql, int argc, char **argv){
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
 
-    PROP(&e, create_account(sql, &email, &pass, &uuid) );
+    PROP(&e, create_account(sql, email, pass, &uuid) );
 
-    PFMT("uuid: %x\n", FSID(&uuid));
+    PFMT("uuid: %x\n", FSID(uuid));
 
     return e;
 }
@@ -443,11 +443,11 @@ static derr_t delete_account_action(MYSQL *sql, int argc, char **argv){
     dstr_t id = get_arg(argv, 0);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
-    PROP(&e, delete_account(sql, &uuid) );
+    PROP(&e, delete_account(sql, uuid) );
 
-    IF_PROP(&e, trigger_deleter(sql, &uuid) ){
+    IF_PROP(&e, trigger_deleter(sql, uuid) ){
         DUMP(e);
         DROP_VAR(&e);
     }
@@ -467,12 +467,12 @@ static derr_t account_info_action(MYSQL *sql, int argc, char **argv){
     dstr_t id = get_arg(argv, 0);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
     size_t dvcs;
     size_t paids;
     size_t frees;
-    PROP(&e, account_info(sql, &uuid, &dvcs, &paids, &frees) );
+    PROP(&e, account_info(sql, uuid, &dvcs, &paids, &frees) );
 
     PFMT(
         "num_devices: %x, num_primary_aliases: %x, num_random_aliases: %x\n",
@@ -497,10 +497,10 @@ static derr_t validate_password_action(MYSQL *sql, int argc, char **argv){
     dstr_t pass = get_arg(argv, 1);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
     bool ok;
-    PROP(&e, validate_user_password(sql, &uuid, &pass, &ok) );
+    PROP(&e, validate_user_password(sql, uuid, pass, &ok) );
 
     PFMT("%x\n", FS(ok ? "CORRECT" : "INCORRECT") );
 
@@ -518,9 +518,9 @@ static derr_t change_password_action(MYSQL *sql, int argc, char **argv){
     dstr_t pass = get_arg(argv, 1);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
-    PROP(&e, change_password(sql, &uuid, &pass) );
+    PROP(&e, change_password(sql, uuid, pass) );
 
     PFMT("DONE\n");
 
@@ -539,10 +539,10 @@ static derr_t user_owns_address_action(MYSQL *sql, int argc, char **argv){
     dstr_t address = get_arg(argv, 1);
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
 
     bool ok;
-    PROP(&e, user_owns_address(sql, &uuid, &address, &ok) );
+    PROP(&e, user_owns_address(sql, uuid, address, &ok) );
 
     PFMT("%x\n", FB(ok));
 
@@ -561,7 +561,7 @@ static derr_t gtid_current_pos_action(MYSQL *sql, int argc, char **argv){
     DSTR_VAR(buf, 1024);
     PROP(&e, gtid_current_pos(sql, &buf) );
 
-    PFMT("%x\n", FD(&buf));
+    PFMT("%x\n", FD(buf));
 
     return e;
 }
@@ -582,14 +582,14 @@ static derr_t list_deletions_action(MYSQL *sql, int argc, char **argv){
     link_init(&uuids);
     PROP(&e, list_deletions(sql, server_id, &uuids) );
     if(link_list_isempty(&uuids)){
-        FFMT(stderr, NULL, "nothing to delete\n");
+        FFMT(stderr, "nothing to delete\n");
         return e;
     }
 
     link_t *link;
     while((link = link_list_pop_first(&uuids))){
         smsql_dstr_t *uuid = CONTAINER_OF(link, smsql_dstr_t, link);
-        PFMT("%x\n", FSID(&uuid->dstr));
+        PFMT("%x\n", FSID(uuid->dstr));
         smsql_dstr_free(&uuid);
     }
 
@@ -610,14 +610,14 @@ static derr_t list_users_action(MYSQL *sql, int argc, char **argv){
     link_init(&users);
     PROP(&e, list_users(sql, &users) );
     if(link_list_isempty(&users)){
-        FFMT(stderr, NULL, "(none)\n");
+        FFMT(stderr, "(none)\n");
         return e;
     }
 
     link_t *link;
     while((link = link_list_pop_first(&users))){
         smsql_dstr_t *user = CONTAINER_OF(link, smsql_dstr_t, link);
-        PFMT("%x\n", FD(&user->dstr));
+        PFMT("%x\n", FD(user->dstr));
         smsql_dstr_free(&user);
     }
 
@@ -679,7 +679,7 @@ static void print_help(FILE *f){
         "where CMD is one of:\n"
     );
     for(size_t i = 0; i < nactions; i++){
-        DROP_CMD( FFMT(f, NULL, "     %x\n", FD(&action_links[i].name)) );
+        DROP_CMD( FFMT(f, "     %x\n", FD(action_links[i].name)) );
     }
     fprintf(f,
         "\n"
@@ -793,7 +793,7 @@ int main(int argc, char **argv){
     }
 
     if(action == NULL){
-        LOG_ERROR("command \"%x\" unknown\n", FD(&cmd));
+        LOG_ERROR("command \"%x\" unknown\n", FD(cmd));
         print_help(stderr);
         return 1;
     }
@@ -807,7 +807,7 @@ int main(int argc, char **argv){
     CATCH(e2, E_USERMSG){
         DSTR_VAR(usermsg, 256);
         consume_e_usermsg(&e2, &usermsg);
-        FFMT(stderr, NULL, "%x\n", FD(&usermsg));
+        FFMT(stderr, "%x\n", FD(usermsg));
         return 1;
     }else PROP_VAR_GO(&e, &e2, fail);
 

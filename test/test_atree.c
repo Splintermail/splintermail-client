@@ -32,7 +32,7 @@ static derr_t print_atree(const jsw_anode_t *node, size_t indent){
     // print left child
     print_atree(node->link[0], indent + 1);
     // print node
-    LOG_DEBUG("%x%xL%x(%x)\n", FD(&indent_dstr),
+    LOG_DEBUG("%x%xL%x(%x)\n", FD(indent_dstr),
             FI(CONTAINER_OF(node, binsrch_int_t, anode)->value),
             FI(node->level),
             FU(node->count));

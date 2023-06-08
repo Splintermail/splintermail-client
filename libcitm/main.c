@@ -7,7 +7,7 @@ DSTR_STATIC(d_remote, "tls://splintermail.com:993");
 DSTR_STATIC(d_maildirs, "/tmp/maildir_root");
 
 static void print_help(FILE *f){
-    FFMT_QUIET(f, NULL,
+    FFMT_QUIET(f,
         "usage: citm [OPTIONS]\n"
         "\n"
         "where OPTIONS are any of:\n"
@@ -17,9 +17,9 @@ static void print_help(FILE *f){
         "  -k, --key=ARG       (default: none)\n"
         "  -c, --cert=ARG      (default: none)\n"
         "  -m, --maildirs=ARG  (default: %x)\n",
-        FD(&d_listen),
-        FD(&d_remote),
-        FD(&d_maildirs)
+        FD(d_listen),
+        FD(d_remote),
+        FD(d_maildirs)
     );
 }
 
@@ -112,9 +112,9 @@ int main(int argc, char **argv){
     PROP_GO(&e, parse_addrspec(&remotestr, &remote), cu);
     const char *key = o_key.found ? o_key.val.data : NULL;
     const char *cert = o_cert.found ? o_cert.val.data : NULL;
-    const dstr_t *maildirs = o_maildirs.found ? &o_maildirs.val : &d_maildirs;
+    dstr_t maildirs = o_maildirs.found ? o_maildirs.val : d_maildirs;
 
-    string_builder_t maildir_root = SB(FD(maildirs));
+    string_builder_t maildir_root = SBD(maildirs);
 
     PROP_GO(&e,
          uv_citm(

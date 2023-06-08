@@ -91,7 +91,7 @@ static derr_t do_server_test_case(test_server_t *s, test_case_t *tc){
     }
 
     // check request content
-    EXPECT_DM(&e, "request", &buf, &tc->exp_request);
+    EXPECT_DM(&e, "request", buf, tc->exp_request);
 
     // write response
     PROP(&e, connection_write(&s->conn, &tc->response) );
@@ -109,7 +109,7 @@ static derr_t do_server_test_case(test_server_t *s, test_case_t *tc){
             buf.len = 0;
             size_t nread;
             PROP(&e, connection_read(&s->conn, &buf, &nread) );
-            EXPECT_D(&e, "buf", &buf, &DSTR_LIT(""));
+            EXPECT_D(&e, "buf", buf, DSTR_LIT(""));
             connection_close(&s->conn);
             break;
 
@@ -259,7 +259,7 @@ static derr_t exp_hdrs(hashmap_t *h, exp_hdrs_t exp){
         http_pair_t hdr = exp.hdrs[i];
         hash_elem_t *elem = hashmap_dels(h, &hdr.key);
         if(!elem){
-            TRACE(&e, "expected header '%x' not found\n", FD(&hdr.key));
+            TRACE(&e, "expected header '%x' not found\n", FD(hdr.key));
             ok = false;
             continue;
         }
@@ -267,7 +267,7 @@ static derr_t exp_hdrs(hashmap_t *h, exp_hdrs_t exp){
         if(!dstr_eq(hdr.value, m->val)){
             TRACE(&e,
                 "got header '%x' = '%x' but expected '%x'\n",
-                FD(&hdr.key), FD_DBG(&m->val), FD_DBG(&hdr.value)
+                FD(hdr.key), FD_DBG(m->val), FD_DBG(hdr.value)
             );
             ok = false;
         }
@@ -282,7 +282,7 @@ static derr_t exp_hdrs(hashmap_t *h, exp_hdrs_t exp){
         elem = hashmap_pop_next(&trav)
     ){
         map_str_str_t *m = CONTAINER_OF(elem, map_str_str_t, elem);
-        TRACE(&e, "unexpected header '%x: %x'\n", FD(&m->key), FD(&m->val));
+        TRACE(&e, "unexpected header '%x: %x'\n", FD(m->key), FD(m->val));
         ok = false;
         map_str_str_free(&m);
     }
@@ -335,7 +335,7 @@ static void reader_done_cb(stream_reader_t *r, derr_t e){
             TRACE_ORIG(&ctx->e,
                 E_VALUE,
                 "expected to see \"%x\" in error message but got \"%x\"",
-                FD_DBG(&tc->exp_error_match), FD_DBG(&firstline)
+                FD_DBG(tc->exp_error_match), FD_DBG(firstline)
             );
             DROP_VAR(&e);
             goto fail;
@@ -350,7 +350,7 @@ static void reader_done_cb(stream_reader_t *r, derr_t e){
     if(tc->exp_error == E_NONE){
         EXPECT_I_GO(&ctx->e, "status", ctx->req.status, tc->exp_status, fail);
         PROP_GO(&ctx->e, exp_hdrs(&ctx->hdrs, tc->exp_hdrs), fail);
-        EXPECT_D3_GO(&ctx->e, "body", &ctx->body, &tc->exp_body, fail);
+        EXPECT_D3_GO(&ctx->e, "body", ctx->body, tc->exp_body, fail);
     }
 
     if(--inflight == 0){

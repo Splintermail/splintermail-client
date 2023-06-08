@@ -54,20 +54,20 @@ bool derr_type_group_matches(derr_type_t self, derr_type_t other){
     return false;
 }
 
-const dstr_t *error_to_dstr(derr_type_t type){
+dstr_t error_to_dstr(derr_type_t type){
     if(type == E_NONE){
         DSTR_STATIC(E_OK_dstr, "OK");
-        return &E_OK_dstr;
+        return E_OK_dstr;
     }
-    return type->name;
+    return *type->name;
 }
 
-const dstr_t *error_to_msg(derr_type_t type){
+dstr_t error_to_msg(derr_type_t type){
     if(type == E_NONE){
         DSTR_STATIC(E_OK_dstr, "OK");
-        return &E_OK_dstr;
+        return E_OK_dstr;
     }
-    return type->msg;
+    return *type->msg;
 }
 
 /* take an E_USERMSG message, copy the user message substring with truncation
@@ -309,9 +309,6 @@ static int do_dstr_cmp2(const dstr_t a, const dstr_t b, bool sensitive){
 }
 
 static int do_dstr_eq(const dstr_t a, const dstr_t b, bool sensitive){
-    // but one NULL and one not are not matching
-    if(!a.data != !b.data) return false;
-    // otherwise expect length to match, or content to match
     return a.len == b.len && do_dstr_cmp2(a, b, sensitive) == 0;
 }
 
@@ -458,7 +455,7 @@ derr_type_t dstr_tosize_quiet(const dstr_t in, size_t* out, int base){
             ORIG(&e, \
                 etype, \
                 "dstr_to " #suffix "(%x): invalid number string", \
-                FD_DBG(in) \
+                FD_DBG(*in) \
             ); \
         } \
         return e; \
@@ -490,7 +487,7 @@ derr_type_t dstr_told_quiet(const dstr_t in, long double* out){
             ORIG(&e, \
                 etype, \
                 "dstr_to " #suffix "(%x): invalid number string", \
-                FD_DBG(in) \
+                FD_DBG(*in) \
             ); \
         } \
         return e; \
@@ -1103,7 +1100,7 @@ derr_t dstr_read(int fd, dstr_t* buffer, size_t count, size_t* amnt_read){
     }
     ar = compat_read(fd, buffer->data + buffer->len, count);
     if(ar < 0){
-        TRACE(&e, "%x: %x\n", FS("read"), FE(&errno));
+        TRACE(&e, "%x: %x\n", FS("read"), FE(errno));
         ORIG(&e, E_OS, "error in read");
     }
     buffer->len += (size_t)ar;
@@ -1153,7 +1150,7 @@ derr_t dstr_write(int fd, const dstr_t* buffer){
         ssize_t amnt_written = compat_write(fd, buffer->data + total, buffer->len - total);
         // writing zero bytes is a failure mode
         if(amnt_written < 0){
-            TRACE(&e, "%x: %x\n", FS("write"), FE(&errno));
+            TRACE(&e, "%x: %x\n", FS("write"), FE(errno));
             ORIG(&e, E_OS, "dstr_write failed");
         }
         /* there is not a great way to handle this, since `man 2 write` says:
@@ -1194,7 +1191,7 @@ derr_t dstr_fread(FILE* f, dstr_t* buffer, size_t count, size_t* amnt_read){
     if(ar > 0){
         buffer->len += ar;
     }else if(ferror(f)){
-        ORIG(&e, E_OS, "fread: %x\n", FE(&errno));
+        ORIG(&e, E_OS, "fread: %x\n", FE(errno));
     }
     if(amnt_read) *amnt_read = ar;
     return e;
@@ -1214,7 +1211,7 @@ derr_t dstr_fread_all(FILE* f, dstr_t* buffer){
             PROP(&e, dstr_grow(buffer, buffer->len + count) );
         }
         buffer->len += fread(buffer->data + buffer->len, 1, count, f);
-        if(ferror(f)) ORIG(&e, E_OS, "fread: %x\n", FE(&errno));
+        if(ferror(f)) ORIG(&e, E_OS, "fread: %x\n", FE(errno));
     } while(!feof(f));
 
     return e;
@@ -1425,6 +1422,48 @@ size_t bin2b64_output_len(size_t in){
     return ((in + 2) / 3) * 4;
 }
 
+// no error checking
+char hex_high_nibble(unsigned char u){
+    switch(u >> 4){
+        case 0:  return '0';
+        case 1:  return '1';
+        case 2:  return '2';
+        case 3:  return '3';
+        case 4:  return '4';
+        case 5:  return '5';
+        case 6:  return '6';
+        case 7:  return '7';
+        case 8:  return '8';
+        case 9:  return '9';
+        case 10: return 'a';
+        case 11: return 'b';
+        case 12: return 'c';
+        case 13: return 'd';
+        case 14: return 'e';
+        default: return 'f';
+    }
+}
+char hex_low_nibble(unsigned char u){
+    switch(u & 0xf){
+        case 0:  return '0';
+        case 1:  return '1';
+        case 2:  return '2';
+        case 3:  return '3';
+        case 4:  return '4';
+        case 5:  return '5';
+        case 6:  return '6';
+        case 7:  return '7';
+        case 8:  return '8';
+        case 9:  return '9';
+        case 10: return 'a';
+        case 11: return 'b';
+        case 12: return 'c';
+        case 13: return 'd';
+        case 14: return 'e';
+        default: return 'f';
+    }
+}
+
 static derr_type_t bin2hex_quiet(const dstr_t* bin, dstr_t* hex){
     derr_type_t type;
     DSTR_VAR(temp, 3);
@@ -1488,30 +1527,6 @@ derr_t hex2bin(const dstr_t* hex, dstr_t* bin){
     return e;
 }
 
-///////////////////////////////
-// FMT()-related stuff below //
-///////////////////////////////
-
-/* fmt_dstr_append_quiet is just like dstr_append_quiet except when it fails
-   due to a size limit it will try to fill the buffer as much as possible
-   before returning the error */
-derr_type_t fmt_dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text){
-    derr_type_t type = dstr_append_quiet(dstr, new_text);
-    if(type != E_NONE && dstr->len < dstr->size){
-        dstr_t sub_text = dstr_sub(new_text, 0, dstr->size - dstr->len);
-        dstr_append_quiet(dstr, &sub_text);
-    }
-    return type;
-}
-
-derr_type_t dstr_append_hex(dstr_t* dstr, unsigned char val){
-    DSTR_VAR(buffer, 8);
-    int len = snprintf(buffer.data, buffer.size, "%.2x", val);
-    if(len < 0) return E_INTERNAL;
-    buffer.len = (size_t)len;
-    return fmt_dstr_append_quiet(dstr, &buffer);
-}
-
 derr_type_t dstr_append_char(dstr_t* dstr, char val){
     /* in benchmarking, an if statement is negligible compared to the function
        call, so if append_char is in a hot loop this makes about a 4x diff */
@@ -1532,273 +1547,4 @@ derr_type_t dstr_append_char_n(dstr_t* dstr, char val, size_t n){
     memset(dstr->data+dstr->len, val, n);
     dstr->len += n;
     return E_NONE;
-}
-
-#define SNPRINTF_WITH_RETRY(fmtstr, arg) \
-    ret = snprintf(out->data + out->len, out->size - out->len, fmtstr, arg); \
-    if(ret < 0) return E_INTERNAL; \
-    sret = (size_t) ret; \
-    if(sret + 1 > out->size - out->len){ \
-        derr_type_t type = dstr_grow_quiet(out, out->len + sret + 1); \
-        if(type){ \
-            /* allow the partially-written stuff to show */ \
-            out->len = out->size; \
-            return type; \
-        } \
-        snprintf(out->data + out->len, out->size - out->len, fmtstr, arg); \
-    } \
-    out->len += sret
-
-static inline derr_type_t fmt_arg(dstr_t* out, fmt_t arg){
-    int ret;
-    size_t sret;
-    switch(arg.type){
-        case FMT_UINT: SNPRINTF_WITH_RETRY("%ju", arg.data.u); break;
-        case FMT_INT: SNPRINTF_WITH_RETRY("%jd", arg.data.i); break;
-        case FMT_FLOAT: SNPRINTF_WITH_RETRY("%Lf", arg.data.f); break;
-        case FMT_CHAR: SNPRINTF_WITH_RETRY("%c", arg.data.c); break;
-        case FMT_CSTR: SNPRINTF_WITH_RETRY("%s", arg.data.cstr); break;
-        case FMT_PTR: SNPRINTF_WITH_RETRY("%p", arg.data.ptr); break;
-        case FMT_DSTR:
-            return fmt_dstr_append_quiet(out, arg.data.dstr);
-        case FMT_BOOL:
-            return fmt_dstr_append_quiet(
-                out, arg.data.boolean ? &DSTR_LIT("true") : &DSTR_LIT("false")
-            );
-        case FMT_EXT:
-            return arg.data.ext.hook(out, arg.data.ext.arg);
-        case FMT_EXT_NOCONST:
-            return arg.data.ext_noconst.hook(out, arg.data.ext_noconst.arg);
-    }
-    return E_NONE;
-}
-
-derr_type_t pvt_fmt_quiet(
-        dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs){
-    derr_type_t type;
-    // how far into the list of args we are
-    size_t idx = 0;
-    // first parse through the fmt string looking for %
-    const char *c = fstr;
-    while(*c){
-        if(*c != '%'){
-            // copy this character over
-            type = dstr_append_char(out, *c);
-            if(type) return type;
-            c += 1;
-            continue;
-        }
-        // if we got a '%', check for the %x or %% patterns
-        const char* cc = c + 1;
-        if(*cc == 0){
-            // oops, end of string, dump the '%'
-            type = dstr_append_char(out, *c);
-            if(type) return type;
-            break;
-        }
-        if(*cc == '%'){
-            // copy a literal '%' over
-            type = dstr_append_char(out, '%');
-            if(type) return type;
-            c += 2;
-            continue;
-        }
-        if(*cc != 'x'){
-            // copy both characters over
-            type = dstr_append_char(out, *c);
-            if(type) return type;
-            type = dstr_append_char(out, *cc);
-            if(type) return type;
-            c += 2;
-            continue;
-        }
-        c += 2;
-        // if it is "%x" dump another arg, unless we are already out of args
-        if(idx >= nargs) continue;
-        type = fmt_arg(out, args[idx++]);
-        if(type) return type;
-    }
-    // now just print space-delineated arguments till we run out
-    while(idx < nargs){
-        type = dstr_append_char(out, ' ');
-        if(type) return type;
-        type = fmt_arg(out, args[idx++]);
-        if(type) return type;
-    }
-    // always null terminate
-    return dstr_null_terminate_quiet(out);
-}
-derr_t pvt_fmt(dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs){
-    derr_t e = E_OK;
-    derr_type_t type = pvt_fmt_quiet(out, fstr, args, nargs);
-    if(type) ORIG(&e, type, "unable to format string");
-    return e;
-}
-
-derr_type_t pvt_ffmt_quiet(
-    FILE* f, size_t* written, const char* fstr, const fmt_t* args, size_t nargs
-){
-    /* For now, just buffer the entire string into memory and then dump it.
-       This is not ideal for writing large formatted strings to a file, but
-       frankly this is probably not the right function for that anyway. */
-    dstr_t buffer;
-    derr_type_t type = dstr_new_quiet(&buffer, 1024);
-    if(type) return type;
-
-    type = pvt_fmt_quiet(&buffer, fstr, args, nargs);
-    if(type) goto cu;
-
-    type = dstr_fwrite_quiet(f, &buffer);
-    if(written) *written = buffer.len;
-
-cu:
-    dstr_free(&buffer);
-    return type;
-}
-derr_t pvt_ffmt(
-    FILE* f, size_t* written, const char* fstr, const fmt_t* args, size_t nargs
-){
-    derr_t e = E_OK;
-    derr_type_t type = pvt_ffmt_quiet(f, written, fstr, args, nargs);
-    if(type) ORIG(&e, type, "unable to format string for FILE pointer");
-    return e;
-}
-
-derr_type_t fmthook_dstr_dbg(dstr_t* out, const void* arg){
-    // cast the input
-    const dstr_t* in = (const dstr_t*)arg;
-    // some useful constants
-    DSTR_STATIC(cr,"\\r");
-    DSTR_STATIC(nl,"\\n");
-    DSTR_STATIC(nc,"\\0");
-    DSTR_STATIC(bs,"\\\\");
-    DSTR_STATIC(pre,"\\x");
-    DSTR_STATIC(tab,"\\t");
-    DSTR_STATIC(quote,"\\\"");
-
-    derr_type_t type;
-    for(size_t i = 0; i < in->len; i++){
-        char c = in->data[i];
-        unsigned char u = (unsigned char)in->data[i];
-        if     (c == '\r') type = fmt_dstr_append_quiet(out, &cr);
-        else if(c == '\n') type = fmt_dstr_append_quiet(out, &nl);
-        else if(c == '\0') type = fmt_dstr_append_quiet(out, &nc);
-        else if(c == '\t') type = fmt_dstr_append_quiet(out, &tab);
-        else if(c == '\\') type = fmt_dstr_append_quiet(out, &bs);
-        else if(c == '"') type = fmt_dstr_append_quiet(out, &quote);
-        else if(u > 31 && u < 127) type = dstr_append_char(out, c);
-        else {
-            type = fmt_dstr_append_quiet(out, &pre);
-            if(type) return type;
-            type = dstr_append_hex(out, u);
-        }
-        if(type) return type;
-    }
-    return E_NONE;
-}
-
-derr_type_t fmthook_fsn(dstr_t* out, const void* arg){
-    // cast the input
-    fsn_format_t fsn = *(const fsn_format_t*)arg;
-    for(size_t i = 0; i < fsn.n; i++){
-        derr_type_t etype = dstr_append_char(out, fsn.buf[i]);
-        if(etype != E_NONE) return etype;
-    }
-    return E_NONE;
-}
-
-derr_type_t fmthook_strerror(dstr_t* out, const void* arg){
-    // cast the input
-    const int* err = (const int*)arg;
-    // we'll just assume that 512 characters is quite long enough
-    DSTR_VAR(temp, 512);
-    compat_strerror_r(*err, temp.data, temp.size);
-    temp.len = strnlen(temp.data, temp.size);
-    return fmt_dstr_append_quiet(out, &temp);
-}
-
-derr_type_t fmthook_bin2hex(dstr_t* out, const void* arg){
-    // cast the input
-    const dstr_t* bin = arg;
-    return bin2hex_quiet(bin, out);
-}
-
-////////////////////////////////
-// String Builder stuff below //
-////////////////////////////////
-
-static derr_type_t sb_append_to_dstr_quiet(
-        const string_builder_t* sb, const dstr_t* joiner, dstr_t* out){
-    derr_type_t type;
-    if(sb == NULL) return E_NONE;
-    if(sb->prev != NULL){
-        type = sb_append_to_dstr_quiet(sb->prev, joiner, out);
-        if(type) return type;
-        if(joiner){
-            type = dstr_append_quiet(out, joiner);
-            if(type) return type;
-        }
-    }
-    type = fmt_arg(out, sb->elem);
-    if(type) return type;
-    if(sb->next != NULL){
-        if(joiner){
-            type = dstr_append_quiet(out, joiner);
-            if(type) return type;
-        }
-        type = sb_append_to_dstr_quiet(sb->next, joiner, out);
-        if(type) return type;
-    }
-    return E_NONE;
-}
-derr_t sb_append_to_dstr(
-        const string_builder_t* sb, const dstr_t* joiner, dstr_t* out){
-    derr_t e = E_OK;
-    derr_type_t type = sb_append_to_dstr_quiet(sb, joiner, out);
-    if(type) ORIG(&e, type, "failed to append string builder to dstr");
-    return e;
-}
-
-derr_t sb_to_dstr(
-    const string_builder_t* sb, const dstr_t* joiner, dstr_t* out
-){
-    derr_t e = E_OK;
-    out->len = 0;
-    PROP(&e, sb_append_to_dstr(sb, joiner, out) );
-    return e;
-}
-
-derr_t sb_expand(const string_builder_t* sb, const dstr_t* joiner,
-                 dstr_t* stack_dstr, dstr_t* heap_dstr, dstr_t** out){
-    derr_t e = E_OK;
-
-    // try and expand into stack_dstr
-    derr_type_t etype = sb_append_to_dstr_quiet(sb, joiner, stack_dstr);
-    if(etype != E_NONE) goto use_heap;
-    // sb_expand is often for a path, so null-terminate it
-    etype = dstr_null_terminate_quiet(stack_dstr);
-    if(etype != E_NONE) goto use_heap;
-    // it worked, return stack_dstr as *out
-    *out = stack_dstr;
-    return E_OK;
-
-use_heap:
-    // we will need to allocate the heap_dstr to be bigger than stack_dstr
-    PROP(&e, dstr_new(heap_dstr, stack_dstr->size * 2) );
-    PROP_GO(&e, sb_to_dstr(sb, joiner, heap_dstr), fail_heap);
-    // sb_expand is often for a path, so null-terminate it
-    PROP_GO(&e, dstr_null_terminate(heap_dstr), fail_heap);
-    *out = heap_dstr;
-    return e;
-
-fail_heap:
-    dstr_free(heap_dstr);
-    return e;
-}
-
-derr_type_t fmthook_sb(dstr_t* out, const void* arg){
-    // cast the input
-    const string_builder_format_t* sbf = (const string_builder_format_t*) arg;
-    // write to memory, just append everything to the output
-    return sb_append_to_dstr_quiet(sbf->sb, sbf->joiner, out);
 }

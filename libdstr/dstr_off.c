@@ -17,11 +17,11 @@ void get_token_context(dstr_t *buf, const dstr_off_t token, size_t ctxsize){
     );
 
     size_t begin = buf->len;
-    FMT_QUIET(buf, "%x", FD_DBG(&headbuf));
+    FMT_QUIET(buf, "%x", FD_DBG(headbuf));
     size_t nspaces = buf->len - begin;
-    FMT_QUIET(buf, "%x", FD_DBG(&tokenbuf));
+    FMT_QUIET(buf, "%x", FD_DBG(tokenbuf));
     size_t ncarets = MAX(buf->len - nspaces - begin, 1);
-    FMT_QUIET(buf, "%x\n", FD_DBG(&tailbuf));
+    FMT_QUIET(buf, "%x\n", FD_DBG(tailbuf));
 
     // spaces
     for(size_t i = 0; i < nspaces; i++){

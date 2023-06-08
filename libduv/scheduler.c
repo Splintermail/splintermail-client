@@ -44,7 +44,7 @@ static void duv_scheduler_set_timer(duv_scheduler_t *s){
     int ret = uv_timer_start(&s->timer, timer_cb, 0, 0);
     if(ret < 0){
         // should only happen if we called close, which we prevent
-        LOG_FATAL("uv_timer_start: %x\n", FUV(&ret));
+        LOG_FATAL("uv_timer_start: %x\n", FUV(ret));
     }
     s->timer_set = true;
 }
@@ -68,7 +68,7 @@ derr_t duv_scheduler_init(duv_scheduler_t *s, uv_loop_t *loop){
     link_init(&s->scheduled);
     int ret = uv_timer_init(loop, &s->timer);
     if(ret < 0){
-        ORIG(&e, uv_err_type(ret), "uv_timer_init: %x", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_timer_init: %x", FUV(ret));
     }
     s->timer.data = s;
 
@@ -132,7 +132,7 @@ void duv_scheduler_run(duv_scheduler_t *s){
         int ret = uv_timer_stop(&s->timer);
         if(ret < 0){
             // should literally never happen
-            LOG_FATAL("uv_timer_stop: %x\n", FUV(&ret));
+            LOG_FATAL("uv_timer_stop: %x\n", FUV(ret));
         }
     }
 

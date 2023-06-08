@@ -3,6 +3,6 @@
 
 #include "libdstr/libdstr.h"
 
-void badbadbad_alert(dstr_t* summary, dstr_t* body);
+void badbadbad_alert(dstr_t summary, dstr_t body);
 
 #endif // BADBADBAD_ALERT_H

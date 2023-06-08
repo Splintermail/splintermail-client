@@ -61,7 +61,7 @@ derr_t get_password(dstr_t* password){
         // store terminal settings
         ret = tcgetattr(0, &tios);
         if(ret != 0){
-            TRACE(&e, "%x: %x\n", FS("tcsetattr"), FE(&errno));
+            TRACE(&e, "%x: %x\n", FS("tcsetattr"), FE(errno));
             ORIG(&e, E_OS, "failed to get terminal settings");
         }
         // prepare to turn off echo
@@ -70,7 +70,7 @@ derr_t get_password(dstr_t* password){
         // turn off echo
         ret = tcsetattr(0, TCSANOW, &tios);
         if(ret != 0){
-            TRACE(&e, "%x: %x\n", FS("tcsetattr"), FE(&errno));
+            TRACE(&e, "%x: %x\n", FS("tcsetattr"), FE(errno));
             ORIG(&e, E_OS, "failed to set terminal settings");
         }
     }
@@ -87,7 +87,7 @@ derr_t get_password(dstr_t* password){
     // remove the newline from the end of the password
     buf.len = strlen(buf.data) - 1;
     // print the newline that didn't get echoed
-    PROP_GO(&e, FFMT(stderr, NULL, "\n"), cu);
+    PROP_GO(&e, FFMT(stderr, "\n"), cu);
     fflush(stderr);
 
     PROP_GO(&e, dstr_copy(&buf, password), cu);
@@ -99,7 +99,7 @@ cu:
         tios.c_lflag = old_lflag;
         ret = tcsetattr(0, TCSANOW, &tios);
         if(ret != 0){
-            TRACE(&e, "%x: %x\n", FS("tcsetattr"), FE(&errno));
+            TRACE(&e, "%x: %x\n", FS("tcsetattr"), FE(errno));
             TRACE_ORIG(&e, E_OS, "failed to set terminal settings");
             DUMP(e);
             DROP_VAR(&e);

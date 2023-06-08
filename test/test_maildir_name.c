@@ -4,20 +4,17 @@
 #include "test_utils.h"
 
 #define EXP_VS_GOT_DSTR(exp, got) do { \
-    int result = dstr_cmp(exp, got); \
-    if(result != 0){ \
-        TRACE(&e, "expected: %x\n" \
-                 "but got:  %x\n", FD(exp), FD(got)); \
-        ORIG_GO(&e, E_VALUE, "test fail", cleanup); \
-    } \
+    if(dstr_eq(exp, got)) break; \
+    TRACE(&e, "expected: %x\n" \
+             "but got:  %x\n", FD(exp), FD(got)); \
+    ORIG_GO(&e, E_VALUE, "test fail", cleanup); \
 } while(0)
 
 #define EXP_VS_GOT_SIMPLE(exp, got, fmt_func) do { \
-    if(exp != got){ \
-        TRACE(&e, "expected: %x\n" \
-                 "but got:  %x\n", fmt_func(exp), fmt_func(got)); \
-        ORIG_GO(&e, E_VALUE, "test fail", cleanup); \
-    } \
+    if(exp == got) break; \
+    TRACE(&e, "expected: %x\n" \
+             "but got:  %x\n", fmt_func(exp), fmt_func(got)); \
+    ORIG_GO(&e, E_VALUE, "test fail", cleanup); \
 } while(0)
 
 static derr_t test_parse_valid(void){
@@ -42,8 +39,8 @@ static derr_t test_parse_valid(void){
     EXP_VS_GOT_SIMPLE(key.uid_local, key_ans.uid_local, FU);
     EXP_VS_GOT_SIMPLE(len_ans, len, FU);
 
-    EXP_VS_GOT_DSTR(&host_ans, &host);
-    EXP_VS_GOT_DSTR(&info_ans, &info);
+    EXP_VS_GOT_DSTR(host_ans, host);
+    EXP_VS_GOT_DSTR(info_ans, info);
 
     // uid_local example
     DSTR_STATIC(name2, "0123456789.1,0,456,123.my.host.name:2,S");
@@ -57,8 +54,8 @@ static derr_t test_parse_valid(void){
     EXP_VS_GOT_SIMPLE(key.uid_local, key_ans.uid_local, FU);
     EXP_VS_GOT_SIMPLE(len_ans, len, FU);
 
-    EXP_VS_GOT_DSTR(&host_ans, &host);
-    EXP_VS_GOT_DSTR(&info_ans, &info);
+    EXP_VS_GOT_DSTR(host_ans, host);
+    EXP_VS_GOT_DSTR(info_ans, info);
 
 cleanup:
     return e;

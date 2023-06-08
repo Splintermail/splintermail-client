@@ -165,8 +165,8 @@ static derr_t test_json_fdump(void){
     PROP(&e, mkdir_temp("fdump-test", &temp) );
 
     // make a temp file
-    string_builder_t temp_path = SB(FD(&temp));
-    string_builder_t file_path = sb_append(&temp_path, FS("json"));
+    string_builder_t temp_path = SBD(temp);
+    string_builder_t file_path = sb_append(&temp_path, SBS("json"));
     PROP_GO(&e, dfopen_path(&file_path, "w", &f), cu);
 
     // parse the json
@@ -187,7 +187,7 @@ static derr_t test_json_fdump(void){
     LIST_PRESET(dstr_t, repl, DSTR_LIT("\n"));
     PROP_GO(&e, dstr_recode(&buf, &buf2, &find, &repl, false), cu);
 
-    EXPECT_DM_GO(&e, "json_fdump file", &buf2, &long_exp, cu);
+    EXPECT_DM_GO(&e, "json_fdump file", buf2, long_exp, cu);
 
     // again, but dumping just a subset of the json
     json_free(&json);
@@ -206,7 +206,7 @@ static derr_t test_json_fdump(void){
     buf.len = 0;
     PROP_GO(&e, dstr_read_path(&file_path, &buf), cu);
     PROP_GO(&e, dstr_recode(&buf, &buf2, &find, &repl, false), cu);
-    EXPECT_DM_GO(&e, "json_fdump file", &buf2, &DSTR_LIT("\"b\"\n"), cu);
+    EXPECT_DM_GO(&e, "json_fdump file", buf2, DSTR_LIT("\"b\"\n"), cu);
 
 cu:
     if(f) fclose(f);
@@ -216,7 +216,7 @@ cu:
 }
 
 #define EXPECT_VALID_JSPEC_GO(label) \
-    EXPECT_DM_GO(&e, "errbuf", &errbuf, &DSTR_LIT(""), label); \
+    EXPECT_DM_GO(&e, "errbuf", errbuf, DSTR_LIT(""), label); \
     EXPECT_B_GO(&e, "ok", ok, true, label)
 
 // for testing JMAP
@@ -228,7 +228,7 @@ static derr_t read_kvp(jctx_t *ctx, const dstr_t key, size_t index, void *arg){
     // key should match itemcount
     DSTR_VAR(buf, 8);
     PROP(&e, FMT(&buf, "%x", FU(*itemcount)) );
-    EXPECT_D(&e, "key", &key, &buf);
+    EXPECT_D(&e, "key", key, buf);
 
     size_t item;
     jspec_t *jspec = JSIZE(&item);
@@ -273,7 +273,7 @@ static derr_t test_jspec_read(void){
     DSTR_VAR(buf, 32);
     PROP_GO(&e, jspec_read_ex(JDCPY(&buf), json.root, &ok, &errbuf), cu);
     EXPECT_VALID_JSPEC_GO(cu);
-    EXPECT_D_GO(&e, "buf", &buf, &DSTR_LIT("stringvalue"), cu);
+    EXPECT_D_GO(&e, "buf", buf, DSTR_LIT("stringvalue"), cu);
 
     // empty string as the first json element
     json_free(&json);
@@ -281,7 +281,7 @@ static derr_t test_jspec_read(void){
     PROP_GO(&e, json_parse(jtext, &json), cu);
     PROP_GO(&e, jspec_read_ex(JDREF(&buf), json.root, &ok, &errbuf), cu);
     EXPECT_VALID_JSPEC_GO(cu);
-    EXPECT_D_GO(&e, "buf", &buf, &DSTR_LIT(""), cu);
+    EXPECT_D_GO(&e, "buf", buf, DSTR_LIT(""), cu);
 
     // jspec_bool_t
     json_free(&json);
@@ -360,7 +360,7 @@ static derr_t test_jspec_read(void){
     PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf), cu);
     EXPECT_VALID_JSPEC_GO(cu);
     EXPECT_B_GO(&e, "x", x, true, cu);
-    EXPECT_D_GO(&e, "y", &y, &DSTR_LIT("string"), cu);
+    EXPECT_D_GO(&e, "y", y, DSTR_LIT("string"), cu);
     EXPECT_NOT_NULL_GO(&e, "p.node", p.node, cu);
 
     // now descend into that subnode, also test jspec_toi_t and jspec_tof_t
@@ -404,7 +404,7 @@ static derr_t test_jspec_read(void){
         "at <root>: unexpected key: \"d\"\n"
         "at <root>: missing required key: \"c\"\n"
     );
-    EXPECT_DM_GO(&e, "errbuf", &errbuf, &exp_errbuf, cu);
+    EXPECT_DM_GO(&e, "errbuf", errbuf, exp_errbuf, cu);
     // again, with no error buf
     PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, NULL), cu_err);
     EXPECT_B_GO(&e, "ok", ok, false, cu_err);
@@ -412,7 +412,7 @@ static derr_t test_jspec_read(void){
     dstr_t heap_errbuf = {0};
     PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, &heap_errbuf), cu_err);
     EXPECT_B_GO(&e, "ok", ok, false, cu_err);
-    EXPECT_DM_GO(&e, "errbuf", &errbuf, &exp_errbuf, cu_err);
+    EXPECT_DM_GO(&e, "errbuf", errbuf, exp_errbuf, cu_err);
 
 cu_err:
     dstr_free(&heap_errbuf);
@@ -448,7 +448,7 @@ static derr_t test_unicode(void){
     DSTR_VAR(buf, 32);
     PROP_GO(&e, jspec_read_ex(JDCPY(&buf), json.root, &ok, &errbuf), cu);
     EXPECT_VALID_JSPEC_GO(cu);
-    EXPECT_D3_GO(&e, "buf", &buf, &DSTR_LIT(
+    EXPECT_D3_GO(&e, "buf", buf, DSTR_LIT(
         "A"
         "\xc3\xa1" // á
         "\xe2\x81\x88" // ⁈

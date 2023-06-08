@@ -29,16 +29,17 @@ DSTR_STATIC(subdur_tmp_dstr, "tmp");
 DSTR_STATIC(subdir_new_dstr, "new");
 
 static inline string_builder_t CUR(const string_builder_t *path){
-    return sb_append(path, FD(&subdir_cur_dstr));
+    return sb_append(path, SBD(subdir_cur_dstr));
 }
 static inline string_builder_t TMP(const string_builder_t *path){
-    return sb_append(path, FD(&subdur_tmp_dstr));
+    return sb_append(path, SBD(subdur_tmp_dstr));
 }
 static inline string_builder_t NEW(const string_builder_t *path){
-    return sb_append(path, FD(&subdir_new_dstr));
+    return sb_append(path, SBD(subdir_new_dstr));
 }
-static inline string_builder_t SUB(const string_builder_t *path,
-        subdir_type_e type){
+static inline string_builder_t SUB(
+    const string_builder_t *path, subdir_type_e type
+){
     switch(type){
         case SUBDIR_CUR: return CUR(path);
         case SUBDIR_NEW: return NEW(path);

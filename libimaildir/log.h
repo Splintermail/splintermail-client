@@ -20,7 +20,7 @@ derr_t log_key_marshal(log_key_t *lk, dstr_t *out);
 derr_t log_key_unmarshal(const dstr_t *key, log_key_t *lk);
 
 derr_t marshal_uidvlds(unsigned int up, unsigned int dn, dstr_t *out);
-derr_t parse_uidvlds(const dstr_t *in, unsigned int *up, unsigned int *dn);
+derr_t parse_uidvlds(const dstr_t in, unsigned int *up, unsigned int *dn);
 
 /*
     Marshaled Log line metadata format:
@@ -52,5 +52,5 @@ derr_t marshal_message(const msg_t *msg, dstr_t *out);
 derr_t marshal_expunge(const msg_expunge_t *expunge, dstr_t *out);
 // parses either a message or an expunge (they have the same key)
 derr_t parse_value(
-    const dstr_t *in, msg_key_t key,  msg_t **msg, msg_expunge_t **expunge
+    const dstr_t in, msg_key_t key,  msg_t **msg, msg_expunge_t **expunge
 );

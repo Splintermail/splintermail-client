@@ -34,7 +34,7 @@ static bool imf_eq(const imf_t *a, const imf_t *b){
         && dstr_off_eq(a->body, b->body);
 }
 
-#define FPATH FSB(&path, &DSTR_LIT("."))
+#define FPATH FSB_EX(path, DSTR_LIT("."))
 
 #define ASSERT_PTR_MATCH do { \
     if(!exp && !got) return ok; \
@@ -49,10 +49,10 @@ static bool imf_eq(const imf_t *a, const imf_t *b){
 } while(0)
 
 #define ASSERT_FIELD(type, name) \
-    assert_##type##_eq(e, sb_append(&path, FS(#name)), exp->name, got->name)
+    assert_##type##_eq(e, sb_append(&path, SBS(#name)), exp->name, got->name)
 
 #define ASSERT_GO(type, e, text, exp, got, label) do {\
-    if(!assert_##type##_eq(e, SB(FS(#type)), exp, got)) {\
+    if(!assert_##type##_eq(e, SBS(#type), exp, got)) {\
         TRACE(e, "text was: '%x'\n", FD(text)); \
         ORIG_GO(e, E_VALUE, "wrong value", label); \
     } \
@@ -67,8 +67,8 @@ static bool assert_dstr_eq(
     bool ok = true;
     ASSERT_PTR_MATCH;
     if(ie_dstr_eq(exp, got)) return ok;
-    TRACE(e, "%x: expected: '%x'\n", FPATH, FD_DBG(&exp->dstr));
-    TRACE(e, "%x: but got:  '%x'\n", FPATH, FD_DBG(&got->dstr));
+    TRACE(e, "%x: expected: '%x'\n", FPATH, FD_DBG(exp->dstr));
+    TRACE(e, "%x: but got:  '%x'\n", FPATH, FD_DBG(got->dstr));
     return false;
 }
 
@@ -81,10 +81,10 @@ static bool assert_dstr_list_eq(
     bool ok = true;
     size_t i = 0;
     for(; exp && got; i++, exp = exp->next, got = got->next){
-        string_builder_t path = sb_append(&basepath, FU(i));
+        string_builder_t path = sb_append(&basepath, SBU(i));
         ok &= assert_dstr_eq(e, path, exp, got);
     }
-    string_builder_t path = sb_append(&basepath, FU(i));
+    string_builder_t path = sb_append(&basepath, SBU(i));
     ASSERT_PTR_MATCH;
     return ok;
 }
@@ -98,8 +98,8 @@ static bool assert_dstr_off_eq(
     dstr_t d_exp = dstr_from_off(exp);
     dstr_t d_got = dstr_from_off(got);
     if(dstr_cmp2(d_exp, d_got) == 0) return true;
-    TRACE(e, "%x: expected: '%x'\n", FPATH, FD_DBG(&d_exp));
-    TRACE(e, "%x: but got:  '%x'\n", FPATH, FD_DBG(&d_got));
+    TRACE(e, "%x: expected: '%x'\n", FPATH, FD_DBG(d_exp));
+    TRACE(e, "%x: but got:  '%x'\n", FPATH, FD_DBG(d_got));
     return false;
 }
 
@@ -253,11 +253,11 @@ static bool assert_body_list_eq(
     bool ok = true;
     size_t i = 1;
     for(; exp && got; i++, exp = exp->next, got = got->next){
-        string_builder_t path = sb_append(&basepath, FU(i));
+        string_builder_t path = sb_append(&basepath, SBU(i));
         bool temp = assert_body_eq(e, path, exp, got);
         ok &= temp;
     }
-    string_builder_t path = sb_append(&basepath, FU(i));
+    string_builder_t path = sb_append(&basepath, SBU(i));
     ASSERT_PTR_MATCH;
     return ok;
 }
@@ -332,14 +332,14 @@ static derr_t test_imf_parse(void){
     dstr_t body_bytes = DSTR_LIT("body\r\nunfinished line");
 
     DSTR_VAR(hdr1_bytes, 64);
-    PROP(&e, FMT(&hdr1_bytes, "%x:%x", FD(&hdr1_name), FD(&hdr1_val)) );
+    PROP(&e, FMT(&hdr1_bytes, "%x:%x", FD(hdr1_name), FD(hdr1_val)) );
 
     DSTR_VAR(hdr2_bytes, 64);
-    PROP(&e, FMT(&hdr2_bytes, "%x:%x", FD(&hdr2_name), FD(&hdr2_val)) );
+    PROP(&e, FMT(&hdr2_bytes, "%x:%x", FD(hdr2_name), FD(hdr2_val)) );
 
     DSTR_VAR(hdr_bytes, 64);
     PROP(&e,
-        FMT(&hdr_bytes, "%x%x%x", FD(&hdr1_bytes), FD(&hdr2_bytes), FD(&sep))
+        FMT(&hdr_bytes, "%x%x%x", FD(hdr1_bytes), FD(hdr2_bytes), FD(sep))
     );
 
     // build the expected values
@@ -411,17 +411,17 @@ cu:
             case IMF_STATUS_DONE: should_continue = false; break; \
             case IMF_STATUS_SYNTAX_ERROR: \
                 TRACE(e, "syntax error parsing " #name " field.\n"); \
-                TRACE(e, #name ": %x\n", FD_DBG(&in)); \
+                TRACE(e, #name ": %x\n", FD_DBG(in)); \
                 ORIG_GO(e, E_VALUE, "test failed", label); \
             \
             case IMF_STATUS_SEMSTACK_OVERFLOW: \
                 TRACE(e, "semstack overflow parsing " #name " field.\n"); \
-                TRACE(e, #name ": %x\n", FD_DBG(&in)); \
+                TRACE(e, #name ": %x\n", FD_DBG(in)); \
                 ORIG_GO(e, E_VALUE, "test failed", label); \
             \
             case IMF_STATUS_CALLSTACK_OVERFLOW: \
                 TRACE(e, "callstack overflow parsing " #name " field.\n"); \
-                TRACE(e, #name "contents: %x\n", FD_DBG(&in)); \
+                TRACE(e, #name "contents: %x\n", FD_DBG(in)); \
                 ORIG_GO(e, E_VALUE, "test failed", label); \
         } \
     } while(should_continue && token_type != IMF_EOF); \
@@ -518,7 +518,7 @@ static derr_t test_parse_from_field(void){
         dstr_t text;
         DSTR_WRAP(text, c.text, strlen(c.text), true);
         imf_parse_go(&e, text, from, &got, cu);
-        ASSERT_GO(addr, &e, &text, exp, got, cu);
+        ASSERT_GO(addr, &e, text, exp, got, cu);
     }
 
 cu:
@@ -593,7 +593,7 @@ static derr_t test_parse_to_field(void){
         dstr_t text;
         DSTR_WRAP(text, c.text, strlen(c.text), true);
         imf_parse_go(&e, text, to, &got, cu);
-        ASSERT_GO(addr, &e, &text, exp, got, cu);
+        ASSERT_GO(addr, &e, text, exp, got, cu);
     }
 
 cu:
@@ -673,7 +673,7 @@ static derr_t test_parse_date_field(void){
         imap_time_t exp = cases[i].time;
         imap_time_t got;
         PROP(&e, imf_parse_date(text, &got) );
-        ASSERT_GO(imap_time, &e, &text, exp, got, cu);
+        ASSERT_GO(imap_time, &e, text, exp, got, cu);
     }
 
 cu:
@@ -756,7 +756,7 @@ static derr_t test_read_envelope_info(void){
     );
     CHECK_GO(&e, cu);
 
-    ASSERT_GO(envelope, &e, &msg1, exp1, got1, cu);
+    ASSERT_GO(envelope, &e, msg1, exp1, got1, cu);
 
 cu:
     imf_hdrs_free(hdrs);
@@ -799,7 +799,7 @@ static derr_t test_read_mime_content_type(void){
             )
         );
         CHECK_GO(&e, cu);
-        ASSERT_GO(mime_content_type, &e, &msg, exp, got, cu);
+        ASSERT_GO(mime_content_type, &e, msg, exp, got, cu);
         imf_hdrs_free(STEAL(imf_hdrs_t, &hdrs));
         mime_content_type_free(STEAL(mime_content_type_t, &got));
         mime_content_type_free(STEAL(mime_content_type_t, &exp));
@@ -818,7 +818,7 @@ static derr_t test_read_mime_content_type(void){
             NULL
         );
         CHECK_GO(&e, cu);
-        ASSERT_GO(mime_content_type, &e, &msg, exp, got, cu);
+        ASSERT_GO(mime_content_type, &e, msg, exp, got, cu);
         imf_hdrs_free(STEAL(imf_hdrs_t, &hdrs));
         mime_content_type_free(STEAL(mime_content_type_t, &got));
         mime_content_type_free(STEAL(mime_content_type_t, &exp));
@@ -840,7 +840,7 @@ static derr_t test_read_mime_content_type(void){
             NULL
         );
         CHECK_GO(&e, cu);
-        ASSERT_GO(mime_content_type, &e, &msg, exp, got, cu);
+        ASSERT_GO(mime_content_type, &e, msg, exp, got, cu);
         imf_hdrs_free(STEAL(imf_hdrs_t, &hdrs));
         mime_content_type_free(STEAL(mime_content_type_t, &got));
         mime_content_type_free(STEAL(mime_content_type_t, &exp));
@@ -904,7 +904,7 @@ static derr_t test_get_multipart_index(void){
             "\r\n"
             "How are you?.\r\n"
         );
-        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+        ASSERT_GO(dstr_off, &e, *msg.buf, exp, got, done);
 
         got = get_multipart_index(msg, 0, bdry, 2, &missing, NULL);
         ASSERT_NOT_MISSING;
@@ -916,7 +916,7 @@ static derr_t test_get_multipart_index(void){
             "<br>=\r\n"
             "<div>How are you?.</div>=\r\n"
         );
-        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+        ASSERT_GO(dstr_off, &e, *msg.buf, exp, got, done);
 
         got = get_multipart_index(msg, 0, bdry, 3, &missing, NULL);
         ASSERT_MISSING;
@@ -954,7 +954,7 @@ static derr_t test_get_multipart_index(void){
             "part1!\r\n"
             "\r\n"
         );
-        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+        ASSERT_GO(dstr_off, &e, *msg.buf, exp, got, done);
 
         got = get_multipart_index(msg, 0, bdry, 2, &missing, NULL);
         ASSERT_NOT_MISSING;
@@ -964,7 +964,7 @@ static derr_t test_get_multipart_index(void){
             "part2!\r\n"
             "\r\n"
         );
-        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+        ASSERT_GO(dstr_off, &e, *msg.buf, exp, got, done);
 
         got = get_multipart_index(msg, 0, bdry, 3, &missing, NULL);
         ASSERT_MISSING;
@@ -988,12 +988,12 @@ static derr_t test_get_multipart_index(void){
         got = get_multipart_index(msg, 0, bdry, 1, &missing, NULL);
         ASSERT_NOT_MISSING;
         exp = OFF_LIT("\n\r\n\rpart1!\n\r\n\r");
-        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+        ASSERT_GO(dstr_off, &e, *msg.buf, exp, got, done);
 
         got = get_multipart_index(msg, 0, bdry, 2, &missing, NULL);
         ASSERT_NOT_MISSING;
         exp = OFF_LIT("\n\r\n\rpart2!\n\r\n\r");
-        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+        ASSERT_GO(dstr_off, &e, *msg.buf, exp, got, done);
 
         got = get_multipart_index(msg, 0, bdry, 3, &missing, NULL);
         ASSERT_MISSING;
@@ -1018,12 +1018,12 @@ static derr_t test_get_multipart_index(void){
         got = get_multipart_index(msg, 0, bdry, 1, &missing, NULL);
         ASSERT_NOT_MISSING;
         exp = OFF_LIT("\r\rpart1!\r\r");
-        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+        ASSERT_GO(dstr_off, &e, *msg.buf, exp, got, done);
 
         got = get_multipart_index(msg, 0, bdry, 2, &missing, NULL);
         ASSERT_NOT_MISSING;
         exp = OFF_LIT("\r\rpart2!\r\r");
-        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+        ASSERT_GO(dstr_off, &e, *msg.buf, exp, got, done);
 
         got = get_multipart_index(msg, 0, bdry, 3, &missing, NULL);
         ASSERT_MISSING;
@@ -1074,7 +1074,7 @@ static derr_t test_get_multipart_index(void){
             "\r\n"
             "How are you?.\r\n"
         );
-        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+        ASSERT_GO(dstr_off, &e, *msg.buf, exp, got, done);
 
         got = get_multipart_index(msg, skip, bdry, 1, &missing, &skip);
         ASSERT_NOT_MISSING;
@@ -1086,7 +1086,7 @@ static derr_t test_get_multipart_index(void){
             "<br>=\r\n"
             "<div>How are you?.</div>=\r\n"
         );
-        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+        ASSERT_GO(dstr_off, &e, *msg.buf, exp, got, done);
 
         got = get_multipart_index(msg, skip, bdry, 1, &missing, &skip);
         got = get_multipart_index(msg, skip, bdry, 1, &missing, &skip);
@@ -1154,7 +1154,7 @@ static derr_t submsg_test(
     dstr_t exp = dstr_from_off(expect_mime);
     dstr_t got = dstr_from_off(mime_hdrs);
     if(dstr_cmp2(exp, got) != 0){
-        TRACE(&e, "expected:\n---------\n%x\n---------\n", FD(&exp));
+        TRACE(&e, "expected:\n---------\n%x\n---------\n", FD(exp));
         dstr_t before = dstr_sub2(*mime_hdrs.buf, 0, mime_hdrs.start);
         dstr_t after = dstr_sub2(
             *mime_hdrs.buf, mime_hdrs.start + mime_hdrs.len, (size_t)-1
@@ -1165,14 +1165,14 @@ static derr_t submsg_test(
             "%x"
             "\x1b[90m>>>%x\x1b[m"
             "\n---------\n\n",
-            FU(mime_hdrs.len), FD(&before), FD(&got), FD(&after));
+            FU(mime_hdrs.len), FD(before), FD(got), FD(after));
         ORIG_GO(&e, E_VALUE, "mime_hdrs was wrong", cu);
     }
 
     exp = dstr_from_off(expect_bytes);
     got = dstr_from_off(bytes);
     if(dstr_cmp2(exp, got) != 0){
-        TRACE(&e, "expected:\n---------\n%x\n---------\n", FD(&exp));
+        TRACE(&e, "expected:\n---------\n%x\n---------\n", FD(exp));
         dstr_t before = dstr_sub2(*bytes.buf, 0, bytes.start);
         dstr_t after = dstr_sub2(
             *bytes.buf, bytes.start + bytes.len, (size_t)-1
@@ -1183,7 +1183,7 @@ static derr_t submsg_test(
             "%x"
             "\x1b[90m>>>%x\x1b[m"
             "\n---------\n\n",
-            FU(bytes.len), FD(&before), FD(&got), FD(&after));
+            FU(bytes.len), FD(before), FD(got), FD(after));
         ORIG_GO(&e, E_VALUE, "bytes was wrong", cu);
     }
 
@@ -1460,7 +1460,7 @@ static derr_t test_imf_bodystructure(void){
         "--root-boundary--\r\n"
     );
     FILE *f = fopen("asdf", "w");
-    FFMT(f, NULL, "%x\n", FD(&msg));
+    FFMT(f, "%x\n", FD(msg));
     fclose(f);
 
     PROP_GO(&e, imf_parse(&msg, NULL, NULL, NULL, &imf), cu);
@@ -1704,7 +1704,7 @@ static derr_t test_imf_bodystructure(void){
         NULL // content-location
     );
 
-    ASSERT_GO(body, &e, &msg, exp_body, got_body, cu);
+    ASSERT_GO(body, &e, msg, exp_body, got_body, cu);
 
 cu:
     imf_free(imf);

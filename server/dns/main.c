@@ -76,11 +76,11 @@ static void g_membuf_return(globals_t *g, membuf_t **membuf){
         // it's safe to receive again
         derr_t e = recv_start(&g->dns_udp, allocator, on_recv);
         if(is_error(e)){
-            LOG_FATAL("dns recv_start failed: %x\n", FD(&e.msg));
+            LOG_FATAL("dns recv_start failed: %x\n", FD(e.msg));
         }
         e = recv_start(&g->sync_udp, allocator, on_recv);
         if(is_error(e)){
-            LOG_FATAL("sync recv_start failed: %x\n", FD(&e.msg));
+            LOG_FATAL("sync recv_start failed: %x\n", FD(e.msg));
         }
         g->recving = true;
     }
@@ -114,7 +114,7 @@ static void on_send(uv_udp_send_t *req, int status){
     // error condition
     int uvret = status;
     derr_t e = E_OK;
-    TRACE_ORIG(&e, uv_err_type(uvret), "on_send: %x", FUV(&uvret));
+    TRACE_ORIG(&e, uv_err_type(uvret), "on_send: %x", FUV(uvret));
     DUMP(e);
     dns_close(g, e);
     PASSED(e);
@@ -248,7 +248,7 @@ static void on_recv(
     }else if(nread < 0){
         // error condition
         int uvret = (int)nread;
-        TRACE(&e, "on_recv: %x\n", FUV(&uvret));
+        TRACE(&e, "on_recv: %x\n", FUV(uvret));
         ORIG_GO(&e, uv_err_type(uvret), "on_recv error", fail);
     }else if(flags & UV_UDP_PARTIAL){
         // any message too big to recv in one packet must be invalid
@@ -279,9 +279,9 @@ buf_return:
     }else if(!g->closing && g->recving && link_list_isempty(&g->membufs)){
         // there are none left and we aren't returning this one
         int ret = recv_stop(&g->dns_udp);
-        if(ret) LOG_FATAL("uv_udp_recv_stop failed: %x\n", FUV(&ret));
+        if(ret) LOG_FATAL("uv_udp_recv_stop failed: %x\n", FUV(ret));
         ret = recv_stop(&g->sync_udp);
-        if(ret) LOG_FATAL("uv_udp_recv_stop failed: %x\n", FUV(&ret));
+        if(ret) LOG_FATAL("uv_udp_recv_stop failed: %x\n", FUV(ret));
         g->recving = false;
     }
 }
@@ -317,13 +317,13 @@ static derr_t udp_bind_addrspec(uv_udp_t *udp, const addrspec_t spec){
         // we need family for IPv4 vs IPv6, but we override type and proto
         fd = socket(ai->ai_family, SOCK_DGRAM, 0);
         if(fd < 0){
-            ORIG_GO(&e, E_OS, "socket(): %x", fail, FE(&errno));
+            ORIG_GO(&e, E_OS, "socket(): %x", fail, FE(errno));
         }
 
         int on = 1;
         ret = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
         if(ret){
-            ORIG_GO(&e, E_OS, "unable to set REUSEADDR: %x", fail, FE(&errno));
+            ORIG_GO(&e, E_OS, "unable to set REUSEADDR: %x", fail, FE(errno));
         }
 
         ret = bind(fd, ai->ai_addr, ai->ai_addrlen);
@@ -339,13 +339,13 @@ static derr_t udp_bind_addrspec(uv_udp_t *udp, const addrspec_t spec){
     // nothing was bound
     dstr_t fullspec = dstr_from_off(dstr_off_extend(spec.scheme, spec.port));
     ORIG_GO(&e,
-        E_OS, "unable to bind to addrspec: %x", fail, FD_DBG(&fullspec)
+        E_OS, "unable to bind to addrspec: %x", fail, FD_DBG(fullspec)
     );
 
 bind_success:
     ret = uv_udp_open(udp, fd);
     if(ret < 0){
-        TRACE(&e, "uv_udp_open: %x\n", FUV(&ret));
+        TRACE(&e, "uv_udp_open: %x\n", FUV(ret));
         ORIG_GO(&e, uv_err_type(ret), "uv_udp_open error", fail);
     }
 

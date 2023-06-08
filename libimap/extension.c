@@ -92,17 +92,17 @@ DSTR_STATIC(EXT_IDLE_dstr, "IDLE");
 DSTR_STATIC(EXT_XKEY_dstr, "XKEY");
 DSTR_STATIC(EXT_unknown_dstr, "unknown");
 
-const dstr_t *extension_token(extension_e ext){
+dstr_t extension_token(extension_e ext){
     switch(ext){
-        case EXT_UIDPLUS: return &EXT_UIDPLUS_dstr;
-        case EXT_ENABLE: return &EXT_ENABLE_dstr;
-        case EXT_CONDSTORE: return &EXT_CONDSTORE_dstr;
-        case EXT_QRESYNC: return &EXT_QRESYNC_dstr;
-        case EXT_UNSELECT: return &EXT_UNSELECT_dstr;
-        case EXT_IDLE: return &EXT_IDLE_dstr;
-        case EXT_XKEY: return &EXT_XKEY_dstr;
+        case EXT_UIDPLUS: return EXT_UIDPLUS_dstr;
+        case EXT_ENABLE: return EXT_ENABLE_dstr;
+        case EXT_CONDSTORE: return EXT_CONDSTORE_dstr;
+        case EXT_QRESYNC: return EXT_QRESYNC_dstr;
+        case EXT_UNSELECT: return EXT_UNSELECT_dstr;
+        case EXT_IDLE: return EXT_IDLE_dstr;
+        case EXT_XKEY: return EXT_XKEY_dstr;
     }
-    return &EXT_unknown_dstr;
+    return EXT_unknown_dstr;
 }
 
 const char *extension_msg(extension_e ext){

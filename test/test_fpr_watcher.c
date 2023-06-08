@@ -12,7 +12,7 @@ static derr_t test_zeroized(void){
 
     fpr_watcher_t w = {0};
 
-    string_builder_t path = SB(FS("_test_fpr_watcher__test_zeroized"));
+    string_builder_t path = SBS("_test_fpr_watcher__test_zeroized");
     DROP_CMD( rm_rf_path(&path) );
     PROP_GO(&e, mkdirs_path(&path, 0777), cu);
 
@@ -52,8 +52,8 @@ static derr_t _expect_strings(jsw_atree_t *tree, dstr_t *exp, size_t nexp){
         if(dstr_cmp(&str->dstr, &exp[i]) != 0){
             TRACE(&e,
                 "expected \"%x\" but got \"%x\"\n",
-                FD_DBG(&exp[i]),
-                FD_DBG(&str->dstr)
+                FD_DBG(exp[i]),
+                FD_DBG(str->dstr)
             );
             ORIG(&e, E_VALUE, "mismatched strings");
         }
@@ -61,10 +61,10 @@ static derr_t _expect_strings(jsw_atree_t *tree, dstr_t *exp, size_t nexp){
     if(i != nexp || node != NULL){
         for(; node != NULL; node = jsw_atnext(&trav)){
             jsw_str_t *str = CONTAINER_OF(node, jsw_str_t, node);
-            TRACE(&e, "got unexpected string: %x\n", FD_DBG(&str->dstr));
+            TRACE(&e, "got unexpected string: %x\n", FD_DBG(str->dstr));
         }
         for(; i < nexp; i++){
-            TRACE(&e, "expected another string: %x\n", FD_DBG(&exp[i]));
+            TRACE(&e, "expected another string: %x\n", FD_DBG(exp[i]));
         }
         ORIG(&e, E_VALUE, "mismatched lengths");
     }
@@ -96,7 +96,7 @@ static derr_t expect_file(string_builder_t path, const dstr_t exp){
 
     if(dstr_cmp(&exp, &buf) != 0){
         TRACE(&e,
-            "-- expected:\n%x\n-- but got:\n%x\n--\n", FD(&exp), FD(&buf)
+            "-- expected:\n%x\n-- but got:\n%x\n--\n", FD(exp), FD(buf)
         );
         ORIG_GO(&e, E_VALUE, "wrong file contents", cu);
     }
@@ -111,7 +111,7 @@ static derr_t test_fpr_watcher(void){
 
     fpr_watcher_t w = {0};
 
-    string_builder_t path = SB(FS("_test_fpr_watcher__test_fpr_watcher"));
+    string_builder_t path = SBS("_test_fpr_watcher__test_fpr_watcher");
     DROP_CMD( rm_rf_path(&path) );
     PROP_GO(&e, mkdirs_path(&path, 0777), cu);
 
@@ -125,9 +125,10 @@ static derr_t test_fpr_watcher(void){
     DSTR_STATIC(f2, "f2"); // hex: "6632"
     DSTR_STATIC(m1, "mailbox");
     DSTR_STATIC(m2, "zmail\\box\n");
-    string_builder_t fpr_path = sb_append(&path, FS("fprs_seen"));
-    string_builder_t synced_path = sb_append(&path, FS("mailboxes_synced"));
-    string_builder_t xkeysync_path = sb_append(&path, FS("xkeysync_completed"));
+    string_builder_t fpr_path = sb_append(&path, SBS("fprs_seen"));
+    string_builder_t synced_path = sb_append(&path, SBS("mailboxes_synced"));
+    string_builder_t xkeysync_path =
+        sb_append(&path, SBS("xkeysync_completed"));
 
     // start with one known fpr...
     PROP_GO(&e, fpr_watcher_add_fpr(&w, f1), cu);

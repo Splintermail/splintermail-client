@@ -242,11 +242,11 @@ void imf_handle_error(
     // longest DBG char is \xNN, or 4 chars, and we have two lines of len 80
     // 80 * 4 = 320
     DSTR_VAR(buf, 512);
-    DROP_CMD( FMT(&buf, "    %x", FD_DBG(&head)) );
+    DROP_CMD( FMT(&buf, "    %x", FD_DBG(head)) );
     size_t nspaces = buf.len;
-    DROP_CMD( FMT(&buf, "%x", FD_DBG(&token)) );
+    DROP_CMD( FMT(&buf, "%x", FD_DBG(token)) );
     size_t ncarets = MAX(buf.len - nspaces, 1);
-    DROP_CMD( FMT(&buf, "%x\n", FD_DBG(&tail)) );
+    DROP_CMD( FMT(&buf, "%x\n", FD_DBG(tail)) );
 
     // spaces
     size_t oldlen = buf.len;
@@ -261,7 +261,7 @@ void imf_handle_error(
     }
 
     LOG_ERROR(
-        "Error parsing email message: %x\n%x\n", FS(loc_summary), FD(&buf)
+        "Error parsing email message: %x\n%x\n", FS(loc_summary), FD(buf)
     );
     // reuse buf
     int l = imf_snprint_mask(buf.data, buf.size, expected_mask, ",");
@@ -269,7 +269,7 @@ void imf_handle_error(
         buf.len = (size_t)l;
         LOG_ERROR(
             "Got %x, but expected one of [%x]\n",
-            FS(imf_token_name(imf_token)), FD(&buf)
+            FS(imf_token_name(imf_token)), FD(buf)
         );
     }
 }
@@ -462,7 +462,7 @@ derr_t imf_hdrs_parse_sub(const dstr_off_t bytes, imf_hdrs_t **out){
             case IMF_STATUS_DONE: should_continue = false; break; \
             case IMF_STATUS_SYNTAX_ERROR: \
                 LOG_WARN("syntax error parsing " name " field, skipping.\n"); \
-                LOG_WARN(name ": %x\n", FD_DBG(&out##_field)); \
+                LOG_WARN(name ": %x\n", FD_DBG(out##_field)); \
                 should_continue = false; \
                 break; \
             \
@@ -470,7 +470,7 @@ derr_t imf_hdrs_parse_sub(const dstr_off_t bytes, imf_hdrs_t **out){
                 LOG_ERROR( \
                     "semstack overflow parsing " name " field, skipping.\n" \
                 ); \
-                LOG_ERROR(name ": %x\n", FD_DBG(&out##_field)); \
+                LOG_ERROR(name ": %x\n", FD_DBG(out##_field)); \
                 should_continue = false; \
                 break; \
             \
@@ -478,7 +478,7 @@ derr_t imf_hdrs_parse_sub(const dstr_off_t bytes, imf_hdrs_t **out){
                 LOG_ERROR( \
                     "callstack overflow parsing " name " field, skipping.\n" \
                 ); \
-                LOG_ERROR(name "contents: %x\n", FD_DBG(&out##_field)); \
+                LOG_ERROR(name "contents: %x\n", FD_DBG(out##_field)); \
                 should_continue = false; \
                 break; \
         } \
@@ -632,7 +632,7 @@ mime_content_type_t *read_mime_content_type(
         if(version.major != 1 || version.minor != 0){
             LOG_WARN(
                 "unrecognized MIME-Version (\"%x\"), continuing anyway...\n",
-                FD(&version_field)
+                FD(version_field)
             );
         }
     }
@@ -751,7 +751,7 @@ derr_t read_bodystruct_info(
         if(version.major != 1 || version.minor != 0){
             LOG_WARN(
                 "unrecognized MIME-Version (\"%x\"), continuing anyway...\n",
-                FD(&version_field)
+                FD(version_field)
             );
         }
     }
@@ -815,7 +815,7 @@ static dstr_t get_mime_boundary(
     if(boundary.data == NULL){
         LOG_WARN(
             "boundary parameter not found in multipart content type: %x\n",
-            FD_DBG(&boundary)
+            FD_DBG(boundary)
         );
         *missing = true;
         goto done;
@@ -1402,19 +1402,19 @@ fail:
             case IMF_STATUS_DONE: should_continue = false; break; \
             case IMF_STATUS_SYNTAX_ERROR: \
                 imf_parser_reset(p); \
-                TRACE(e, "input: %x\n", FD_DBG(&in)); \
+                TRACE(e, "input: %x\n", FD_DBG(in)); \
                 ORIG_GO(e, E_PARAM, "syntax error parsing " what, label); \
             \
             case IMF_STATUS_SEMSTACK_OVERFLOW: \
                 imf_parser_reset(p); \
-                TRACE(e, "input: %x\n", FD_DBG(&in)); \
+                TRACE(e, "input: %x\n", FD_DBG(in)); \
                 ORIG_GO(e, \
                     E_FIXEDSIZE, "semstack overflow parsing " what, label \
                 ); \
             \
             case IMF_STATUS_CALLSTACK_OVERFLOW: \
                 imf_parser_reset(p); \
-                TRACE(e, "input: %x\n", FD_DBG(&in)); \
+                TRACE(e, "input: %x\n", FD_DBG(in)); \
                 ORIG_GO(e, \
                     E_FIXEDSIZE, "callstack overflow parsing" what, label \
                 ); \

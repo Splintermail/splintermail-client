@@ -303,7 +303,7 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
             ORIG(&e, E_INTERNAL, "UID on file not in cache anywhere");
         }
         // (2) if the message is expunged, it's time to delete the file
-        string_builder_t rm_path = sb_append(base, FD(name));
+        string_builder_t rm_path = sb_append(base, SBD(*name));
         PROP(&e, remove_path(&rm_path) );
         return e;
     }
@@ -462,7 +462,7 @@ static derr_t imaildir_print_msgs(imaildir_t *m){
         msg_t *msg = CONTAINER_OF(node, msg_t, node);
         DSTR_VAR(buffer, 1024);
         PROP(&e, msg_write(msg, &buffer) );
-        LOG_INFO("    %x\n", FD(&buffer));
+        LOG_INFO("    %x\n", FD(buffer));
     }
     LOG_INFO("----\n");
 
@@ -472,7 +472,7 @@ static derr_t imaildir_print_msgs(imaildir_t *m){
         msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
         DSTR_VAR(buffer, 1024);
         PROP(&e, msg_expunge_write(expunge, &buffer) );
-        LOG_INFO("    %x\n", FD(&buffer));
+        LOG_INFO("    %x\n", FD(buffer));
     }
     LOG_INFO("----\n");
 
@@ -529,7 +529,7 @@ static derr_t delete_one_msg_file(const string_builder_t *base,
     // ignore directories
     if(is_dir) return e;
 
-    string_builder_t path = sb_append(base, FD(name));
+    string_builder_t path = sb_append(base, SBD(*name));
 
     PROP(&e, remove_path(&path) );
 
@@ -563,7 +563,7 @@ static derr_t imaildir_init_ex(
     derr_t e = E_OK;
 
     // check if the cache is in an invalid state
-    string_builder_t invalid_path = sb_append(&path, FS(".invalid"));
+    string_builder_t invalid_path = sb_append(&path, SBS(".invalid"));
     bool is_invalid;
     PROP(&e, exists_path(&invalid_path, &is_invalid) );
 
@@ -930,7 +930,7 @@ derr_t imaildir_up_check_uidvld_up(imaildir_t *m, unsigned int uidvld_up){
 
         /* first mark the cache as invalid, in case we crash or lose power
            halfway through */
-        string_builder_t invalid_path = sb_append(&m->path, FS(".invalid"));
+        string_builder_t invalid_path = sb_append(&m->path, SBS(".invalid"));
         PROP_GO(&e, touch_path(&invalid_path), fail);
 
         // close the log
@@ -1154,7 +1154,7 @@ static derr_t handle_new_msg_file(imaildir_t *m, const string_builder_t *path,
         ),
     fail);
     string_builder_t cur_dir = CUR(&m->path);
-    string_builder_t cur_path = sb_append(&cur_dir, FD(&cur_name));
+    string_builder_t cur_path = sb_append(&cur_dir, SBD(cur_name));
 
     // move the file into place
     PROP_GO(&e, drename_path(path, &cur_path), fail);
@@ -1217,7 +1217,7 @@ static derr_t _imaildir_up_handle_static_fetch_attr(
 
     // build the path
     string_builder_t tmp_dir = TMP(&m->path);
-    string_builder_t tmp_path = sb_append(&tmp_dir, FD(&tmp_name));
+    string_builder_t tmp_path = sb_append(&tmp_dir, SBD(tmp_name));
 
     size_t len = 0;
     bool not4me = false;
@@ -1917,14 +1917,14 @@ static derr_t copy_one_msg(
 
     // get the path to the local file
     string_builder_t subdir_path = SUB(&m->path, msg->subdir);
-    string_builder_t msg_path = sb_append(&subdir_path, FD(&msg->filename));
+    string_builder_t msg_path = sb_append(&subdir_path, SBD(msg->filename));
 
     // get a temporary file path
     size_t tmp_id = imaildir_new_tmp_id(m);
     DSTR_VAR(tmp_name, 32);
     NOFAIL(&e, E_FIXEDSIZE, FMT(&tmp_name, "%x", FU(tmp_id)) );
     string_builder_t tmp_dir = TMP(&m->path);
-    string_builder_t tmp_path = sb_append(&tmp_dir, FD(&tmp_name));
+    string_builder_t tmp_path = sb_append(&tmp_dir, SBD(tmp_name));
 
     // copy the message on disk
     PROP(&e, file_copy_path(&msg_path, &tmp_path, 0666) );
@@ -2270,11 +2270,11 @@ derr_t imaildir_dn_open_msg(imaildir_t *m, const msg_key_t key, int *fd){
     *fd = -1;
 
     jsw_anode_t *node = jsw_afind(&m->msgs, &key, NULL);
-    if(!node) ORIG_GO(&e, E_INTERNAL, "msg_key missing %x", fail, FMK(&key));
+    if(!node) ORIG_GO(&e, E_INTERNAL, "msg_key missing %x", fail, FMK(key));
     msg_t *msg = CONTAINER_OF(node, msg_t, node);
 
     string_builder_t subdir_path = SUB(&m->path, msg->subdir);
-    string_builder_t msg_path = sb_append(&subdir_path, FD(&msg->filename));
+    string_builder_t msg_path = sb_append(&subdir_path, SBD(msg->filename));
     PROP_GO(&e, dopen_path(&msg_path, O_RDONLY, 0, fd), fail);
 
     msg->open_fds++;
@@ -2298,7 +2298,7 @@ void imaildir_dn_close_msg(imaildir_t *m, const msg_key_t key, int *fd){
     jsw_anode_t *node = jsw_afind(&m->msgs, &key, NULL);
     if(!node){
         // imaildir is in an inconsistent state
-        LOG_FATAL("msg_key %x missing in imaildir_dn_close_msg\n", FMK(&key));
+        LOG_FATAL("msg_key %x missing in imaildir_dn_close_msg\n", FMK(key));
     }
 
     msg_t *msg = CONTAINER_OF(node, msg_t, node);

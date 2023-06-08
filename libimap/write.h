@@ -22,19 +22,23 @@ imap_cmd_t *imap_cmd_assert_writable(derr_t *e, imap_cmd_t *cmd,
 imap_resp_t *imap_resp_assert_writable(derr_t *e, imap_resp_t *resp,
         const extensions_t *exts);
 
+typedef struct {
+    fmt_i iface;
+    const imap_cmd_t *cmd;
+} _fmt_icmd_t;
+
+typedef struct {
+    fmt_i iface;
+    const imap_resp_t *resp;
+} _fmt_iresp_t;
+
+derr_type_t _fmt_icmd(const fmt_i *iface, writer_i *out);
+derr_type_t _fmt_iresp(const fmt_i *iface, writer_i *out);
 
 // FDICMD assumes all extensions are allowed
 // prints just the first 80 characters
-derr_type_t fmthook_imap_cmd(dstr_t* out, const void* arg);
-static inline fmt_t FICMD(const imap_cmd_t *arg){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
-                                     .hook = fmthook_imap_cmd} } };
-}
+#define FICMD(cmd) (&(_fmt_icmd_t){ {_fmt_icmd}, cmd }.iface)
 
 // FDIRESP assumes all extensions are allowed
 // prints just the first 80 characters
-derr_type_t fmthook_imap_resp(dstr_t* out, const void* arg);
-static inline fmt_t FIRESP(const imap_resp_t *arg){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
-                                     .hook = fmthook_imap_resp} } };
-}
+#define FIRESP(resp) (&(_fmt_iresp_t){ {_fmt_iresp}, resp }.iface)

@@ -1255,7 +1255,7 @@ static derr_t tagged_status_type(
     link_t *link = up->cbs.next;
     if(link == NULL){
         TRACE(&e, "got tag %x with no commands in flight\n",
-                FD(&st->tag->dstr));
+                FD(st->tag->dstr));
         ORIG(&e, E_RESPONSE, "bad status type response");
     }
 
@@ -1263,7 +1263,7 @@ static derr_t tagged_status_type(
     imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
     if(!dstr_eq(st->tag->dstr, cb->tag->dstr)){
         TRACE(&e, "got tag %x but expected %x\n",
-                FD(&st->tag->dstr), FD(&cb->tag->dstr));
+                FD(st->tag->dstr), FD(cb->tag->dstr));
         ORIG(&e, E_RESPONSE, "bad status type response");
     }
 

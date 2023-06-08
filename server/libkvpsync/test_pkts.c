@@ -13,7 +13,7 @@ static derr_t test_ack(void){
     kvp_ack_t ack = { .sync_id = 1094861636, .update_id = 1162233672 };
     PROP(&e, kvpsync_ack_write(&ack, &buf) );
 
-    EXPECT_D3(&e, "buf", &buf, &DSTR_LIT("ABCDEFGH"));
+    EXPECT_D3(&e, "buf", buf, DSTR_LIT("ABCDEFGH"));
 
     kvp_ack_t out;
     bool ok = kvpsync_ack_read(buf, &out);

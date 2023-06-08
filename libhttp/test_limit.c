@@ -61,7 +61,7 @@ static derr_t do_test(
     PROP_VAR_GO(&e, &E, done);
     if(!finished) ORIG_GO(&e, E_VALUE, "reader did not finish", done);
 
-    EXPECT_D3_GO(&e, "got", &got, &exp, done);
+    EXPECT_D3_GO(&e, "got", got, exp, done);
 
     // expect to detach IFF the limit can be fully read
     EXPECT_B_GO(&e, "detached", limit_r.detached, limit <= input.len, done);

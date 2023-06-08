@@ -13,7 +13,7 @@ static derr_t do_read_cb(dstr_t buf, dstr_t exp){
     derr_t e = E_OK;
     if(!dstr_eq(buf, exp)){
         ORIG(&e,
-            E_VALUE, "expected \"%x\" but got \"%x\"", FD(&exp), FD(&buf)
+            E_VALUE, "expected \"%x\" but got \"%x\"", FD(exp), FD(buf)
         );
     }
     return e;

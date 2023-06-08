@@ -164,31 +164,45 @@ fatal:
     qw_error(env.engine, "invalid string from scanner");
 }
 
-derr_type_t fmthook_qwval(dstr_t *out, const void *arg){
-    const qw_val_t *val = arg;
+DEF_CONTAINER_OF(_fmt_qwval_t, iface, fmt_i)
+
+static derr_type_t do_fmt_qwval(const qw_val_t *val, writer_i *out){
+    derr_type_t etype;
     qw_string_t *str;
     qw_list_t *list;
+    writer_t w = *out->w;
     switch(*val){
-        case QW_VAL_FALSE: return FMT_QUIET(out, "false");
-        case QW_VAL_TRUE: return FMT_QUIET(out, "true");
-        case QW_VAL_NULL: return FMT_QUIET(out, "null");
-        case QW_VAL_SKIP: return FMT_QUIET(out, "skip");
+        case QW_VAL_FALSE: return w.puts(out, "false", 5);
+        case QW_VAL_TRUE: return w.puts(out, "true", 4);
+        case QW_VAL_NULL: return w.puts(out, "null", 4);
+        case QW_VAL_SKIP: return w.puts(out, "skip", 4);
 
         case QW_VAL_STRING:
             str = CONTAINER_OF(val, qw_string_t, type);
-            return FMT_QUIET(out, "\"%x\"", FD_DBG(&str->dstr));
+            return FMT_UNLOCKED(out, "\"%x\"", FD_DBG(str->dstr));
 
         case QW_VAL_LIST:
             list = CONTAINER_OF(val, qw_list_t, type);
-            FMT_QUIET(out, "[");
+            etype = w.putc(out, '[');
+            if(etype) return etype;
             for(uintptr_t i = 0; i < list->len; i++){
-                if(i) dstr_append_char(out, ' ');
-                FMT_QUIET(out, "%x", FQ(list->vals[i]));
+                if(i){
+                    etype = w.putc(out, ' ');
+                    if(etype) return etype;
+                }
+                etype = do_fmt_qwval(list->vals[i], out);
+                if(etype) return etype;
             }
-            return FMT_QUIET(out, "]");
-        case QW_VAL_LAZY: return FMT_QUIET(out, "<LAZY>");
-        case QW_VAL_DICT: return FMT_QUIET(out, "<DICT>");
-        case QW_VAL_FUNC: return FMT_QUIET(out, "<FUNC>");
+            return w.putc(out, ']');
+        case QW_VAL_LAZY: return w.puts(out, "<LAZY>", 6);
+        case QW_VAL_DICT: return w.puts(out, "<DICT>", 6);
+        case QW_VAL_FUNC: return w.puts(out, "<FUNC>", 6);
     }
-    return FMT_QUIET(out, "(unrecognized value)");
+    DSTR_STATIC(unrecognized, "(unrecognized value)");
+    return w.puts(out, unrecognized.data, unrecognized.len);
+}
+
+derr_type_t _fmt_qwval(const fmt_i *iface, writer_i *out){
+    const qw_val_t *val = CONTAINER_OF(iface, _fmt_qwval_t, iface)->val;
+    return do_fmt_qwval(val, out);
 }

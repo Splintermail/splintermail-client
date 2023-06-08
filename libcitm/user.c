@@ -311,7 +311,7 @@ derr_t user_new(
     }
 
     hash_elem_t *old = hashmap_sets(out, &u->user, &u->elem);
-    if(old) LOG_FATAL("user_new found existing user %x\n", FD_DBG(&u->user));
+    if(old) LOG_FATAL("user_new found existing user %x\n", FD_DBG(u->user));
 
     return e;
 

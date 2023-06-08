@@ -17,7 +17,7 @@ static size_t cb_order = 0;
         (void)read; \
         DSTR_STATIC(exp, text); \
         EXPECT_U_GO(&E, #name ":order", cb_order++, order, fail); \
-        EXPECT_D_GO(&E, #name ":buf", &buf, &exp, fail); \
+        EXPECT_D_GO(&E, #name ":buf", buf, exp, fail); \
         /* when exp_ok is false fail if we are called at all */ \
         EXPECT_B_GO(&E, #name ":never_cb", exp_ok, true, fail); \
     fail: \

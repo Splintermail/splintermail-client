@@ -29,8 +29,8 @@ static derr_t expect_status(
             FI(exp_status),
             FS(doingwhat),
             FI(req->status),
-            FD_DBG(&req->reason),
-            FD(&body),
+            FD_DBG(req->reason),
+            FD(body),
         );
     }
 
@@ -91,7 +91,7 @@ static void get_directory_reader_cb(stream_reader_t *reader, derr_t e){
     DSTR_VAR(errbuf, 512);
     PROP_GO(&e, jspec_read_ex(jspec, gd->json.root, &ok, &errbuf), done);
     if(!ok){
-        ORIG_GO(&e, E_RESPONSE, "%x", done, FD(&errbuf));
+        ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
     }
 
 done:
@@ -322,7 +322,7 @@ static void post_new_account_reader_cb(stream_reader_t *reader, derr_t e){
     DSTR_VAR(errbuf, 512);
     PROP_GO(&e, jspec_read_ex(jspec, pn->json.root, &ok, &errbuf), done);
     if(!ok){
-        ORIG_GO(&e, E_RESPONSE, "%x", done, FD(&errbuf));
+        ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
     }
 
     if(!dstr_eq(status, DSTR_LIT("valid"))){
@@ -330,7 +330,7 @@ static void post_new_account_reader_cb(stream_reader_t *reader, derr_t e){
             E_RESPONSE,
             "new account .status != valid (status = %x)",
             done,
-            FD_DBG(&status)
+            FD_DBG(status)
         );
     }
 
@@ -389,10 +389,10 @@ static derr_t post_new_account_body(
                 "\"jwk\":%x,"
                 "\"url\":\"%x\""
             "}",
-            FD(k->protected_params),
-            FD_JSON(&nonce),
-            FD(&jwkbuf),
-            FD_JSON(&url),
+            FD(*k->protected_params),
+            FD_JSON(nonce),
+            FD(jwkbuf),
+            FD_JSON(url),
         )
     );
     DSTR_VAR(payload, 4096);
@@ -403,7 +403,7 @@ static derr_t post_new_account_body(
                     "\"mailto:%x\""
                 "],"
                 "\"termsOfServiceAgreed\":true",
-            FD_JSON(&contact_email),
+            FD_JSON(contact_email),
         )
     );
     if(eab_kid.len != 0){
@@ -417,8 +417,8 @@ static derr_t post_new_account_body(
                     "\"kid\":\"%x\","
                     "\"url\":\"%x\""
                 "}",
-                FD_JSON(&eab_kid),
-                FD_JSON(&url),
+                FD_JSON(eab_kid),
+                FD_JSON(url),
             )
         );
         PROP(&e, jws(inner, jwkbuf, SIGN_HS256(&eab_hmac_key), &payload) );

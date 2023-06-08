@@ -208,7 +208,7 @@ derr_t fake_stream_expect_read(
     manual_scheduler_run(m);
     EXPECT_B(&e, "want write", fake_stream_want_write(fs), true);
     dstr_t buf = fake_stream_pop_write(fs);
-    EXPECT_D3(&e, "written", &buf, &exp);
+    EXPECT_D3(&e, "written", buf, exp);
     fake_stream_write_done(fs);
     manual_scheduler_run(m);
 
@@ -230,7 +230,7 @@ derr_t fake_stream_expect_read_many(
             ORIG(&e,
                 E_VALUE,
                 "\nexpected: \"%x\"\nbut got:  \"%x\"\n(nothing left to read)",
-                FD_DBG(&exp), FD_DBG(&got)
+                FD_DBG(exp), FD_DBG(got)
             );
         }
         dstr_t buf = fake_stream_pop_write(fs);
@@ -238,7 +238,7 @@ derr_t fake_stream_expect_read_many(
             ORIG(&e,
                 E_VALUE,
                 "\nexpected: \"%x\"\nbut got:  \"%x%x\"",
-                FD_DBG(&exp), FD_DBG(&got), FD_DBG(&buf)
+                FD_DBG(exp), FD_DBG(got), FD_DBG(buf)
             );
         }
         remaining = dstr_sub2(remaining, buf.len, SIZE_MAX);

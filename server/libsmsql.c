@@ -11,11 +11,11 @@
 
 // helper functions
 
-static derr_type_t to_fsid_quiet(const dstr_t *uuid, dstr_t *out){
+static derr_type_t to_fsid_quiet(const dstr_t uuid, dstr_t *out){
     // use a local buffer so bin2b64 doesn't write an extra byte
     DSTR_VAR(buf, SMSQL_FSID_SIZE);
 
-    derr_type_t type = bin2b64_quiet(uuid, &buf, 0, true, NULL);
+    derr_type_t type = bin2b64_quiet(&uuid, &buf, 0, true, NULL);
     if(type) return type;
     // replace '/' with '-' to be filesystem safe
     for(size_t i = 0; i < buf.len; i++){
@@ -34,12 +34,12 @@ static derr_type_t to_fsid_quiet(const dstr_t *uuid, dstr_t *out){
     return E_NONE;
 }
 
-static derr_type_t to_uuid_quiet(const dstr_t *fsid, dstr_t *out){
+static derr_type_t to_uuid_quiet(const dstr_t fsid, dstr_t *out){
     // make a copy so we don't violate the (implicit) const input constraint
     DSTR_VAR(b64, SMSQL_FSID_SIZE);
 
     // ignore the initial 'F'
-    dstr_t sub = dstr_sub2(*fsid, 1, fsid->len);
+    dstr_t sub = dstr_sub2(fsid, 1, fsid.len);
     derr_type_t type = dstr_append_quiet(&b64, &sub);
     if(type) return type;
 
@@ -57,26 +57,30 @@ static derr_type_t to_uuid_quiet(const dstr_t *fsid, dstr_t *out){
     return E_NONE;
 }
 
-derr_t to_fsid(const dstr_t *uuid, dstr_t *out){
+derr_t to_fsid(const dstr_t uuid, dstr_t *out){
     derr_t e = E_OK;
     derr_type_t type = to_fsid_quiet(uuid, out);
     if(type) ORIG(&e, type, "output error");
     return e;
 }
 
-derr_t to_uuid(const dstr_t *uuid, dstr_t *out){
+derr_t to_uuid(const dstr_t uuid, dstr_t *out){
     derr_t e = E_OK;
     derr_type_t type = to_uuid_quiet(uuid, out);
     if(type) ORIG(&e, type, "output error");
     return e;
 }
 
-derr_type_t fmthook_fsid(dstr_t* out, const void* arg){
-    // cast the input
-    const dstr_t* uuid = (const dstr_t*)arg;
-    derr_type_t type = to_fsid_quiet(uuid, out);
-    if(type) return type;
-    return E_NONE;
+DEF_CONTAINER_OF(_fmt_fsid_t, iface, fmt_i)
+
+derr_type_t _fmt_fsid(const fmt_i *iface, writer_i *out){
+    dstr_t uuid = CONTAINER_OF(iface, _fmt_fsid_t, iface)->uuid;
+
+    DSTR_VAR(buf, SMSQL_FSID_SIZE);
+    derr_type_t etype = to_fsid_quiet(uuid, &buf);
+    if(etype) return etype;
+
+    return out->w->puts(out, buf.data, buf.len);
 }
 
 // writes SMSQL_PASSWORD_SALT_SIZE random ASCII bytes
@@ -91,14 +95,14 @@ derr_t random_password_salt(dstr_t *salt){
 // sha512 password hash
 // silently truncates passwords > 128 bytes before hashing
 derr_t hash_password(
-    const dstr_t *pass, unsigned int rounds, const dstr_t *salt, dstr_t *hash
+    const dstr_t pass, unsigned int rounds, const dstr_t salt, dstr_t *hash
 ){
     derr_t e = E_OK;
 
     // we need a null-terminated password
     DSTR_VAR(nt_pass, 128);
     // a too-long password can't be valid, so we'll just silently truncate it
-    dstr_t sub = dstr_sub2(*pass, 0, nt_pass.size - 1);
+    dstr_t sub = dstr_sub2(pass, 0, nt_pass.size - 1);
     PROP(&e, dstr_append(&nt_pass, &sub) );
     PROP(&e, dstr_null_terminate(&nt_pass) );
 
@@ -119,7 +123,7 @@ derr_t hash_password(
     errno = 0;
     char *result = crypt_r(nt_pass.data, settings.data, mem);
     if(errno != 0){
-        TRACE(&e, "crypt failed: %x\n", FE(&errno));
+        TRACE(&e, "crypt failed: %x\n", FE(errno));
         ORIG_GO(&e, errno == ENOMEM ? E_NOMEM : E_OS, "crypt failed", cu);
     }
 
@@ -134,20 +138,20 @@ cu:
 // raises E_PARAM if the hash is malformed or otherwise not parsable
 // any outputs are allowed to be NULL without issue
 static derr_t _parse_hash(
-    const dstr_t *hash, unsigned int *rounds, dstr_t *salt, dstr_t *hash_result
+    const dstr_t hash, unsigned int *rounds, dstr_t *salt, dstr_t *hash_result
 ){
     derr_t e = E_OK;
 
     // example sha512 hash: $6$rounds=NN$saltchars$passhashchars...
     //                         ^^^^^^^^^^optional
 
-    if(!dstr_beginswith(hash, &DSTR_LIT("$6$"))){
+    if(!dstr_beginswith2(hash, DSTR_LIT("$6$"))){
         ORIG(&e, E_PARAM, "hash is not a SHA512 hash, should start with $6$");
     }
 
     // split fields
     LIST_VAR(dstr_t, fields, 5);
-    derr_t e2 = dstr_split(hash, &DSTR_LIT("$"), &fields);
+    derr_t e2 = dstr_split(&hash, &DSTR_LIT("$"), &fields);
     CATCH(e2, E_FIXEDSIZE){
         // too many fields, invalid hash
         RETHROW(&e, &e2, E_PARAM);
@@ -192,7 +196,7 @@ static derr_t _parse_hash(
 
 // just the hash validation
 derr_t validate_password_hash(
-    const dstr_t *pass, const dstr_t *true_hash, bool *ok
+    const dstr_t pass, const dstr_t true_hash, bool *ok
 ){
     derr_t e = E_OK;
     *ok = false;
@@ -211,7 +215,7 @@ derr_t validate_password_hash(
        password is not even valid" is not information useful to a timing
        attack, especially when the validator is open-source */
     DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
-    PROP(&e, hash_password(pass, true_rounds, &true_salt, &hash) );
+    PROP(&e, hash_password(pass, true_rounds, true_salt, &hash) );
 
     DSTR_VAR(hash_result, SMSQL_PASSWORD_HASH_SIZE);
     for(size_t i = 0; i < SMSQL_PASSWORD_HASH_SIZE; i++){
@@ -219,7 +223,7 @@ derr_t validate_password_hash(
     }
 
     // this should obviously be a valid hash since we just generated it
-    NOFAIL(&e, E_ANY, _parse_hash(&hash, NULL, NULL, &hash_result));
+    NOFAIL(&e, E_ANY, _parse_hash(hash, NULL, NULL, &hash_result));
 
     *ok = dstr_eq_consttime(&hash_result, &true_hash_result);
 
@@ -228,9 +232,9 @@ derr_t validate_password_hash(
 
 // validation functions
 
-bool valid_username_chars(const dstr_t *username){
-    for(size_t i = 0; i < username->len; i++){
-        char c = username->data[i];
+bool valid_username_chars(const dstr_t username){
+    for(size_t i = 0; i < username.len; i++){
+        char c = username.data[i];
         if(c >= 'a' && c <= 'z') continue;
         if(c >= '0' && c <= '9') continue;
         if(c == '.' || c == '-' || c == '_') continue;
@@ -239,34 +243,34 @@ bool valid_username_chars(const dstr_t *username){
     return true;
 }
 
-derr_t valid_splintermail_email(const dstr_t *email){
+derr_t valid_splintermail_email(const dstr_t email){
     derr_t e = E_OK;
 
     // length
-    if(email->len > SMSQL_EMAIL_SIZE)
+    if(email.len > SMSQL_EMAIL_SIZE)
         ORIG(&e, E_USERMSG, "email too long");
 
     // ends in @splintermail.com
     DSTR_STATIC(suffix, "@splintermail.com");
-    if(!dstr_endswith(email, &suffix))
+    if(!dstr_endswith2(email, suffix))
         ORIG(&e, E_USERMSG, "email must end in @splintermail.com");
 
-    const dstr_t username = dstr_sub2(*email, 0, email->len - suffix.len);
+    const dstr_t username = dstr_sub2(email, 0, email.len - suffix.len);
 
     // non-empty username
     if(username.len == 0)
         ORIG(&e, E_USERMSG, "empty username");
 
     // valid username
-    if(!valid_username_chars(&username))
+    if(!valid_username_chars(username))
         ORIG(&e, E_USERMSG, "invalid characters in email");
 
     return e;
 }
 
-bool valid_password_chars(const dstr_t *pass){
-    for(size_t i = 0; i < pass->len; i++){
-        char c = pass->data[i];
+bool valid_password_chars(const dstr_t pass){
+    for(size_t i = 0; i < pass.len; i++){
+        char c = pass.data[i];
         if(c >= 'a' && c <= 'z') continue;
         if(c >= 'A' && c <= 'Z') continue;
         if(c >= '0' && c <= '9') continue;
@@ -285,15 +289,15 @@ bool valid_password_chars(const dstr_t *pass){
     return true;
 }
 
-derr_t valid_splintermail_password(const dstr_t *pass){
+derr_t valid_splintermail_password(const dstr_t pass){
     derr_t e = E_OK;
 
-    if(pass->len > SMSQL_PASSWORD_SIZE)
+    if(pass.len > SMSQL_PASSWORD_SIZE)
         ORIG(
             &e, E_USERMSG, "password must not exceed 72 characters in length"
         );
 
-    if(pass->len < 16)
+    if(pass.len < 16)
         ORIG(
             &e, E_USERMSG, "password must be at least 16 characters in length"
         );
@@ -301,7 +305,7 @@ derr_t valid_splintermail_password(const dstr_t *pass){
     if(!valid_password_chars(pass))
         ORIG(&e, E_USERMSG, "invalid characters in password");
 
-    if(pass->data[0] == ' ' || pass->data[pass->len-1] == ' '){
+    if(pass.data[0] == ' ' || pass.data[pass.len-1] == ' '){
         ORIG(&e, E_USERMSG, "no leading or trailing spaces in password");
     }
 
@@ -311,7 +315,7 @@ derr_t valid_splintermail_password(const dstr_t *pass){
 // predefined queries
 
 derr_t get_uuid_for_email(
-    MYSQL *sql, const dstr_t *email, dstr_t *uuid, bool *ok
+    MYSQL *sql, const dstr_t email, dstr_t *uuid, bool *ok
 ){
     derr_t e = E_OK;
     *ok = false;
@@ -323,9 +327,9 @@ derr_t get_uuid_for_email(
 
     PROP(&e,
         sql_onerow_query(
-            sql, &query, ok,
+            sql, query, ok,
             // params
-            string_bind_in(email),
+            string_bind_in(&email),
             // results
             string_bind_out(uuid)
         )
@@ -335,7 +339,7 @@ derr_t get_uuid_for_email(
 }
 
 derr_t get_email_for_uuid(
-    MYSQL *sql, const dstr_t *uuid, dstr_t *email, bool *ok
+    MYSQL *sql, const dstr_t uuid, dstr_t *email, bool *ok
 ){
     derr_t e = E_OK;
     if(email->size < SMSQL_EMAIL_SIZE){
@@ -346,9 +350,9 @@ derr_t get_email_for_uuid(
 
     PROP(&e,
         sql_onerow_query(
-            sql, &query, ok,
+            sql, query, ok,
             // params
-            string_bind_in(uuid),
+            string_bind_in(&uuid),
             // results
             string_bind_out(email)
         )
@@ -359,7 +363,7 @@ derr_t get_email_for_uuid(
 
 // aliases
 
-derr_t smsql_alias_new(smsql_alias_t **out, const dstr_t *email, bool paid){
+derr_t smsql_alias_new(smsql_alias_t **out, const dstr_t email, bool paid){
     derr_t e = E_OK;
     *out = NULL;
 
@@ -369,7 +373,7 @@ derr_t smsql_alias_new(smsql_alias_t **out, const dstr_t *email, bool paid){
 
     link_init(&alias->link);
 
-    PROP_GO(&e, dstr_copy(email, &alias->alias), fail);
+    PROP_GO(&e, dstr_copy(&email, &alias->alias), fail);
 
     *out = alias;
     return e;
@@ -386,7 +390,7 @@ void smsql_alias_free(smsql_alias_t **old){
     *old = NULL;
 }
 
-derr_t list_aliases(MYSQL *sql, const dstr_t *uuid, link_t *out){
+derr_t list_aliases(MYSQL *sql, const dstr_t uuid, link_t *out){
     derr_t e = E_OK;
 
     MYSQL_STMT *stmt;
@@ -397,9 +401,9 @@ derr_t list_aliases(MYSQL *sql, const dstr_t *uuid, link_t *out){
     DSTR_STATIC(q1, "SELECT alias, paid from aliases where user_uuid=?");
     PROP(&e,
         sql_multirow_stmt(
-            sql, &stmt, &q1,
+            sql, &stmt, q1,
             // parameters
-            blob_bind_in(uuid),
+            blob_bind_in(&uuid),
             // results
             string_bind_out(&alias_res),
             bool_bind_out(&paid_res)
@@ -416,7 +420,7 @@ derr_t list_aliases(MYSQL *sql, const dstr_t *uuid, link_t *out){
         if(!ok) break;
 
         smsql_alias_t *alias;
-        PROP_GO(&e, smsql_alias_new(&alias, &alias_res, paid_res), loop_fail);
+        PROP_GO(&e, smsql_alias_new(&alias, alias_res, paid_res), loop_fail);
         link_list_append(&list, &alias->link);
 
         continue;
@@ -443,7 +447,7 @@ fail_list:
 }
 
 static derr_t _add_random_alias_txn(
-    MYSQL *sql, const dstr_t *uuid, dstr_t *alias
+    MYSQL *sql, const dstr_t uuid, dstr_t *alias
 ){
     derr_t e = E_OK;
 
@@ -457,7 +461,7 @@ static derr_t _add_random_alias_txn(
     );
     PROP(&e,
         sql_onerow_query(
-            sql, &q1, NULL, blob_bind_in(uuid), uint_bind_out(&count)
+            sql, q1, NULL, blob_bind_in(&uuid), uint_bind_out(&count)
         )
     );
 
@@ -471,10 +475,10 @@ static derr_t _add_random_alias_txn(
         PROP(&e, petname_email(&temp) );
 
         // double-check that the email is valid
-        NOFAIL(&e, E_USERMSG, valid_splintermail_email(&temp) );
+        NOFAIL(&e, E_USERMSG, valid_splintermail_email(temp) );
 
         DSTR_STATIC(q2, "INSERT INTO emails (email) VALUES (?)");
-        derr_t e2 = sql_norow_query(sql, &q2, NULL, string_bind_in(&temp));
+        derr_t e2 = sql_norow_query(sql, q2, NULL, string_bind_in(&temp));
         CATCH(e2, E_SQL_DUP){
             // chose a duplicate alias, try again
             DROP_VAR(&e2);
@@ -487,11 +491,11 @@ static derr_t _add_random_alias_txn(
         bool paid = false;
         PROP(&e,
             sql_norow_query(sql,
-                &q3,
+                q3,
                 NULL,
                 string_bind_in(&temp),
                 bool_bind_in(&paid),
-                blob_bind_in(uuid),
+                blob_bind_in(&uuid),
             )
         );
 
@@ -503,7 +507,7 @@ static derr_t _add_random_alias_txn(
         );
         PROP(&e,
             sql_norow_query(
-                sql, &q4, NULL, uint_bind_in(&count), blob_bind_in(uuid)
+                sql, q4, NULL, uint_bind_in(&count), blob_bind_in(&uuid)
             )
         );
 
@@ -516,7 +520,7 @@ static derr_t _add_random_alias_txn(
 }
 
 // throws E_USERMSG if max aliases reached
-derr_t add_random_alias(MYSQL *sql, const dstr_t *uuid, dstr_t *alias){
+derr_t add_random_alias(MYSQL *sql, const dstr_t uuid, dstr_t *alias){
     derr_t e = E_OK;
 
     PROP(&e, sql_txn_start(sql) );
@@ -535,23 +539,23 @@ hard_fail:
 
 
 static derr_t _add_primary_alias_txn(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias
+    MYSQL *sql, const dstr_t uuid, const dstr_t alias
 ){
     derr_t e = E_OK;
 
     DSTR_STATIC(q1, "INSERT INTO emails (email) VALUES (?)");
-    PROP(&e, sql_norow_query(sql, &q1, NULL, string_bind_in(alias)) );
+    PROP(&e, sql_norow_query(sql, q1, NULL, string_bind_in(&alias)) );
 
     DSTR_STATIC(q2,
         "INSERT INTO aliases (alias, paid, user_uuid) VALUES (?, ?, ?)"
     );
     bool paid = true;
     derr_t e2 = sql_norow_query(sql,
-        &q2,
+        q2,
         NULL,
-        string_bind_in(alias),
+        string_bind_in(&alias),
         bool_bind_in(&paid),
-        blob_bind_in(uuid),
+        blob_bind_in(&uuid),
     );
     CATCH(e2, E_SQL_DUP){
         DROP_VAR(&e2);
@@ -562,7 +566,7 @@ static derr_t _add_primary_alias_txn(
 }
 
 // throws E_USERMSG if alias is unavailable
-derr_t add_primary_alias(MYSQL *sql, const dstr_t *uuid, const dstr_t *alias){
+derr_t add_primary_alias(MYSQL *sql, const dstr_t uuid, const dstr_t alias){
     derr_t e = E_OK;
 
     PROP(&e, valid_splintermail_email(alias) );
@@ -582,7 +586,7 @@ hard_fail:
 }
 
 static derr_t _delete_alias_txn(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias
+    MYSQL *sql, const dstr_t uuid, const dstr_t alias
 ){
     derr_t e = E_OK;
 
@@ -592,10 +596,10 @@ static derr_t _delete_alias_txn(
     bool paid;
     PROP(&e,
         sql_onerow_query(
-            sql, &q1, &ok,
+            sql, q1, &ok,
             // params
-            string_bind_in(alias),
-            blob_bind_in(uuid),
+            string_bind_in(&alias),
+            blob_bind_in(&uuid),
             // results
             bool_bind_out(&paid))
     );
@@ -605,19 +609,19 @@ static derr_t _delete_alias_txn(
     }
 
     DSTR_STATIC(q2, "DELETE FROM aliases WHERE alias=?");
-    PROP(&e, sql_norow_query(sql, &q2, NULL, string_bind_in(alias)) );
+    PROP(&e, sql_norow_query(sql, q2, NULL, string_bind_in(&alias)) );
 
     // delete from emails table last (for foriegn key constraints)
     if(paid){
         // only paid aliases get deleted from the emails table
         DSTR_STATIC(q3, "DELETE FROM emails WHERE email=?");
-        PROP(&e, sql_norow_query(sql, &q3, NULL, string_bind_in(alias)) );
+        PROP(&e, sql_norow_query(sql, q3, NULL, string_bind_in(&alias)) );
     }
 
     return e;
 }
 
-derr_t delete_alias(MYSQL *sql, const dstr_t *uuid, const dstr_t *alias){
+derr_t delete_alias(MYSQL *sql, const dstr_t uuid, const dstr_t alias){
     derr_t e = E_OK;
 
     PROP(&e, sql_txn_start(sql) );
@@ -634,7 +638,7 @@ hard_fail:
     return e;
 }
 
-static derr_t _delete_all_aliases_txn(MYSQL *sql, const dstr_t *uuid){
+static derr_t _delete_all_aliases_txn(MYSQL *sql, const dstr_t uuid){
     derr_t e = E_OK;
 
     link_t *link;
@@ -651,14 +655,14 @@ static derr_t _delete_all_aliases_txn(MYSQL *sql, const dstr_t *uuid){
         // delete all aliases, paid or free
         DSTR_STATIC(q1, "DELETE FROM aliases WHERE alias=?");
         PROP_GO(&e,
-            sql_norow_query(sql, &q1, NULL, string_bind_in(&alias->alias)),
+            sql_norow_query(sql, q1, NULL, string_bind_in(&alias->alias)),
         cu);
 
         if(alias->paid){
             // paid aliases are also deleted from the emails table
             DSTR_STATIC(q2, "DELETE FROM emails WHERE email=?");
             PROP_GO(&e,
-                sql_norow_query(sql, &q2, NULL, string_bind_in(&alias->alias)),
+                sql_norow_query(sql, q2, NULL, string_bind_in(&alias->alias)),
             cu);
         }
 
@@ -675,7 +679,7 @@ cu:
     return e;
 }
 
-derr_t delete_all_aliases(MYSQL *sql, const dstr_t *uuid){
+derr_t delete_all_aliases(MYSQL *sql, const dstr_t uuid){
     derr_t e = E_OK;
 
     PROP(&e, sql_txn_start(sql) );
@@ -694,7 +698,7 @@ hard_fail:
 
 // devices
 
-derr_t smsql_dstr_new(smsql_dstr_t **out, const dstr_t *val){
+derr_t smsql_dstr_new(smsql_dstr_t **out, const dstr_t val){
     derr_t e = E_OK;
     *out = NULL;
 
@@ -703,7 +707,7 @@ derr_t smsql_dstr_new(smsql_dstr_t **out, const dstr_t *val){
 
     link_init(&dstr->link);
 
-    PROP_GO(&e, dstr_copy(val, &dstr->dstr), fail);
+    PROP_GO(&e, dstr_copy(&val, &dstr->dstr), fail);
 
     *out = dstr;
     return e;
@@ -740,7 +744,7 @@ void smsql_dstr_free(smsql_dstr_t **old){
     *old = NULL;
 }
 
-derr_t list_device_fprs(MYSQL *sql, const dstr_t *uuid, link_t *out){
+derr_t list_device_fprs(MYSQL *sql, const dstr_t uuid, link_t *out){
     derr_t e = E_OK;
 
     MYSQL_STMT *stmt;
@@ -754,9 +758,9 @@ derr_t list_device_fprs(MYSQL *sql, const dstr_t *uuid, link_t *out){
     );
     PROP(&e,
         sql_multirow_stmt(
-            sql, &stmt, &q1,
+            sql, &stmt, q1,
             // parameters
-            blob_bind_in(uuid),
+            blob_bind_in(&uuid),
             // results
             string_bind_out(&fpr_res)
         )
@@ -772,9 +776,7 @@ derr_t list_device_fprs(MYSQL *sql, const dstr_t *uuid, link_t *out){
         if(!ok) break;
 
         smsql_dstr_t *dstr;
-        PROP_GO(&e,
-            smsql_dstr_new(&dstr, &fpr_res),
-        loop_fail);
+        PROP_GO(&e, smsql_dstr_new(&dstr, fpr_res), loop_fail);
 
         link_list_append(&list, &dstr->link);
 
@@ -801,7 +803,7 @@ fail_list:
     return e;
 }
 
-derr_t list_device_keys(MYSQL *sql, const dstr_t *uuid, link_t *out){
+derr_t list_device_keys(MYSQL *sql, const dstr_t uuid, link_t *out){
     derr_t e = E_OK;
 
     MYSQL_STMT *stmt;
@@ -815,9 +817,9 @@ derr_t list_device_keys(MYSQL *sql, const dstr_t *uuid, link_t *out){
     );
     PROP(&e,
         sql_multirow_stmt(
-            sql, &stmt, &q1,
+            sql, &stmt, q1,
             // parameters
-            blob_bind_in(uuid),
+            blob_bind_in(&uuid),
             // results
             string_bind_out(&public_key_res)
         )
@@ -833,9 +835,7 @@ derr_t list_device_keys(MYSQL *sql, const dstr_t *uuid, link_t *out){
         if(!ok) break;
 
         smsql_dstr_t *dstr;
-        PROP_GO(&e,
-            smsql_dstr_new(&dstr, &public_key_res),
-        loop_fail);
+        PROP_GO(&e, smsql_dstr_new(&dstr, public_key_res), loop_fail);
 
         link_list_append(&list, &dstr->link);
 
@@ -863,7 +863,7 @@ fail_list:
 }
 
 derr_t get_device(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr, dstr_t *key, bool *ok
+    MYSQL *sql, const dstr_t uuid, const dstr_t fpr, dstr_t *key, bool *ok
 ){
     derr_t e = E_OK;
     *ok = false;
@@ -874,10 +874,10 @@ derr_t get_device(
     );
     PROP(&e,
         sql_onerow_query(
-            sql, &q1, ok,
+            sql, q1, ok,
             // parameters
-            blob_bind_in(uuid),
-            string_bind_in(fpr),
+            blob_bind_in(&uuid),
+            string_bind_in(&fpr),
             // results
             string_bind_out(key)
         )
@@ -889,9 +889,9 @@ derr_t get_device(
 
 static derr_t _add_device_txn(
     MYSQL *sql,
-    const dstr_t *uuid,
-    const dstr_t *pubkey,
-    const dstr_t *fpr_hex
+    const dstr_t uuid,
+    const dstr_t pubkey,
+    const dstr_t fpr_hex
 ){
     derr_t e = E_OK;
 
@@ -902,7 +902,7 @@ static derr_t _add_device_txn(
     );
     PROP(&e,
         sql_onerow_query(
-            sql, &q1, NULL, blob_bind_in(uuid), uint64_bind_out(&count)
+            sql, q1, NULL, blob_bind_in(&uuid), uint64_bind_out(&count)
         )
     );
 
@@ -916,10 +916,10 @@ static derr_t _add_device_txn(
         "VALUES (?, ?, ?)"
     );
     derr_t e2 = sql_norow_query(
-        sql, &q2, NULL,
-        blob_bind_in(uuid),
-        string_bind_in(pubkey),
-        string_bind_in(fpr_hex)
+        sql, q2, NULL,
+        blob_bind_in(&uuid),
+        string_bind_in(&pubkey),
+        string_bind_in(&fpr_hex)
     );
     CATCH(e2, E_SQL_DUP){
         DROP_VAR(&e2);
@@ -932,13 +932,13 @@ static derr_t _add_device_txn(
 // validate, get fingerprint, and normalize a pem-encoded public key
 // raises E_USERMSG on failure
 static derr_t _validate_for_add_device(
-    const dstr_t *pubkey, dstr_t *fpr_hex, dstr_t *norm
+    const dstr_t pubkey, dstr_t *fpr_hex, dstr_t *norm
 ){
     derr_t e = E_OK;
 
     // validate pkey
     EVP_PKEY *pkey;
-    derr_t e2 = read_pem_encoded_pubkey(*pubkey, &pkey);
+    derr_t e2 = read_pem_encoded_pubkey(pubkey, &pkey);
     CATCH(e2, E_PARAM){
         DROP_VAR(&e2);
         ORIG(&e, E_USERMSG, "invalid public key");
@@ -962,7 +962,7 @@ cu:
 // take a PEM-encoded public key, validate it, and add it to an account
 // raises E_USERMSG on failure
 derr_t add_device(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *pubkey, dstr_t *fpr
+    MYSQL *sql, const dstr_t uuid, const dstr_t pubkey, dstr_t *fpr
 ){
     derr_t e = E_OK;
 
@@ -972,9 +972,7 @@ derr_t add_device(
 
     PROP(&e, sql_txn_start(sql) );
 
-    PROP_GO(&e,
-        _add_device_txn(sql, uuid, &norm, &fpr_hex),
-    hard_fail);
+    PROP_GO(&e, _add_device_txn(sql, uuid, norm, fpr_hex), hard_fail);
 
     PROP_GO(&e, dstr_append(fpr, &fpr_hex), hard_fail);
 
@@ -988,14 +986,14 @@ hard_fail:
     return e;
 }
 
-derr_t delete_device(MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr_hex){
+derr_t delete_device(MYSQL *sql, const dstr_t uuid, const dstr_t fpr_hex){
     derr_t e = E_OK;
 
     size_t affected;
     DSTR_STATIC(q1, "DELETE FROM devices WHERE user_uuid=? AND fingerprint=?");
     PROP(&e,
         sql_norow_query(
-            sql, &q1, &affected, blob_bind_in(uuid), string_bind_in(fpr_hex)
+            sql, q1, &affected, blob_bind_in(&uuid), string_bind_in(&fpr_hex)
         )
     );
 
@@ -1030,7 +1028,7 @@ void smsql_uint_free(smsql_uint_t **old){
     *old = NULL;
 }
 
-derr_t list_tokens(MYSQL *sql, const dstr_t *uuid, link_t *out){
+derr_t list_tokens(MYSQL *sql, const dstr_t uuid, link_t *out){
     derr_t e = E_OK;
 
     MYSQL_STMT *stmt;
@@ -1042,9 +1040,9 @@ derr_t list_tokens(MYSQL *sql, const dstr_t *uuid, link_t *out){
     );
     PROP(&e,
         sql_multirow_stmt(
-            sql, &stmt, &q1,
+            sql, &stmt, q1,
             // parameters
-            blob_bind_in(uuid),
+            blob_bind_in(&uuid),
             // results
             uint_bind_out(&token)
         )
@@ -1101,7 +1099,7 @@ static derr_t new_api_secret(dstr_t *secret){
 }
 
 derr_t add_token(
-    MYSQL *sql, const dstr_t *uuid, uint32_t *token, dstr_t *secret
+    MYSQL *sql, const dstr_t uuid, uint32_t *token, dstr_t *secret
 ){
     derr_t e = E_OK;
     *token = 0;
@@ -1119,8 +1117,8 @@ derr_t add_token(
             "INSERT INTO tokens (user_uuid, token, secret) VALUES (?, ?, ?)"
         );
         derr_t e2 = sql_norow_query(
-            sql, &q1, NULL,
-            blob_bind_in(uuid),
+            sql, q1, NULL,
+            blob_bind_in(&uuid),
             uint_bind_in(&token_temp),
             string_bind_in(&secret_temp)
         );
@@ -1139,14 +1137,14 @@ derr_t add_token(
 }
 
 
-derr_t delete_token(MYSQL *sql, const dstr_t *uuid, uint32_t token){
+derr_t delete_token(MYSQL *sql, const dstr_t uuid, uint32_t token){
     derr_t e = E_OK;
 
     size_t affected;
     DSTR_STATIC(q1, "DELETE FROM tokens WHERE user_uuid=? AND token=?");
     PROP(&e,
         sql_norow_query(
-            sql, &q1, &affected, blob_bind_in(uuid), uint_bind_in(&token)
+            sql, q1, &affected, blob_bind_in(&uuid), uint_bind_in(&token)
         )
     );
 
@@ -1161,14 +1159,14 @@ derr_t delete_token(MYSQL *sql, const dstr_t *uuid, uint32_t token){
 
 static derr_t _create_account_txn(
     MYSQL *sql,
-    const dstr_t *email,
-    const dstr_t *pass_hash,
-    const dstr_t *uuid
+    const dstr_t email,
+    const dstr_t pass_hash,
+    const dstr_t uuid
 ){
     derr_t e = E_OK;
 
     DSTR_STATIC(q1, "INSERT INTO emails (email) VALUES (?)");
-    derr_t e2 = sql_norow_query(sql, &q1, NULL, string_bind_in(email));
+    derr_t e2 = sql_norow_query(sql, q1, NULL, string_bind_in(&email));
     CATCH(e2, E_SQL_DUP){
         // duplicate email
         DROP_VAR(&e2);
@@ -1183,10 +1181,10 @@ static derr_t _create_account_txn(
     );
     PROP(&e,
         sql_norow_query(
-            sql, &q2, NULL,
-            string_bind_in(email),
-            string_bind_in(pass_hash),
-            blob_bind_in(uuid)
+            sql, q2, NULL,
+            string_bind_in(&email),
+            string_bind_in(&pass_hash),
+            blob_bind_in(&uuid)
         )
     );
 
@@ -1196,8 +1194,8 @@ static derr_t _create_account_txn(
 // throws E_USERMSG if email is taken
 derr_t create_account(
     MYSQL *sql,
-    const dstr_t *email,
-    const dstr_t *pass,
+    const dstr_t email,
+    const dstr_t pass,
     dstr_t *uuid
 ){
     derr_t e = E_OK;
@@ -1210,14 +1208,14 @@ derr_t create_account(
     PROP(&e, random_password_salt(&salt) );
 
     DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
-    PROP(&e, hash_password(pass, SMSQL_PASSWORD_SHA512_ROUNDS, &salt, &hash) );
+    PROP(&e, hash_password(pass, SMSQL_PASSWORD_SHA512_ROUNDS, salt, &hash) );
 
     // set the uuid bytes first, to ensure we don't fail after the txn
     PROP(&e, random_bytes(uuid, SMSQL_UUID_SIZE) );
 
     PROP(&e, sql_txn_start(sql) );
 
-    PROP_GO(&e, _create_account_txn(sql, email, &hash, uuid), hard_fail);
+    PROP_GO(&e, _create_account_txn(sql, email, hash, *uuid), hard_fail);
 
     PROP(&e, sql_txn_commit(sql) );
 
@@ -1229,7 +1227,7 @@ hard_fail:
     return e;
 }
 
-static derr_t _delete_account_txn(MYSQL *sql, const dstr_t *uuid){
+static derr_t _delete_account_txn(MYSQL *sql, const dstr_t uuid){
     derr_t e = E_OK;
 
     // start by getting this uuid's email, with FOR UPDATE
@@ -1241,9 +1239,9 @@ static derr_t _delete_account_txn(MYSQL *sql, const dstr_t *uuid){
         );
         PROP(&e,
             sql_onerow_query(
-                sql, &q, &ok,
+                sql, q, &ok,
                 // params
-                blob_bind_in(uuid),
+                blob_bind_in(&uuid),
                 // results
                 string_bind_out(&email)
             )
@@ -1259,22 +1257,22 @@ static derr_t _delete_account_txn(MYSQL *sql, const dstr_t *uuid){
 
     {
         DSTR_STATIC(q, "DELETE FROM tokens WHERE user_uuid = ?");
-        PROP(&e, sql_norow_query(sql, &q, NULL, blob_bind_in(uuid)) );
+        PROP(&e, sql_norow_query(sql, q, NULL, blob_bind_in(&uuid)) );
     }
 
     {
         DSTR_STATIC(q, "DELETE FROM devices WHERE user_uuid = ?");
-        PROP(&e, sql_norow_query(sql, &q, NULL, blob_bind_in(uuid)) );
+        PROP(&e, sql_norow_query(sql, q, NULL, blob_bind_in(&uuid)) );
     }
 
     {
         DSTR_STATIC(q, "DELETE FROM accounts WHERE user_uuid = ?");
-        PROP(&e, sql_norow_query(sql, &q, NULL, blob_bind_in(uuid)) );
+        PROP(&e, sql_norow_query(sql, q, NULL, blob_bind_in(&uuid)) );
     }
 
     {
         DSTR_STATIC(q, "DELETE FROM emails WHERE email = ?");
-        PROP(&e, sql_norow_query(sql, &q, NULL, string_bind_in(&email)) );
+        PROP(&e, sql_norow_query(sql, q, NULL, string_bind_in(&email)) );
     }
 
     return e;
@@ -1282,7 +1280,7 @@ static derr_t _delete_account_txn(MYSQL *sql, const dstr_t *uuid){
 
 // gateway is responsible for ensuring a password is provided
 // gateway is also responsible for calling trigger_deleter(), below
-derr_t delete_account(MYSQL *sql, const dstr_t *uuid){
+derr_t delete_account(MYSQL *sql, const dstr_t uuid){
     derr_t e = E_OK;
 
     PROP(&e, sql_txn_start(sql) );
@@ -1301,7 +1299,7 @@ hard_fail:
 
 derr_t account_info(
     MYSQL *sql,
-    const dstr_t *uuid,
+    const dstr_t uuid,
     size_t *num_devices,
     size_t *num_primary_aliases,
     size_t *num_random_aliases
@@ -1324,10 +1322,10 @@ derr_t account_info(
     );
     PROP(&e,
         sql_onerow_query(
-            sql, &q1, NULL,
+            sql, q1, NULL,
             // params
-            blob_bind_in(uuid),
-            blob_bind_in(uuid),
+            blob_bind_in(&uuid),
+            blob_bind_in(&uuid),
             // results
             uint64_bind_out(num_devices),
             uint64_bind_out(num_primary_aliases),
@@ -1340,7 +1338,7 @@ derr_t account_info(
 
 // validate a password for a user against the database
 derr_t validate_user_password(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *pass, bool *ok
+    MYSQL *sql, const dstr_t uuid, const dstr_t pass, bool *ok
 ){
     derr_t e = E_OK;
     *ok = false;
@@ -1350,22 +1348,22 @@ derr_t validate_user_password(
     DSTR_STATIC(q1, "SELECT password FROM accounts WHERE user_uuid=?");
     PROP(&e,
         sql_onerow_query(
-            sql, &q1, NULL,
+            sql, q1, NULL,
             // param
-            blob_bind_in(uuid),
+            blob_bind_in(&uuid),
             // result
             string_bind_out(&hash)
         )
     );
 
-    PROP(&e, validate_password_hash(pass, &hash, ok) );
+    PROP(&e, validate_password_hash(pass, hash, ok) );
 
     return e;
 }
 
 // returns uuid or throws E_USERMSG on failure
 derr_t validate_login(
-    MYSQL *sql, const dstr_t *email, const dstr_t *pass, dstr_t *uuid
+    MYSQL *sql, const dstr_t email, const dstr_t pass, dstr_t *uuid
 ){
     derr_t e = E_OK;
 
@@ -1375,7 +1373,7 @@ derr_t validate_login(
         ORIG(&e, E_USERMSG, "bad credentials");
     }
 
-    PROP(&e, validate_user_password(sql, uuid, pass, &ok) );
+    PROP(&e, validate_user_password(sql, *uuid, pass, &ok) );
     if(!ok){
         ORIG(&e, E_USERMSG, "bad credentials");
     }
@@ -1387,8 +1385,8 @@ static derr_t _validate_token_auth_txn(
     MYSQL *sql,
     uint32_t token,
     uint64_t nonce,
-    const dstr_t *payload,
-    const dstr_t *sig,
+    const dstr_t payload,
+    const dstr_t sig,
     dstr_t *uuid
 ){
     derr_t e = E_OK;
@@ -1405,7 +1403,7 @@ static derr_t _validate_token_auth_txn(
     bool ok;
     PROP(&e,
         sql_onerow_query(
-            sql, &q1, &ok,
+            sql, q1, &ok,
             // param
             uint_bind_in(&token),
             // result
@@ -1420,8 +1418,8 @@ static derr_t _validate_token_auth_txn(
 
     // check signature
     DSTR_VAR(true_sig, 256);
-    PROP(&e, hmac(&secret, payload, &true_sig) );
-    if(!dstr_eq_consttime(sig, &true_sig)){
+    PROP(&e, hmac(secret, payload, &true_sig) );
+    if(!dstr_eq_consttime(&sig, &true_sig)){
         ORIG(&e, E_USERMSG, "invalid signature");
     }
 
@@ -1432,7 +1430,7 @@ static derr_t _validate_token_auth_txn(
     DSTR_STATIC(q2, "UPDATE tokens SET nonce=? WHERE token=?");
     PROP(&e,
         sql_norow_query(
-            sql, &q2, NULL, uint64_bind_in(&nonce), uint_bind_in(&token)
+            sql, q2, NULL, uint64_bind_in(&nonce), uint_bind_in(&token)
         )
     );
 
@@ -1451,8 +1449,8 @@ derr_t validate_token_auth(
     MYSQL *sql,
     uint32_t token,
     uint64_t nonce,
-    const dstr_t *payload,
-    const dstr_t *sig,
+    const dstr_t payload,
+    const dstr_t sig,
     dstr_t *uuid
 ){
     derr_t e = E_OK;
@@ -1475,7 +1473,7 @@ hard_fail:
 
 // the gateway should enforce a valid old password is provided first
 // throws E_USERMSG on invalid password
-derr_t change_password(MYSQL *sql, const dstr_t *uuid, const dstr_t *pass){
+derr_t change_password(MYSQL *sql, const dstr_t uuid, const dstr_t pass){
     derr_t e = E_OK;
 
     PROP(&e, valid_splintermail_password(pass) );
@@ -1484,14 +1482,14 @@ derr_t change_password(MYSQL *sql, const dstr_t *uuid, const dstr_t *pass){
     PROP(&e, random_password_salt(&salt) );
 
     DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
-    PROP(&e, hash_password(pass, SMSQL_PASSWORD_SHA512_ROUNDS, &salt, &hash) );
+    PROP(&e, hash_password(pass, SMSQL_PASSWORD_SHA512_ROUNDS, salt, &hash) );
 
     DSTR_STATIC(q1, "UPDATE accounts SET password=? WHERE user_uuid=?");
     PROP(&e,
         sql_norow_query(
-            sql, &q1, NULL,
+            sql, q1, NULL,
             string_bind_out(&hash),
-            blob_bind_in(uuid)
+            blob_bind_in(&uuid)
         )
     );
 
@@ -1501,7 +1499,7 @@ derr_t change_password(MYSQL *sql, const dstr_t *uuid, const dstr_t *pass){
 // uses time() for the login and last_seen times
 // this implies that you should always create a fresh session_id on login
 derr_t add_session_auth(
-    MYSQL *sql, int server_id, const dstr_t *session_id, const dstr_t *uuid
+    MYSQL *sql, int server_id, const dstr_t session_id, const dstr_t uuid
 ){
     derr_t e = E_OK;
 
@@ -1516,10 +1514,10 @@ derr_t add_session_auth(
     );
     PROP(&e,
         sql_norow_query(
-            sql, &q1, NULL,
-            string_bind_in(session_id),
+            sql, q1, NULL,
+            string_bind_in(&session_id),
             int_bind_in(&server_id),
-            blob_bind_in(uuid),
+            blob_bind_in(&uuid),
             int64_bind_in(&now),
             int64_bind_in(&now)
         )
@@ -1535,8 +1533,8 @@ derr_t add_session_auth(
 static derr_t _do_logout_txn(
     MYSQL *sql,
     int server_id,
-    const dstr_t *session_id,
-    const dstr_t *uuid,
+    const dstr_t session_id,
+    const dstr_t uuid,
     time_t now,
     bool saw_our_server_id
 ){
@@ -1550,8 +1548,8 @@ static derr_t _do_logout_txn(
         );
         PROP(&e,
             sql_norow_query(
-                sql, &q2, NULL,
-                string_bind_in(session_id),
+                sql, q2, NULL,
+                string_bind_in(&session_id),
                 int_bind_in(&server_id)
             )
         );
@@ -1565,10 +1563,10 @@ static derr_t _do_logout_txn(
         );
         PROP(&e,
             sql_norow_query(
-                sql, &q2, NULL,
-                string_bind_in(session_id),
+                sql, q2, NULL,
+                string_bind_in(&session_id),
                 int_bind_in(&server_id),
-                blob_bind_in(uuid),
+                blob_bind_in(&uuid),
                 int64_bind_in(&now),
                 int64_bind_in(&now),
             )
@@ -1582,7 +1580,7 @@ static derr_t _do_logout_txn(
 static derr_t _session_logout_txn(
     MYSQL *sql,
     int server_id,
-    const dstr_t *session_id,
+    const dstr_t session_id,
     time_t now
 ){
     derr_t e = E_OK;
@@ -1605,9 +1603,9 @@ static derr_t _session_logout_txn(
 
     PROP(&e,
         sql_multirow_stmt(
-            sql, &stmt, &q1,
+            sql, &stmt, q1,
             // parameters
-            string_bind_in(session_id),
+            string_bind_in(&session_id),
             // results
             blob_bind_out(&uuid_res),
             bool_bind_out(&void_res),
@@ -1634,7 +1632,7 @@ static derr_t _session_logout_txn(
 
     PROP_GO(&e,
         _do_logout_txn(
-            sql, server_id, session_id, &uuid_res, now, saw_our_server_id
+            sql, server_id, session_id, uuid_res, now, saw_our_server_id
         ),
     cu);
 
@@ -1644,7 +1642,7 @@ cu:
     return e;
 }
 
-derr_t session_logout(MYSQL *sql, int server_id, const dstr_t *session_id){
+derr_t session_logout(MYSQL *sql, int server_id, const dstr_t session_id){
     derr_t e = E_OK;
 
     time_t now;
@@ -1669,7 +1667,7 @@ hard_fail:
 static derr_t _validate_session_auth_txn(
     MYSQL *sql,
     int server_id,
-    const dstr_t *session_id,
+    const dstr_t session_id,
     time_t now,
     dstr_t *uuid
 ){
@@ -1692,9 +1690,9 @@ static derr_t _validate_session_auth_txn(
 
     PROP(&e,
         sql_multirow_stmt(
-            sql, &stmt, &q1,
+            sql, &stmt, q1,
             // parameters
-            string_bind_in(session_id),
+            string_bind_in(&session_id),
             // results
             blob_bind_out(&uuid_res),
             int64_bind_out(&login_res),
@@ -1737,7 +1735,7 @@ static derr_t _validate_session_auth_txn(
     ){
         PROP_GO(&e,
             _do_logout_txn(
-                sql, server_id, session_id, &uuid_res, now, saw_our_server_id
+                sql, server_id, session_id, uuid_res, now, saw_our_server_id
             ),
         cu);
         ORIG_GO(&e, E_USERMSG, "not logged in", cu);
@@ -1752,9 +1750,9 @@ static derr_t _validate_session_auth_txn(
         );
         PROP_GO(&e,
             sql_norow_query(
-                sql, &q2, NULL,
+                sql, q2, NULL,
                 int64_bind_in(&now),
-                string_bind_in(session_id),
+                string_bind_in(&session_id),
                 int_bind_in(&server_id)
             ),
         cu);
@@ -1768,8 +1766,8 @@ static derr_t _validate_session_auth_txn(
         );
         PROP_GO(&e,
             sql_norow_query(
-                sql, &q2, NULL,
-                string_bind_in(session_id),
+                sql, q2, NULL,
+                string_bind_in(&session_id),
                 int_bind_in(&server_id),
                 blob_bind_in(&uuid_res),
                 int64_bind_in(&login_res),
@@ -1797,7 +1795,7 @@ cu:
    of the session */
 // throws E_USERMSG on bad sessions
 derr_t validate_session_auth(
-    MYSQL *sql, int server_id, const dstr_t *session_id, dstr_t *uuid
+    MYSQL *sql, int server_id, const dstr_t session_id, dstr_t *uuid
 ){
     derr_t e = E_OK;
 
@@ -1822,7 +1820,7 @@ hard_fail:
 
 // new_csrf returns a token you can embed in a webpage
 derr_t new_csrf(
-    MYSQL *sql, int server_id, const dstr_t *session_id, dstr_t *csrf
+    MYSQL *sql, int server_id, const dstr_t session_id, dstr_t *csrf
 ){
     derr_t e = E_OK;
 
@@ -1843,10 +1841,10 @@ derr_t new_csrf(
     );
     PROP(&e,
         sql_norow_query(
-            sql, &q1, NULL,
+            sql, q1, NULL,
             string_bind_in(&temp),
             int_bind_in(&server_id),
-            string_bind_in(session_id),
+            string_bind_in(&session_id),
             int64_bind_in(&now)
         )
     );
@@ -1858,7 +1856,7 @@ derr_t new_csrf(
 
 // validate_csrf() just checks if the token was valid for this session
 // throws E_USERMSG on bad tokens
-derr_t validate_csrf(MYSQL *sql, const dstr_t *session_id, const dstr_t *csrf){
+derr_t validate_csrf(MYSQL *sql, const dstr_t session_id, const dstr_t csrf){
     derr_t e = E_OK;
 
     time_t now;
@@ -1871,10 +1869,10 @@ derr_t validate_csrf(MYSQL *sql, const dstr_t *session_id, const dstr_t *csrf){
     time_t created;
     PROP(&e,
         sql_onerow_query(
-            sql, &q1, &ok,
+            sql, q1, &ok,
             // params
-            string_bind_in(csrf),
-            string_bind_in(session_id),
+            string_bind_in(&csrf),
+            string_bind_in(&session_id),
             int64_bind_out(&created)
         )
     );
@@ -1887,7 +1885,7 @@ derr_t validate_csrf(MYSQL *sql, const dstr_t *session_id, const dstr_t *csrf){
 
 // returns true if uuid/address matches accounts.email or aliases.alias
 derr_t user_owns_address(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *address, bool *ok
+    MYSQL *sql, const dstr_t uuid, const dstr_t address, bool *ok
 ){
     derr_t e = E_OK;
     *ok = false;
@@ -1901,12 +1899,12 @@ derr_t user_owns_address(
     int one;
     PROP(&e,
         sql_onerow_query(
-            sql, &q1, ok,
+            sql, q1, ok,
             // params
-            blob_bind_in(uuid),
-            string_bind_in(address),
-            blob_bind_in(uuid),
-            string_bind_in(address),
+            blob_bind_in(&uuid),
+            string_bind_in(&address),
+            blob_bind_in(&uuid),
+            string_bind_in(&address),
             // results
             int_bind_out(&one)
         )
@@ -1917,7 +1915,7 @@ derr_t user_owns_address(
 
 static derr_t _limit_check_txn(
     MYSQL *sql,
-    const dstr_t *uuid,
+    const dstr_t uuid,
     unsigned int recipients,
     bool *ok,
     bool *msg_sent,
@@ -1934,9 +1932,9 @@ static derr_t _limit_check_txn(
     );
     PROP(&e,
         sql_onerow_query(
-            sql, &q1, NULL,
+            sql, q1, NULL,
             // params
-            blob_bind_in(uuid),
+            blob_bind_in(&uuid),
             // results
             uint_bind_out(limit),
             uint_bind_out(&count),
@@ -1950,7 +1948,7 @@ static derr_t _limit_check_txn(
         DSTR_STATIC(q2,
             "UPDATE accounts SET limit_msg_sent=b'1' WHERE user_uuid=?"
         );
-        PROP(&e, sql_norow_query(sql, &q2, NULL, blob_bind_in(uuid)) );
+        PROP(&e, sql_norow_query(sql, q2, NULL, blob_bind_in(&uuid)) );
     }else{
         // limit was not hit and overflow is not possible
         count += recipients;
@@ -1959,7 +1957,7 @@ static derr_t _limit_check_txn(
         );
         PROP(&e,
             sql_norow_query(
-                sql, &q2, NULL, uint_bind_in(&count), blob_bind_in(uuid)
+                sql, q2, NULL, uint_bind_in(&count), blob_bind_in(&uuid)
             )
         );
         *ok = true;
@@ -1979,7 +1977,7 @@ static derr_t _limit_check_txn(
    the limit message. */
 derr_t limit_check(
     MYSQL *sql,
-    const dstr_t *uuid,
+    const dstr_t uuid,
     unsigned int recipients,
     bool *ok,
     bool *msg_sent,
@@ -2011,13 +2009,13 @@ derr_t gtid_current_pos(MYSQL *sql, dstr_t *out){
 
     DSTR_STATIC(query, "SELECT @@gtid_current_pos");
     PROP(&e,
-        sql_onerow_query(sql, &query, NULL, string_bind_out(out))
+        sql_onerow_query(sql, query, NULL, string_bind_out(out))
     );
 
     return e;
 }
 
-static derr_t _trigger_deleter_txn(MYSQL *sql, const dstr_t *uuid){
+static derr_t _trigger_deleter_txn(MYSQL *sql, const dstr_t uuid){
     derr_t e = E_OK;
 
     // read servers.conf
@@ -2039,8 +2037,8 @@ static derr_t _trigger_deleter_txn(MYSQL *sql, const dstr_t *uuid){
         );
         PROP(&e,
             sql_norow_query(
-                sql, &q, NULL,
-                blob_bind_in(uuid),
+                sql, q, NULL,
+                blob_bind_in(&uuid),
                 int_bind_in(&server_id)
             )
         );
@@ -2052,7 +2050,7 @@ static derr_t _trigger_deleter_txn(MYSQL *sql, const dstr_t *uuid){
 /* AFTER deleting an account, it is safe to try to trigger the deletions
    service.  It is expected that the caller is tolerant of errors, since they
    are often not fatal; the deleter will periodically GC any stray files. */
-derr_t trigger_deleter(MYSQL *sql, const dstr_t *uuid){
+derr_t trigger_deleter(MYSQL *sql, const dstr_t uuid){
     derr_t e = E_OK;
 
     PROP(&e, sql_txn_start(sql) );
@@ -2080,7 +2078,7 @@ derr_t list_deletions(MYSQL *sql, int server_id, link_t *out){
     DSTR_STATIC(q1, "SELECT user_uuid FROM deletions WHERE server_id=?");
     PROP(&e,
         sql_multirow_stmt(
-            sql, &stmt, &q1,
+            sql, &stmt, q1,
             // parameters
             int_bind_in(&server_id),
             // results
@@ -2098,7 +2096,7 @@ derr_t list_deletions(MYSQL *sql, int server_id, link_t *out){
         if(!ok) break;
 
         smsql_dstr_t *uuid;
-        PROP_GO(&e, smsql_dstr_new(&uuid, &uuid_res), loop_fail);
+        PROP_GO(&e, smsql_dstr_new(&uuid, uuid_res), loop_fail);
         link_list_append(&list, &uuid->link);
 
         continue;
@@ -2125,7 +2123,7 @@ fail_list:
 }
 
 // remove a deletions entry for this server_id
-derr_t deletions_finished_one(MYSQL *sql, int server_id, const dstr_t *uuid){
+derr_t deletions_finished_one(MYSQL *sql, int server_id, const dstr_t uuid){
     derr_t e = E_OK;
 
     DSTR_STATIC(q1,
@@ -2134,9 +2132,9 @@ derr_t deletions_finished_one(MYSQL *sql, int server_id, const dstr_t *uuid){
 
     PROP(&e,
         sql_norow_query(
-            sql, &q1, NULL,
+            sql, q1, NULL,
             int_bind_in(&server_id),
-            blob_bind_in(uuid)
+            blob_bind_in(&uuid)
         )
     );
 
@@ -2155,7 +2153,7 @@ derr_t gc_sessions_and_csrf(MYSQL *sql, int server_id, time_t now){
     );
     PROP(&e,
         sql_norow_query(
-            sql, &q1, NULL,
+            sql, q1, NULL,
             int_bind_in(&server_id),
             int64_bind_in(&hard_limit),
             int64_bind_in(&soft_limit)
@@ -2165,7 +2163,7 @@ derr_t gc_sessions_and_csrf(MYSQL *sql, int server_id, time_t now){
     DSTR_STATIC(q2, "DELETE FROM csrf WHERE server_id=? AND created<?");
     PROP(&e,
         sql_norow_query(
-            sql, &q2, NULL,
+            sql, q2, NULL,
             int_bind_in(&server_id),
             int64_bind_in(&hard_limit)
         )
@@ -2187,7 +2185,7 @@ derr_t list_users(MYSQL *sql, link_t *out){
     DSTR_STATIC(q1, "SELECT email FROM accounts ORDER BY email");
     PROP(&e,
         sql_multirow_stmt(
-            sql, &stmt, &q1,
+            sql, &stmt, q1,
             // results
             string_bind_out(&user_res)
         )
@@ -2203,10 +2201,7 @@ derr_t list_users(MYSQL *sql, link_t *out){
         if(!ok) break;
 
         smsql_dstr_t *dstr;
-        PROP_GO(&e,
-            smsql_dstr_new(&dstr, &user_res),
-        loop_fail);
-
+        PROP_GO(&e, smsql_dstr_new(&dstr, user_res), loop_fail);
         link_list_append(&list, &dstr->link);
 
         continue;

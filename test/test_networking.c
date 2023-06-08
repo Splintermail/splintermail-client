@@ -389,7 +389,7 @@ exit:
                       FD(error_to_dstr(errors.client.type))); \
             test_passed = false; \
             if(errors.client.type){ \
-                TRACE(&e, "client trace:\n%x\n", FD(&errors.client.msg)); \
+                TRACE(&e, "client trace:\n%x\n", FD(errors.client.msg)); \
             } \
         } \
         if(errors.client.type){ \
@@ -401,7 +401,7 @@ exit:
                       FD(error_to_dstr(errors.server.type))); \
             test_passed = false; \
             if(errors.server.type){ \
-                TRACE(&e, "server trace:\n%x\n", FD(&errors.server.msg)); \
+                TRACE(&e, "server trace:\n%x\n", FD(errors.server.msg)); \
             } \
         } \
         if(errors.server.type){ \
@@ -594,7 +594,7 @@ static derr_t test_ssl_client(void){
 
     DSTR_VAR(buffer, 4096);
     PROP_GO(&e, connection_read(&conn, &buffer, NULL), cleanup_3 );
-    PFMT("read: %x", FD(&buffer));
+    PFMT("read: %x", FD(buffer));
 
 cleanup_3:
     connection_close(&conn);
@@ -631,7 +631,7 @@ static derr_t test_server_repeatedly(void){
             connection_close(&conn);
             continue;
         }
-        LOG_INFO("read: %x", FD(&buffer));
+        LOG_INFO("read: %x", FD(buffer));
 
         connection_close(&conn);
     }

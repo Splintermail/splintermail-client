@@ -125,9 +125,7 @@ static int smsql_dstr_cmp(smsql_dstr_t *a, smsql_dstr_t *b){
     return dstr_cmp(&a->dstr, &b->dstr);
 }
 
-static derr_t report_one_deleted(
-    const dstr_t *fpr, struct client *client
-){
+static derr_t report_one_deleted(const dstr_t fpr, struct client *client){
     derr_t e = E_OK;
 
     DSTR_VAR(buf, SMSQL_FPR_SIZE + 32);
@@ -140,14 +138,14 @@ static derr_t report_one_deleted(
 }
 
 static derr_t report_one_created(
-    const dstr_t *fpr, struct cmd_xkeysync_context *ctx, MYSQL *sql
+    const dstr_t fpr, struct cmd_xkeysync_context *ctx, MYSQL *sql
 ){
     derr_t e = E_OK;
 
     // get the public key
     DSTR_VAR(pubkey, SMSQL_PUBKEY_SIZE);
     bool ok;
-    PROP(&e, get_device(sql, &ctx->uuid, fpr, &pubkey, &ok) );
+    PROP(&e, get_device(sql, ctx->uuid, fpr, &pubkey, &ok) );
     if(!ok){
         // race condition is possible, but a bug is far more likely.
         ORIG(&e, E_INTERNAL, "couldn't find the new key: race condition?");
@@ -156,7 +154,7 @@ static derr_t report_one_created(
     // pass the pubkey back in an imap literal
     DSTR_VAR(buf, SMSQL_PUBKEY_SIZE + 64);
     NOFAIL(&e, E_FIXEDSIZE,
-        FMT(&buf, "* XKEYSYNC CREATED {%x}\r\n%x", FU(pubkey.len), FD(&pubkey))
+        FMT(&buf, "* XKEYSYNC CREATED {%x}\r\n%x", FU(pubkey.len), FD(pubkey))
     );
     client_send_line(ctx->client, buf.data);
 
@@ -198,13 +196,13 @@ static derr_t report_changes(
         }
         if(cmp < 0){
             // old < new, so old was deleted
-            PROP(&e, report_one_deleted(&old->dstr, client) );
+            PROP(&e, report_one_deleted(old->dstr, client) );
             old = list_next(old_head, old);
             change_detected = true;
             continue;
         }else{
             // old > new, so new was created
-            PROP(&e, report_one_created(&new->dstr, ctx, sql) );
+            PROP(&e, report_one_created(new->dstr, ctx, sql) );
             new = list_next(new_head, new);
             change_detected = true;
             continue;
@@ -251,12 +249,12 @@ static bool xkeysync_check_now(struct cmd_xkeysync_context *ctx){
 
     DSTR_VAR(email, SMSQL_EMAIL_SIZE);
     bool ok;
-    PROP_GO(&e, get_email_for_uuid(&sql, &ctx->uuid, &email, &ok), cu_sql);
+    PROP_GO(&e, get_email_for_uuid(&sql, ctx->uuid, &email, &ok), cu_sql);
 
     // get the keys from the database (comes pre-sorted)
     link_t all_fprs;
     link_init(&all_fprs);
-    PROP_GO(&e, list_device_fprs(&sql, &ctx->uuid, &all_fprs), cu_sql);
+    PROP_GO(&e, list_device_fprs(&sql, ctx->uuid, &all_fprs), cu_sql);
     // {
     //     DSTR_VAR(buf, 256);
     //     FMT(&buf, "* OK fpr list:");
@@ -283,7 +281,7 @@ cu_sql:
 done:
     retval = is_error(e);
     if(is_error(e)){
-        badbadbad_alert(&DSTR_LIT("error in xkeysync_check_now()"), &e.msg);
+        badbadbad_alert(DSTR_LIT("error in xkeysync_check_now()"), e.msg);
         DUMP(e);
         DROP_VAR(&e);
     }
@@ -556,7 +554,7 @@ bool cmd_xkeysync(struct client_command_context *cmd){
         fsid.len = MIN(fsid.size, strlen(client->user->username));
         memcpy(fsid.data, client->user->username, fsid.len);
     }
-    IF_PROP(&e, to_uuid(&fsid, &uuid) ){
+    IF_PROP(&e, to_uuid(fsid, &uuid) ){
         client_send_command_error(
             cmd, "internal error: failed to decode user_uuid from login"
         );
@@ -612,7 +610,7 @@ bool cmd_xkeysync(struct client_command_context *cmd){
 fail_ctx:
     xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, false);
 fail_fprs:
-    badbadbad_alert(&DSTR_LIT("error in cmd_xkeysync"), &e.msg);
+    badbadbad_alert(DSTR_LIT("error in cmd_xkeysync"), e.msg);
     DUMP(e);
     DROP_VAR(&e);
     free_fpr_list(&known_fprs);

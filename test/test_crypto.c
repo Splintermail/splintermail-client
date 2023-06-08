@@ -140,7 +140,7 @@ static derr_t test_hex_encoders(void){
     PROP(&e, bin2hex(&in, &out) );
     if(dstr_cmp(&out, &hex) != 0){
         TRACE(&e, "expected \"%x\"\n"
-                  "but got  \"%x\"\n", FD(&hex), FD(&out));
+                  "but got  \"%x\"\n", FD(hex), FD(out));
         ORIG(&e, E_VALUE, "bin2hex() failed test");
     }
     out.len = 0;
@@ -150,7 +150,7 @@ static derr_t test_hex_encoders(void){
     PROP(&e, hex2bin(&in, &out) );
     if(dstr_cmp(&out, &bin) != 0){
         TRACE(&e, "expected \"%x\"\n"
-                  "but got  \"%x\"\n", FD(&bin), FD(&out));
+                  "but got  \"%x\"\n", FD(bin), FD(out));
         ORIG(&e, E_VALUE, "hex2bin() failed test");
     }
     return e;
@@ -169,9 +169,9 @@ static derr_t test_crypto(void){
 
     DSTR_VAR(pubkey_pem, 4096);
     PROP(&e, keypair_get_public_pem(kp, &pubkey_pem) );
-    LOG_DEBUG("PEM-formatted public key: %x", FD(&pubkey_pem));
+    LOG_DEBUG("PEM-formatted public key: %x", FD(pubkey_pem));
     LOG_DEBUG("fingerprint (%x) %x\n",
-            FU(kp->fingerprint->len), FD_DBG(kp->fingerprint));
+            FU(kp->fingerprint->len), FD_DBG(*kp->fingerprint));
 
     // allocate an encrypter
     encrypter_t ec;
@@ -198,7 +198,7 @@ static derr_t test_crypto(void){
 
     PROP_GO(&e, encrypter_finish(&ec, &enc), cleanup_2);
 
-    LOG_DEBUG("%x\n", FD(&enc));
+    LOG_DEBUG("%x\n", FD(enc));
 
     // ok, now we can try and decrypt
 
@@ -222,7 +222,7 @@ static derr_t test_crypto(void){
 
     PROP_GO(&e, decrypter_finish(&dc, &decr), cleanup_3);
 
-    LOG_DEBUG("%x\n", FD_DBG(&decr));
+    LOG_DEBUG("%x\n", FD_DBG(decr));
 
     int result = dstr_cmp(&plain, &decr);
     if(result != 0){
@@ -269,7 +269,7 @@ static derr_t test_keypair(void){
     // verify the memory is still there
     DSTR_VAR(pem2, 4096);
     PROP_GO(&e, keypair_get_public_pem(copy, &pem2), cu);
-    EXPECT_DM_GO(&e, "pem", &pem2, &pem1, cu);
+    EXPECT_DM_GO(&e, "pem", pem2, pem1, cu);
 
     // write public key to a file
     PROP_GO(&e, dstr_write_file(keyfile, &pem1), cu);
@@ -280,7 +280,7 @@ static derr_t test_keypair(void){
     // verify
     pem2.len = 0;
     PROP_GO(&e, keypair_get_public_pem(kp, &pem2), cu);
-    EXPECT_DM_GO(&e, "pem", &pem2, &pem1, cu);
+    EXPECT_DM_GO(&e, "pem", pem2, pem1, cu);
 
 cu:
     keypair_free(&kp);

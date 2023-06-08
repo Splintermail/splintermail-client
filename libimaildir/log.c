@@ -108,7 +108,7 @@ derr_t marshal_uidvlds(
     return e;
 }
 
-derr_t parse_uidvlds(const dstr_t *in, unsigned int *up, unsigned int *dn){
+derr_t parse_uidvlds(const dstr_t in, unsigned int *up, unsigned int *dn){
     derr_t e = E_OK;
     *up = 0;
     *dn = 0;
@@ -117,7 +117,7 @@ derr_t parse_uidvlds(const dstr_t *in, unsigned int *up, unsigned int *dn){
     dstr_t d_dn;
     dstr_t junk;
     size_t n;
-    dstr_split2_soft(*in, DSTR_LIT(":"), &n, &d_up, &d_dn, &junk);
+    dstr_split2_soft(in, DSTR_LIT(":"), &n, &d_up, &d_dn, &junk);
     if(n != 2){
         ORIG(&e, E_PARAM, "did not find 2 UIDVALIDITY values in log");
     }
@@ -199,7 +199,7 @@ derr_t marshal_message(const msg_t *msg, dstr_t *out){
     derr_t e = E_OK;
 
     // version : uid_dn : modseq : "u"nfilled/"f"illed/"n"ot4me : flags : date
-    PROP(&e, FMT(out, "%x:%x:%x:", FD(&log_format_version),
+    PROP(&e, FMT(out, "%x:%x:%x:", FD(log_format_version),
                 FU(msg->uid_dn), FU(msg->mod.modseq)) );
 
     // state
@@ -217,7 +217,7 @@ derr_t marshal_message(const msg_t *msg, dstr_t *out){
     if(statechar == NULL){
         ORIG(&e, E_INTERNAL, "invalid expunge state");
     }
-    PROP(&e, FMT(out, "%x:", FD(statechar)) );
+    PROP(&e, FMT(out, "%x:", FD(*statechar)) );
 
     // flags
     const msg_flags_t *flags = &msg->flags;
@@ -239,7 +239,7 @@ derr_t marshal_expunge(const msg_expunge_t *expunge, dstr_t *out){
 
     // version : uid_dn : modseq : "e"xpunged or "x" for expunged/pushed
 
-    PROP(&e, FMT(out, "%x:%x:%x:", FD(&log_format_version),
+    PROP(&e, FMT(out, "%x:%x:%x:", FD(log_format_version),
                 FU(expunge->uid_dn), FU(expunge->mod.modseq)) );
 
     DSTR_STATIC(expunged, "e");
@@ -252,13 +252,13 @@ derr_t marshal_expunge(const msg_expunge_t *expunge, dstr_t *out){
     if(statechar == NULL){
         ORIG(&e, E_INTERNAL, "invalid expunge state");
     }
-    PROP(&e, FMT(out, "%x", FD(statechar)) );
+    PROP(&e, FMT(out, "%x", FD(*statechar)) );
 
     return e;
 }
 
 derr_t parse_value(
-    const dstr_t *in, msg_key_t key, msg_t **msg, msg_expunge_t **expunge
+    const dstr_t in, msg_key_t key, msg_t **msg, msg_expunge_t **expunge
 ){
     derr_t e = E_OK;
     *msg = NULL;
@@ -266,7 +266,7 @@ derr_t parse_value(
 
     // check the version of the log value string
     dstr_t version, postversion;
-    dstr_split2_soft(*in, DSTR_LIT(":"), NULL, &version, &postversion);
+    dstr_split2_soft(in, DSTR_LIT(":"), NULL, &version, &postversion);
     if(dstr_cmp(&version, &log_format_version) != 0 ){
         TRACE(&e, "invalid version: %x\n", FD_DBG(in));
         ORIG(&e, E_PARAM, "invalid format version found, not parsing");

@@ -753,7 +753,7 @@ static derr_t wrap(
                 E_SSL,
                 "error setting SSL peer name (%x)",
                 fail,
-                FD_DBG(&buf)
+                FD_DBG(buf)
             );
         }
 
@@ -774,7 +774,7 @@ static derr_t wrap(
                 E_SSL,
                 "error setting SSL SNI (%x)",
                 fail,
-                FD_DBG(&buf)
+                FD_DBG(buf)
             );
         }
     }

@@ -157,8 +157,8 @@ static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
     EXPECT_U_GO(&e, "cb_count", cb_count, 1, cu);
     EXPECT_NOT_NULL_GO(&e, "s_result", s_result, cu);
     EXPECT_NOT_NULL_GO(&e, "c_result", c_result, cu);
-    EXPECT_D_GO(&e, "u_result", &u_result, &DSTR_LIT("a"), cu);
-    EXPECT_D_GO(&e, "p_result", &p_result, &DSTR_LIT("b"), cu);
+    EXPECT_D_GO(&e, "u_result", u_result, DSTR_LIT("a"), cu);
+    EXPECT_D_GO(&e, "p_result", p_result, DSTR_LIT("b"), cu);
     EXPECT_E_VAR_GO(&e, "e_result", &e_result, E_NONE, cu);
 
     *finished = true;

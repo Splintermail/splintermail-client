@@ -15,7 +15,7 @@ static void reader_cb_ok(stream_reader_t *reader, derr_t e){
         IF_PROP_VAR(&E, &e) return;
     }
     if(!dstr_eq(*buf, exp_)){
-        TRACE_ORIG(&E, E_VALUE, "expected %x but got %x", FD(&exp_), FD(buf));
+        TRACE_ORIG(&E, E_VALUE, "expected %x but got %x", FD(exp_), FD(*buf));
     }
     success = true;
 }

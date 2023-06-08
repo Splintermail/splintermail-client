@@ -76,7 +76,7 @@ static derr_t advance_reads(imap_client_t *c, bool *ok){
         if(!c->read_done) return e;
         c->read_started = false;
         c->read_done = false;
-        LOG_DEBUG("%x recv up %x", FP(c), FD(&c->rbuf));
+        LOG_DEBUG("%x recv up %x", FP(c), FD(c->rbuf));
         PROP(&e, imap_resp_read(&c->reader, c->rbuf, &c->resps) );
     }
 
@@ -85,7 +85,7 @@ static derr_t advance_reads(imap_client_t *c, bool *ok){
 }
 
 static void do_write(imap_client_t *c){
-    LOG_DEBUG("%x send up %x", FP(c), FD(&c->wbuf));
+    LOG_DEBUG("%x send up %x", FP(c), FD(c->wbuf));
     stream_must_write(c->stream, &c->write_req, &c->wbuf, 1, write_cb);
 }
 

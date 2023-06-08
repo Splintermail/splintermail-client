@@ -46,8 +46,8 @@ static derr_t test_pair_chain(void){
         DSTR_VAR(vbuf, 4);
         PROP(&e, FMT(&kbuf, "hk%x", FU(i)) );
         PROP(&e, FMT(&vbuf, "hv%x", FU(i)) );
-        EXPECT_D(&e, "key", &ptr->pair.key, &kbuf);
-        EXPECT_D(&e, "value", &ptr->pair.value, &vbuf);
+        EXPECT_D(&e, "key", ptr->pair.key, kbuf);
+        EXPECT_D(&e, "value", ptr->pair.value, vbuf);
         ptr = ptr->prev;
     }
 
@@ -57,7 +57,7 @@ static derr_t test_pair_chain(void){
 }
 
 static derr_t do_continuation_test(
-    http_marshaler_t *m, size_t limit, const dstr_t *exp
+    http_marshaler_t *m, size_t limit, const dstr_t exp
 ){
     derr_t e = E_OK;
 
@@ -71,7 +71,7 @@ static derr_t do_continuation_test(
         buf.len += space.len;
     }
 
-    EXPECT_DM(&e, "buf", &buf, exp);
+    EXPECT_DM(&e, "buf", buf, exp);
 
     return e;
 }
@@ -101,7 +101,7 @@ static derr_t test_continuation(void){
 
     for(size_t limit = 1; limit < exp.len + 1; limit++){
         TRACE(&e, "testing limit=%x\n", FU(limit));
-        PROP(&e, do_continuation_test(&m, limit, &exp) );
+        PROP(&e, do_continuation_test(&m, limit, exp) );
         DROP_VAR(&e);
         // test reset behavior
         m = http_marshaler_reset(m);
@@ -129,7 +129,7 @@ static derr_t test_marshaler(void){
         buf.len = 0; \
         bool ok = http_marshal_req(&m, &buf); \
         EXPECT_B(&e, "ok", ok, true); \
-        EXPECT_DM(&e, "buf", &buf, &exp); \
+        EXPECT_DM(&e, "buf", buf, exp); \
     } while(0)
 
     // GET with path, params
