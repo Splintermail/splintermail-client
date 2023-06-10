@@ -79,12 +79,15 @@ derr_type_t utf16_encode_quiet(
 }
 
 derr_type_t utf8_decode_quiet(
-    const dstr_t in, derr_type_t (*foreach)(uint32_t, void*), void *data
+    const char *in,
+    size_t len,
+    derr_type_t (*foreach)(uint32_t, void*),
+    void *data
 ){
     derr_type_t etype = E_NONE;
 
-    unsigned char *udata = (unsigned char*)in.data;
-    for(size_t i = 0; i < in.len; i++){
+    const unsigned char *udata = (const unsigned char*)in;
+    for(size_t i = 0; i < len; i++){
         unsigned char u = udata[i];
         if((u & 0x80) == 0){
             // 1-byte encoding
@@ -115,7 +118,7 @@ derr_type_t utf8_decode_quiet(
             return E_PARAM;
         }
         for(size_t t = 0; t < tail; t++){
-            if(++i == in.len){
+            if(++i == len){
                 LOG_DEBUG("unterminated utf8 sequence\n");
                 return E_PARAM;
             }

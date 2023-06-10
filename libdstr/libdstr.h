@@ -29,5 +29,6 @@
 #include "unicode.h"
 #include "json.h"
 #include "jspec.h"
+#include "jdump.h"
 
 #endif // LIBDSTR_H

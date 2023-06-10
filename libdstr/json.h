@@ -104,6 +104,7 @@ derr_t json_parse_finish(json_parser_t *p);
 // if you have the whole json string in memory you don't need a json_parser_t
 derr_t json_parse(const dstr_t in, json_t *out);
 
+derr_type_t json_encode_unlocked(const char *utf8, size_t n, writer_i *out);
 derr_type_t json_encode_quiet(const dstr_t utf8, writer_i *out);
 derr_t json_encode(const dstr_t utf8, writer_i *out);
 

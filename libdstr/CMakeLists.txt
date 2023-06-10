@@ -19,6 +19,7 @@ sm_lib(
     jspec.c
     fmt.c
     sb.c
+    jdump.c
     NOASAN libs
 )
 
@@ -40,3 +41,4 @@ elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
 endif()
 
 sm_test(test_fmt.c DEPS dstr)
+sm_test(test_jdump.c DEPS dstr)

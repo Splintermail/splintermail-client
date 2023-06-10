@@ -902,8 +902,8 @@ utf16_escape:
     return etype;
 }
 
-static derr_type_t json_encode_unlocked(const dstr_t utf8, writer_i *out){
-    return utf8_decode_quiet(utf8, json_encode_each_codepoint, (void*)out);
+derr_type_t json_encode_unlocked(const char *utf8, size_t n, writer_i *out){
+    return utf8_decode_quiet(utf8, n, json_encode_each_codepoint, (void*)out);
 }
 
 derr_type_t json_encode_quiet(const dstr_t utf8, writer_i *out){
@@ -913,7 +913,7 @@ derr_type_t json_encode_quiet(const dstr_t utf8, writer_i *out){
         etype = w.lock(out);
         if(etype) return etype;
     }
-    etype = json_encode_unlocked(utf8, out);
+    etype = json_encode_unlocked(utf8.data, utf8.len, out);
     derr_type_t etype2 = E_NONE;
     if(w.unlock){
         etype2 = w.unlock(out);
@@ -935,7 +935,7 @@ DEF_CONTAINER_OF(_fmt_fd_json_t, iface, fmt_i)
 
 derr_type_t _fmt_fd_json(const fmt_i *iface, writer_i *out){
     dstr_t d = CONTAINER_OF(iface, _fmt_fd_json_t, iface)->d;
-    return json_encode_unlocked(d, out);
+    return json_encode_unlocked(d.data, d.len, out);
 }
 
 derr_t json_walk(

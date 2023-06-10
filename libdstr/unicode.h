@@ -7,5 +7,8 @@ derr_type_t utf16_encode_quiet(
 );
 
 derr_type_t utf8_decode_quiet(
-    const dstr_t in, derr_type_t (*foreach)(uint32_t, void*), void *data
+    const char *in,
+    size_t len,
+    derr_type_t (*foreach)(uint32_t, void*),
+    void *data
 );
