@@ -261,7 +261,7 @@ static derr_t process_login_cmd(anon_t *anon, bool *ok){
             break;
 
         case IMAP_CMD_STARTTLS:
-            insec = anon->s->conn == IMAP_SEC_INSECURE;
+            insec = anon->s->conn->security == IMAP_SEC_INSECURE;
             PROP_GO(&e, respond_bad_starttls(tag, insec, out), cu);
             break;
 

@@ -123,7 +123,7 @@ static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
 
     BOUNCE("A NOOP\r\n", "A OK zzz...\r\n");
     BOUNCE("B BUG\r\n", "B BAD syntax error at input: BUG\\r\\n\r\n");
-    BOUNCE("C STARTTLS\r\n", "C BAD tls is already active\r\n");
+    BOUNCE("C STARTTLS\r\n", "C BAD this port was configured as insecure\r\n");
     BOUNCE("C SELECT INBOX\r\n", "C BAD it's too early for that\r\n");
     BOUNCE("D AUTHENTICATE auth\r\n", "D BAD command not supported\r\n");
     BOUNCE("E CAPABILITY\r\n",
