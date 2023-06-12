@@ -32,7 +32,6 @@ typedef struct {
 DEF_CONTAINER_OF(user_t, schedulable, schedulable_t)
 DEF_CONTAINER_OF(user_t, elem, hash_elem_t)
 DEF_CONTAINER_OF(user_t, cread, imap_client_read_t)
-DEF_CONTAINER_OF(user_t, cwrite, imap_client_write_t)
 
 static void advance_state(user_t *u);
 
@@ -201,8 +200,7 @@ static void advance_state(user_t *u){
         PROP_GO(&u->e, check_resp(u, &ok, check_sync), fail);
         (void)ok;
     }
-
-    return;
+    // while does not return
 
 fail:
     u->failed = true;

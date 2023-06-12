@@ -307,9 +307,15 @@ static derr_t test_log_stack_and_heap(void){
     cu);
 
     DSTR_VAR(got, 4096);
+    DSTR_VAR(norm, 4096);
     PROP_GO(&e, dstr_read_file(log.data, &got), cu);
 
-    EXPECT_DM_GO(&e, "logfile", got, exp, cu);
+    // normalize line endings
+    LIST_PRESET(dstr_t, find, DSTR_LIT("\r\n"));
+    LIST_PRESET(dstr_t, repl, DSTR_LIT("\n"));
+    PROP_GO(&e, dstr_recode(&got, &norm, &find, &repl, false), cu);
+
+    EXPECT_DM_GO(&e, "logfile", norm, exp, cu);
 
 cu:
     DROP_CMD( rm_rf_path(&SBD(temp)) );

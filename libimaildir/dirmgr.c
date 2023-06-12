@@ -663,7 +663,6 @@ struct dirmgr_freeze_t {
     dstr_t name;
     hash_elem_t h;
 };
-DEF_CONTAINER_OF(dirmgr_freeze_t, h, hash_elem_t)
 
 derr_t dirmgr_freeze_new(
     dirmgr_t *dm, const dstr_t *name, dirmgr_freeze_t **out
@@ -677,7 +676,6 @@ derr_t dirmgr_freeze_new(
         ORIG(&e,
             E_BUSY, "mailbox \"%x\" is frozen by another thread", FD_DBG(*name)
         );
-        return e;
     }
 
     // check if we have an imaildir by that name

@@ -426,7 +426,7 @@ derr_t msg_mod_write(const msg_mod_t *mod, dstr_t *out){
     return e;
 }
 
-DEF_CONTAINER_OF(_fmt_mk_t, iface, fmt_i);
+DEF_CONTAINER_OF(_fmt_mk_t, iface, fmt_i)
 
 derr_type_t _fmt_mk(const fmt_i *iface, writer_i *out){
     msg_key_t key = CONTAINER_OF(iface, _fmt_mk_t, iface)->key;

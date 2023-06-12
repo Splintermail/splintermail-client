@@ -383,7 +383,9 @@ typedef derr_t (*passthru_pre_f)(
 static ie_dstr_t *mktag(derr_t *e, sc_t *sc){
     if(is_error(*e)) return NULL;
     DSTR_VAR(buf, 64);
-    IF_PROP(e, FMT(&buf, "%x%x", FD(prefix), FU(++sc->ntags)) ){
+    // FU will be invoked twice on windows.
+    sc->ntags++;
+    IF_PROP(e, FMT(&buf, "%x%x", FD(prefix), FU(sc->ntags)) ){
         return NULL;
     }
     return ie_dstr_new2(e, buf);

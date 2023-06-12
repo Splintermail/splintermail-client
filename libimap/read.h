@@ -47,7 +47,7 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode);
 
 /* pass a new dstr_t into the scanner; the input must be valid until you are
    done calling imap_scan() (usually when it returns more=true) */
-void imap_feed(imap_scanner_t *s, dstr_t input);
+void imap_feed(imap_scanner_t *s, const dstr_t input);
 
 // return how much of the last input was consumed
 /* because this is called after reading at least one successful token from the

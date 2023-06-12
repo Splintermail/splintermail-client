@@ -168,6 +168,12 @@ int compat_getpid(void){
     return _getpid();
 }
 
+int compat_bind(
+    compat_socket_t sockfd, const struct sockaddr *addr, uintmax_t addrlen
+){
+    return bind(sockfd, addr, (int)(MIN(addrlen, INT_MAX)));
+}
+
 #else // not _WIN32
 typedef int make_iso_compilers_happy;
 #endif // _WIN32

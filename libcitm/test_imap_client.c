@@ -9,12 +9,12 @@
 
 #include <openssl/ssl.h>
 
-derr_t E = {0};
-size_t rbuf_len;
-size_t nreads = 0;
-size_t nwrites = 0;
-size_t niwrites = 0;
-link_t resps = {0};
+static derr_t E = {0};
+static size_t rbuf_len;
+static size_t nreads = 0;
+static size_t nwrites = 0;
+static size_t niwrites = 0;
+static link_t resps = {0};
 
 static void write_cb(stream_i *stream, stream_write_t *req){
     (void)stream;
@@ -358,10 +358,10 @@ int main(int argc, char** argv){
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
 #endif
+    SSL_CTX *sctx = NULL, *cctx = NULL;
     PROP_GO(&e, ssl_library_init(), cu);
 
     // set up some SSL_CTXs to be shared across tests
-    SSL_CTX *sctx, *cctx;
     PROP_GO(&e, ctx_setup(test_files, &sctx, &cctx), cu);
 
     PROP_GO(&e, test_starttls(sctx, cctx), cu);

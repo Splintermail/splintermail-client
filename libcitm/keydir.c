@@ -9,7 +9,6 @@
    local messages into the INBOX for new keys or decryption anomalies. */
 typedef struct {
     keydir_i iface;
-    hash_elem_t elem;  // citm_t->users
 
     // login name, backed by external memory
     dstr_t user;
@@ -33,12 +32,10 @@ typedef struct {
     imaildir_hooks_i imaildir_hooks;
 } keydir_t;
 DEF_CONTAINER_OF(keydir_t, iface, keydir_i)
-DEF_CONTAINER_OF(keydir_t, elem, hash_elem_t)
 DEF_CONTAINER_OF(keydir_t, imaildir_hooks, imaildir_hooks_i)
 
 static void keydir_free(keydir_t *kd){
     if(!kd) return;
-    hash_elem_remove(&kd->elem);
     link_t *link;
     while((link = link_list_pop_first(&kd->peers))){
         keypair_t *temp = CONTAINER_OF(link, keypair_t, link);

@@ -45,10 +45,10 @@ typedef struct {
     bool mykey_sent : 1;
     bool mykey_done : 1;
 } preuser_t;
-DEF_CONTAINER_OF(preuser_t, elem, hash_elem_t);
-DEF_CONTAINER_OF(preuser_t, schedulable, schedulable_t);
-DEF_CONTAINER_OF(preuser_t, cread, imap_client_read_t);
-DEF_CONTAINER_OF(preuser_t, cwrite, imap_client_write_t);
+DEF_CONTAINER_OF(preuser_t, elem, hash_elem_t)
+DEF_CONTAINER_OF(preuser_t, schedulable, schedulable_t)
+DEF_CONTAINER_OF(preuser_t, cread, imap_client_read_t)
+DEF_CONTAINER_OF(preuser_t, cwrite, imap_client_write_t)
 
 static void advance_state(preuser_t *p);
 
@@ -182,7 +182,9 @@ static bool advance_reads(preuser_t *p){
 static ie_dstr_t *mktag(derr_t *e, preuser_t *p){
     if(is_error(*e)) return NULL;
     DSTR_VAR(buf, 64);
-    IF_PROP(e, FMT(&buf, "preuser%x", FU(++p->ntags)) ){
+    // FU will be invoked twice on windows.
+    p->ntags++;
+    IF_PROP(e, FMT(&buf, "preuser%x", FU(p->ntags)) ){
         return NULL;
     }
     return ie_dstr_new2(e, buf);

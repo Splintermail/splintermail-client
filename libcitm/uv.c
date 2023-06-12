@@ -11,7 +11,6 @@ typedef struct {
     duv_passthru_t passthru;
 } uv_citm_conn_t;
 DEF_CONTAINER_OF(uv_citm_conn_t, conn, citm_conn_t)
-DEF_CONTAINER_OF(uv_citm_conn_t, passthru, duv_passthru_t)
 
 static void uv_citm_conn_free(citm_conn_t *c){
     uv_citm_conn_t *uc = CONTAINER_OF(c, uv_citm_conn_t, conn);
@@ -97,8 +96,8 @@ typedef struct {
     citm_conn_cb cb;
     void *data;
 } uv_citm_connect_t;
-DEF_CONTAINER_OF(uv_citm_connect_t, iface, citm_connect_i);
-DEF_CONTAINER_OF(uv_citm_connect_t, connect, duv_connect_t);
+DEF_CONTAINER_OF(uv_citm_connect_t, iface, citm_connect_i)
+DEF_CONTAINER_OF(uv_citm_connect_t, connect, duv_connect_t)
 
 static void connect_cb(duv_connect_t *connect, derr_t error){
     uv_citm_connect_t *c = CONTAINER_OF(connect, uv_citm_connect_t, connect);
@@ -205,13 +204,14 @@ static void noop_close_cb(uv_handle_t *handle){
     (void)handle;
 }
 
+// returns INVALID_SOCKET on error
 static derr_t bind_addrspec(
-    const addrspec_t spec, int type, int proto, int *fdout
+    const addrspec_t spec, int type, int proto, compat_socket_t *fdout
 ){
     derr_t e = E_OK;
 
-    int fd = -1;
-    *fdout = -1;
+    compat_socket_t fd = INVALID_SOCKET;
+    *fdout = INVALID_SOCKET;
 
     struct addrinfo *ai = NULL;
     PROP_GO(&e, getaddrspecinfo(spec, true, &ai), fail);
@@ -219,7 +219,7 @@ static derr_t bind_addrspec(
     for(struct addrinfo *ptr = ai; ptr; ptr = ptr->ai_next){
         // we need family for IPv4 vs IPv6, but we override type and proto
         fd = socket(ai->ai_family, type, proto);
-        if(fd < 0){
+        if(fd == INVALID_SOCKET){
             ORIG_GO(&e, E_OS, "socket(): %x", fail, FE(errno));
         }
 
@@ -240,11 +240,11 @@ static derr_t bind_addrspec(
             ORIG_GO(&e, E_OS, "setsockopt: %x", fail, FE(errno));
         }
 
-        ret = bind(fd, ai->ai_addr, ai->ai_addrlen);
+        ret = compat_bind(fd, ai->ai_addr, ai->ai_addrlen);
         if(ret){
             // bind failed, try again
-            close(fd);
-            fd = -1;
+            compat_closesocket(fd);
+            fd = INVALID_SOCKET;
             continue;
         }
 
@@ -262,7 +262,7 @@ static derr_t bind_addrspec(
     );
 
 fail:
-    if(fd > -1) close(fd);
+    if(fd != INVALID_SOCKET) compat_closesocket(fd);
     if(ai) freeaddrinfo(ai);
     return e;
 }
@@ -300,7 +300,7 @@ static derr_t citm_listener_init(
         if(!key || !cert) ORIG(&e, E_PARAM, "invalid configuration");
     }
 
-    int fd = -1;
+    compat_socket_t fd = INVALID_SOCKET;
     bool tcp_configured = false;
 
     // set up the fd
@@ -310,7 +310,7 @@ static derr_t citm_listener_init(
     tcp_configured = true;
     // connect the fd to the tcp
     PROP_GO(&e, duv_tcp_open(&listener->tcp, fd), fail);
-    fd = -1;
+    fd = INVALID_SOCKET;
     if(listener->security != IMAP_SEC_INSECURE){
         // listener holds a reference to the ssl_ctx
         listener->ctx = ctx;
@@ -327,7 +327,7 @@ static derr_t citm_listener_init(
     return e;
 
 fail:
-    if(fd > -1) close(fd);
+    if(fd != INVALID_SOCKET) compat_closesocket(fd);
     if(listener->ctx) SSL_CTX_free(listener->ctx);
     if(tcp_configured) duv_tcp_close(&listener->tcp, noop_close_cb);
 
@@ -552,7 +552,7 @@ cu:
     for(size_t i = 0; i < uv_citm.nlisteners; i++){
         citm_listener_free(&uv_citm.listeners[i]);
     }
-    if(fd > -1) close(fd);
+    if(fd == INVALID_SOCKET) compat_closesocket(fd);
 
     if(uv_citm.async_cancel.data){
         duv_async_close(&uv_citm.async_cancel, noop_close_cb);

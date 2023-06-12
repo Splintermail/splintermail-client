@@ -20,8 +20,6 @@ bool imap_scheme_parse(dstr_t scheme, imap_security_e *out){
     return false;
 }
 
-DEF_CONTAINER_OF(citm_conn_t, link, link_t)
-
 static void generic_await_cb(
     derr_t e, link_t *reads, link_t *writes, char *kind
 ){

@@ -181,7 +181,7 @@ derr_t duv_tcp_init(uv_loop_t *loop, uv_tcp_t *tcp){
     UV_CALL(uv_tcp_init, loop, tcp);
 }
 
-derr_t duv_tcp_open(uv_tcp_t *tcp, int fd){
+derr_t duv_tcp_open(uv_tcp_t *tcp, compat_socket_t fd){
     UV_CALL(uv_tcp_open, tcp, fd);
 }
 

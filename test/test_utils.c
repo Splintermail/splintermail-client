@@ -84,8 +84,10 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path){
 
     DSTR_VAR(buf, 256);
 
+    // FI will be invoked twice on windows.
+    int n = count++;
     PROP(&e,
-        FMT(&buf, "%x-%x-%x", FS(prefix), FI(compat_getpid()), FI(count++))
+        FMT(&buf, "%x-%x-%x", FS(prefix), FI(compat_getpid()), FI(n))
     );
 
     PROP(&e, dmkdir(buf.data, 0777, false) );

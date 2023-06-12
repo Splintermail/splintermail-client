@@ -28,6 +28,9 @@ foreach(lib ${libs})
     if(NOT WIN32)
         target_compile_options("${lib}" PRIVATE "-pthread")
         target_link_libraries("${lib}" PUBLIC "-pthread")
+    else()
+        # for bind
+        target_link_libraries("${lib}" PUBLIC Ws2_32)
     endif()
 endforeach()
 

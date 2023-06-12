@@ -55,6 +55,11 @@
     #define compat_fwrite_unlocked _fwrite_nolock
     #define compat_flockfile _lock_file
     #define compat_funlockfile _unlock_file
+    #define compat_socket_t SOCKET
+    #define compat_closesocket closesocket
+    int compat_bind(
+        compat_socket_t sockfd, const struct sockaddr *addr, uintmax_t addrlen
+    );
 
     // use the "new" functions... with same prototypes and behaviors
     #define compat_rmdir _rmdir
@@ -106,6 +111,10 @@
     #define compat_fwrite_unlocked fwrite_unlocked
     #define compat_flockfile flockfile
     #define compat_funlockfile funlockfile
+    #define compat_socket_t int
+    #define INVALID_SOCKET (-1)
+    #define compat_closesocket close
+    #define compat_bind bind
     #define compat_stat_t struct stat
     #define compat_dup dup
     #define compat_getpid getpid

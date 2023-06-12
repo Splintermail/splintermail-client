@@ -81,7 +81,7 @@ static derr_t do_test_preuser(size_t cancel_after, bool *finished){
     fake_stream_t c;
     fake_citm_conn_t fc;
     citm_conn_t *conn = NULL;
-    fake_citm_connect_t fcnct;
+    fake_citm_connect_t fcnct = {0};
     hash_elem_t *elem;
     hashmap_trav_t trav;
     dstr_t user = {0};

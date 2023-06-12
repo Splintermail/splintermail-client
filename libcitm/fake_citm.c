@@ -204,7 +204,7 @@ static void fkd_free(keydir_i *iface){
     }
 }
 
-DSTR_PRESET(
+static DSTR_PRESET(
     mykey_priv,
     "-----BEGIN RSA PRIVATE KEY-----\n"
     "MIICXQIBAAKBgQCU9j/irie2dpd2gaiVpEh7LKg6fI2OMab/tBcoZqYvsQkQX1dg\n"
@@ -222,7 +222,7 @@ DSTR_PRESET(
     "dRWR9AsEh8gFtNqDvVLMx6OSqMTRLZr6XGIDeQbUcjaZ\n"
     "-----END RSA PRIVATE KEY-----\n"
 );
-DSTR_PRESET(
+static DSTR_PRESET(
     mykey_pem,
     "-----BEGIN PUBLIC KEY-----\n"
     "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCU9j/irie2dpd2gaiVpEh7LKg6\n"
@@ -231,13 +231,13 @@ DSTR_PRESET(
     "UwJpH89DBf32mJduYQIDAQAB\n"
     "-----END PUBLIC KEY-----\n"
 );
-DSTR_PRESET(
+static DSTR_PRESET(
     mykey_fpr,
     "eefdab7d7d97bf74d16684f803f3e2a4ef7aa181c9940fbbaff4427f1f7dde32"
 );
 
 
-DSTR_PRESET(
+static DSTR_PRESET(
     peer1_pem,
     "-----BEGIN PUBLIC KEY-----\n"
     "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQClSBGeRBYAqTXg7a7sMCEfDgd8\n"
@@ -246,12 +246,12 @@ DSTR_PRESET(
     "eivlTlzAmryj0k1SvwIDAQAB\n"
     "-----END PUBLIC KEY-----\n"
 );
-DSTR_PRESET(
+static DSTR_PRESET(
     peer1_fpr,
     "3d94f057f427e2ee34bb51733b8d3ee62a8fdaaa50da71d14e4b2d7f44763471"
 );
 
-DSTR_PRESET(
+static DSTR_PRESET(
     peer2_pem,
     "-----BEGIN PUBLIC KEY-----\n"
     "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC9Xe4XzXbZSD2ng1H1J0EAdgMR\n"
@@ -260,12 +260,12 @@ DSTR_PRESET(
     "/2m95oYikN5gLOIB3QIDAQAB\n"
     "-----END PUBLIC KEY-----\n"
 );
-DSTR_PRESET(
+static DSTR_PRESET(
     peer2_fpr,
     "8c7e72356d46734eeaf2d163302cc560f60b513d7644dae92b390b7d8f28ae95"
 );
 
-DSTR_PRESET(
+static DSTR_PRESET(
     peer3_pem,
     "-----BEGIN PUBLIC KEY-----\n"
     "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC65r5IdAr3OuK1utQGH4T9uXPo\n"
@@ -274,17 +274,17 @@ DSTR_PRESET(
     "zrzTUEa6FdkdlgsnCwIDAQAB\n"
     "-----END PUBLIC KEY-----\n"
 );
-DSTR_PRESET(
+static DSTR_PRESET(
     peer3_fpr,
     "d99c55626294263cf8dbe54c0286673f666d9ac969b5856ff78558394365f360"
 );
 
-derr_t fake_keydir(fake_keydir_t *fkd, const dstr_t mykey_pem, keydir_i **out){
+derr_t fake_keydir(fake_keydir_t *fkd, const dstr_t mykeypem, keydir_i **out){
     derr_t e = E_OK;
     *out = NULL;
 
     keypair_t *mykey;
-    PROP(&e, keypair_from_private_pem(&mykey, mykey_pem) );
+    PROP(&e, keypair_from_private_pem(&mykey, mykeypem) );
 
     *fkd = (fake_keydir_t){
         .iface = {

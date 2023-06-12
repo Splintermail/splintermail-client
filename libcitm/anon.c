@@ -383,7 +383,9 @@ cu:
 static ie_dstr_t *mktag(derr_t *e, anon_t *anon){
     if(is_error(*e)) return NULL;
     DSTR_VAR(buf, 64);
-    IF_PROP(e, FMT(&buf, "anon%x", FU(++anon->ntags)) ){
+    // FU will be invoked twice on windows.
+    anon->ntags++;
+    IF_PROP(e, FMT(&buf, "anon%x", FU(anon->ntags)) ){
         return NULL;
     }
     return ie_dstr_new2(e, buf);
@@ -498,6 +500,7 @@ fail:
     imap_client_free(&anon->c);
 
 done:
+    (void)anon;
     anon_cb cb = anon->cb;
     void *cb_data = anon->cb_data;
     imap_server_t *s = STEAL(imap_server_t, &anon->s);

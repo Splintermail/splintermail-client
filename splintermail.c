@@ -16,7 +16,7 @@ VOID WINAPI SvcCtrlHandler( DWORD dwCtrl ){
             // announce we are gonna try and stop
             ReportSvcStatus(SERVICE_STOP_PENDING, NO_ERROR, 0);
              // Signal the service to stop
-            stop_loop_on_signal(0);
+            citm_stop_service();
             return;
 
         case SERVICE_CONTROL_INTERROGATE:
