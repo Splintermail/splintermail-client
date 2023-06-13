@@ -2,8 +2,7 @@
 #include "libweb/libweb.h"
 #include "libduv/libduv.h"
 #include "libhttp/libhttp.h"
-
-#include "server/acme/libacme.h"
+#include "libacme/libacme.h"
 
 #include <string.h>
 
@@ -22,8 +21,6 @@ typedef struct {
 
     dstr_t contact_email;
     key_i *key;
-    dstr_t eab_kid;
-    dstr_t eab_hmac_key;
     dstr_t directory_url;
 
     // step 1: lookup urls
@@ -70,16 +67,12 @@ static void new_account_prep(
     scheduler_i *scheduler,
     const dstr_t contact_email,
     key_i *key,
-    const dstr_t eab_kid,
-    const dstr_t eab_hmac_key,
     const dstr_t directory_url
 ){
     *n = (new_account_t){
         .scheduler = scheduler,
         .contact_email = contact_email,
         .key = key,
-        .eab_kid = eab_kid,
-        .eab_hmac_key = eab_hmac_key,
         .directory_url = directory_url,
     };
     schedulable_prep(&n->schedulable, schedule_cb);
@@ -170,8 +163,6 @@ static void advance_state(new_account_t *n, derr_t e){
                     n->key,
                     n->nonce,
                     n->contact_email,
-                    n->eab_kid,
-                    n->eab_hmac_key,
                     _post_new_account_cb,
                     n
                 ),
@@ -209,8 +200,6 @@ failing:
 static derr_t new_account(
     const dstr_t contact_email,
     key_i *key,
-    const dstr_t eab_kid,
-    const dstr_t eab_hmac_key,
     const dstr_t directory_url
 ){
     derr_t e = E_OK;
@@ -226,14 +215,7 @@ static derr_t new_account(
 
     // start our state machine
     new_account_t n;
-    new_account_prep(&n,
-        &scheduler.iface,
-        contact_email,
-        key,
-        eab_kid,
-        eab_hmac_key,
-        directory_url
-    );
+    new_account_prep(&n, &scheduler.iface, contact_email, key, directory_url);
     schedule(&n);
 
     derr_t e2 = duv_run(&loop);
@@ -262,15 +244,10 @@ static void print_help(void){
     fprintf(stdout,
         "new-account: create an ACME account with zerossl\n"
         "\n"
-        "usage: new-account [-d DIRS_URL] CONTACT_EMAIL [EAB] > account.json\n"
+        "usage: new-account [-d DIRS_URL] CONTACT_EMAIL > account.json\n"
         "\n"
         "  -d --dirs [URL]  Set the acme DIRS url.\n"
-        "                   Default: " ZEROSSL_DIRS "\n"
-        "\n"
-        "Note that EAB is required for zerossl. A suitable EAB file may be\n"
-        "generated with:\n"
-        "\n"
-        "    get-zerossl-eab ACCESS_KEY > eab.json\n"
+        "                   Default: " LETSENCRYPT "\n"
         "\n"
     );
 }
@@ -304,18 +281,17 @@ int main(int argc, char **argv){
     }
 
     // no positional arguments
-    if(newargc < 2 || newargc > 3){
+    if(newargc < 2){
         fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
         return 1;
     }
 
     char *contact_str = argv[1];
-    char *eabpath = newargc > 2 ? argv[2] : NULL;
 
     dstr_t contact_email;
     DSTR_WRAP(contact_email, contact_str, strlen(contact_str), true);
 
-    dstr_t directory_url = o_dirs.found ? o_dirs.val : DSTR_LIT(ZEROSSL_DIRS);
+    dstr_t directory_url = o_dirs.found ? o_dirs.val : DSTR_LIT(LETSENCRYPT);
 
     PROP_GO(&e, ssl_library_init(), fail);
 
@@ -324,30 +300,7 @@ int main(int argc, char **argv){
     // generate a new key
     PROP_GO(&e, gen_es256(&key), fail);
 
-    // load the eab from file
-    DSTR_VAR(eab_kid, 256);
-    DSTR_VAR(eab_hmac_key, 256);
-    if(eabpath){
-        DSTR_VAR(eabbuf, 256);
-        PROP_GO(&e, dstr_read_path(&SBS(eabpath), &eabbuf), fail);
-        DSTR_VAR(jtext, 256);
-        json_node_t nodemem[8];
-        size_t nnodes = sizeof(nodemem)/sizeof(*nodemem);
-        json_t json;
-        json_prep_preallocated(&json, &jtext, nodemem, nnodes, true);
-        PROP_GO(&e, json_parse(eabbuf, &json), fail);
-        dstr_t eab_hmac_key_b64;
-        jspec_t *jspec = JOBJ(false,
-            JKEY("eab_hmac_key", JDREF(&eab_hmac_key_b64)),
-            JKEY("eab_kid", JDCPY(&eab_kid)),
-        );
-        PROP_GO(&e, jspec_read(jspec, json.root), fail);
-        PROP_GO(&e, b64url2bin(eab_hmac_key_b64, &eab_hmac_key), fail);
-    }
-
-    PROP_GO(&e,
-        new_account(contact_email, key, eab_kid, eab_hmac_key, directory_url),
-    fail);
+    PROP_GO(&e, new_account(contact_email, key, directory_url), fail);
 
 fail:
     int retval = 0;

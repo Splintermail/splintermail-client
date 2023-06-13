@@ -1,4 +1,4 @@
-#include "server/acme/libacme.h"
+#include "libacme/libacme.h"
 
 static http_pairs_t content_type = HTTP_PAIR_GLOBAL(
     "Content-Type", "application/jose+json", NULL
@@ -10,6 +10,7 @@ void acme_urls_free(acme_urls_t *urls){
     dstr_free(&urls->new_order);
     dstr_free(&urls->revoke_cert);
     dstr_free(&urls->key_change);
+    dstr_free(&urls->terms_of_service);
 }
 
 static void ignore_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
@@ -78,15 +79,14 @@ static void get_directory_reader_cb(stream_reader_t *reader, derr_t e){
     jspec_t *jspec = JOBJ(true,
         JKEY("keyChange", JDCPY(&urls.key_change)),
         JKEY("meta", JOBJ(true,
-            JKEY("externalAccountRequired",
-                JB(&urls.external_account_required)
-            ),
+            JKEY("termsOfService", JDCPY(&urls.terms_of_service)),
         )),
         JKEY("newAccount", JDCPY(&urls.new_account)),
         JKEY("newNonce", JDCPY(&urls.new_nonce)),
         JKEY("newOrder", JDCPY(&urls.new_order)),
         JKEY("revokeCert", JDCPY(&urls.revoke_cert)),
     );
+
     bool ok;
     DSTR_VAR(errbuf, 512);
     PROP_GO(&e, jspec_read_ex(jspec, gd->json.root, &ok, &errbuf), done);
@@ -369,8 +369,6 @@ static derr_t post_new_account_body(
     key_i *k,
     const dstr_t nonce,
     const dstr_t contact_email,
-    const dstr_t eab_kid,
-    const dstr_t eab_hmac_key,
     dstr_t *out
 ){
     derr_t e = E_OK;
@@ -406,23 +404,6 @@ static derr_t post_new_account_body(
             FD_JSON(contact_email),
         )
     );
-    if(eab_kid.len != 0){
-        // build the inner jws
-        PROP(&e, FMT(&payload, ",\"externalAccountBinding\":") );
-        DSTR_VAR(inner, 4096);
-        PROP(&e,
-            FMT(&inner,
-                "{"
-                    "\"alg\":\"HS256\","
-                    "\"kid\":\"%x\","
-                    "\"url\":\"%x\""
-                "}",
-                FD_JSON(eab_kid),
-                FD_JSON(url),
-            )
-        );
-        PROP(&e, jws(inner, jwkbuf, SIGN_HS256(&eab_hmac_key), &payload) );
-    }
     PROP(&e, FMT(&payload, "}") );
     PROP(&e, jws(protected, payload, SIGN_KEY(k), out) );
 
@@ -435,8 +416,6 @@ derr_t post_new_account(
     key_i *k,
     const dstr_t nonce,
     const dstr_t contact_email,
-    const dstr_t eab_kid,
-    const dstr_t eab_hmac_key,
     post_new_account_cb cb,
     void *cb_data
 ){
@@ -458,9 +437,7 @@ derr_t post_new_account(
     PROP_GO(&e, parse_url(&pn->url, &tempurl), fail);
 
     PROP_GO(&e,
-        post_new_account_body(
-            url, k, nonce, contact_email, eab_kid, eab_hmac_key, &pn->wbuf
-        ),
+        post_new_account_body(url, k, nonce, contact_email, &pn->wbuf),
     fail);
 
     rstream_i *r = duv_http_req(

@@ -1,4 +1,4 @@
-#include "server/acme/libacme.h"
+#include "libacme/libacme.h"
 
 #include "test/test_utils.h"
 
@@ -188,14 +188,14 @@ static derr_t test_es256(void){
         (const unsigned char*)sig.data, sig.len,
         (const unsigned char*)msg.data, msg.len
     );
-    if(ret != 1){
-        if(ret != 0){
-            // function failed
-            trace_ssl_errors(&e);
-            ORIG_GO(&e, E_SSL, "EVP_DigestSign failed", cu);
-        }
+    if(ret == 0){
         // signature failed
         ORIG_GO(&e, E_VALUE, "es256 signature failed verification", cu);
+    }
+    if(ret != 1){
+        // function failed
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "EVP_DigestSign failed", cu);
     }
 
 cu:

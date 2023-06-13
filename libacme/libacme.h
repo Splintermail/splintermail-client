@@ -6,8 +6,8 @@
 #include "libduv/libduv.h"
 #include "libhttp/libhttp.h"
 
-#include "server/acme/b64url.h"
-#include "server/acme/jws.h"
-#include "server/acme/reqs.h"
+#include "libacme/b64url.h"
+#include "libacme/jws.h"
+#include "libacme/reqs.h"
 
 #endif // LIBACME_H
