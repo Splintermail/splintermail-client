@@ -6,7 +6,8 @@
 #include <openssl/ec.h>
 #include <openssl/evp.h>
 
-#define ES256_SIG_SIZE 72
+// ECDSA signature is 2x key size
+#define ES256_SIG_SIZE 64
 
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L // openssl-3.0 or greater
 static void to_bigendian(dstr_t *buf){
@@ -293,27 +294,53 @@ static derr_t es256_sign(key_i *iface, const dstr_t in, dstr_t *out){
         ORIG(&e, E_SSL, "EVP_DigestSignInit failed");
     }
 
-    // get maximum sig size
-    size_t sigsize = 0;
-    EVP_DigestSign(k->mdctx, NULL, &sigsize, NULL, 0);
-
-    // confirm our compile-time ES256_SIG_SIZE
-    if(sigsize != ES256_SIG_SIZE){
-        ORIG(&e, E_INTERNAL, "incorrect ES256_SIG_SIZE! (%x)", FU(sigsize));
-    }
-
-    PROP(&e, dstr_grow(out, out->len + sigsize) );
-
-    size_t siglen = out->size - out->len;
+    // use EVP_DigestSign to get a der-encoded ECDSA signature
+    DSTR_VAR(der, 72);
+    der.len = der.size;
     ret = EVP_DigestSign(k->mdctx,
-        (unsigned char*)out->data + out->len, &siglen,
+        (unsigned char*)der.data, &der.len,
         (const unsigned char*)in.data, in.len
     );
     if(ret != 1){
         trace_ssl_errors(&e);
         ORIG(&e, E_SSL, "EVP_DigestSign failed");
     }
-    out->len += siglen;
+
+
+    // extract r and s, and concatenate them into a jws ECDSA signature
+    const unsigned char *p = (unsigned char*)der.data;
+    ECDSA_SIG *sig = d2i_ECDSA_SIG(NULL, &p, (long)der.len);
+    if(!sig){
+        trace_ssl_errors(&e);
+        ORIG(&e, E_SSL, "d2i_ECDSA_SIG failed");
+    }
+
+    // errors must go through cu label
+
+    DSTR_VAR(r, 32);
+    DSTR_VAR(s, 32);
+    ret = BN_bn2binpad(
+        ECDSA_SIG_get0_r(sig), (unsigned char*)r.data, (int)r.size
+    );
+    if(ret != (int)r.size){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "BN_bn2binpad(r) failed", cu);
+    }
+    ret = BN_bn2binpad(
+        ECDSA_SIG_get0_s(sig), (unsigned char*)s.data, (int)s.size
+    );
+    if(ret != (int)s.size){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "BN_bn2binpad(s) failed", cu);
+    }
+    r.len = r.size;
+    s.len = s.size;
+
+    PROP_GO(&e, dstr_append(out, &r), cu);
+    PROP_GO(&e, dstr_append(out, &s), cu);
+
+cu:
+    ECDSA_SIG_free(sig);
 
     return e;
 }

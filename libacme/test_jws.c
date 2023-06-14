@@ -4,6 +4,7 @@
 
 #include <openssl/evp.h>
 #include <openssl/sha.h>
+#include <openssl/ecdsa.h>
 
 static derr_t test_ed25519(void){
     derr_t e = E_OK;
@@ -142,6 +143,9 @@ static derr_t test_es256(void){
 
     key_i *k = NULL;
     EVP_MD_CTX *mdctx = NULL;
+    ECDSA_SIG *ecdsa = NULL;
+    BIGNUM *r = NULL;
+    BIGNUM *s = NULL;
 
     DSTR_STATIC(jwk_in,
         "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"Du7BdPtQQ-YlB11mbByZfK4"
@@ -166,8 +170,39 @@ static derr_t test_es256(void){
     // es256 signatures are not deterministic, so test vectors won't work
 
     DSTR_STATIC(msg, "some-special-text");
-    DSTR_VAR(sig, 256);
+    DSTR_VAR(sig, 64);
     PROP_GO(&e, k->sign(k, msg, &sig), cu);
+
+    // the signature is concat(bigendian r, bigendian s), convert to der
+
+    ecdsa = ECDSA_SIG_new();
+    if(!ecdsa) ORIG_GO(&e, E_NOMEM, "ECDSA_SIG_new failed", cu);
+    r = BN_bin2bn((unsigned char*)sig.data, 32, NULL);
+    if(!r){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "BN_bin2bn(r) failed", cu);
+    }
+    s = BN_bin2bn((unsigned char*)sig.data + 32, 32, NULL);
+    if(!s){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "BN_bin2bn(s) failed", cu);
+    }
+    int ret = ECDSA_SIG_set0(ecdsa, r, s);
+    if(!ret){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "ECDSA_SIG_set0 failed", cu);
+    }
+    r = NULL; s = NULL;
+    DSTR_VAR(der, 72);
+    unsigned char *p = (unsigned char*)der.data;
+    ret = i2d_ECDSA_SIG(ecdsa, &p);
+    if(ret < 0){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "i2d_ECDSA_SIG failed", cu);
+    }
+    der.len = (size_t)ret;
+
+    // now verify der signature
 
     mdctx = EVP_MD_CTX_new();
     if(!mdctx){
@@ -176,7 +211,7 @@ static derr_t test_es256(void){
     }
 
     es256_hack_t *es256 = CONTAINER_OF(k, es256_hack_t, iface);
-    int ret = EVP_DigestVerifyInit(
+    ret = EVP_DigestVerifyInit(
         mdctx, NULL, EVP_sha256(), NULL, es256->pkey
     );
     if(ret != 1){
@@ -185,7 +220,7 @@ static derr_t test_es256(void){
     }
 
     ret = EVP_DigestVerify(mdctx,
-        (const unsigned char*)sig.data, sig.len,
+        (const unsigned char*)der.data, der.len,
         (const unsigned char*)msg.data, msg.len
     );
     if(ret == 0){
@@ -201,6 +236,9 @@ static derr_t test_es256(void){
 cu:
     if(k) k->free(k);
     if(mdctx) EVP_MD_CTX_free(mdctx);
+    if(ecdsa) ECDSA_SIG_free(ecdsa);
+    if(r) BN_free(r);
+    if(s) BN_free(s);
     return e;
 }
 
