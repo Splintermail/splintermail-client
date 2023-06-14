@@ -213,6 +213,7 @@ static void req_stream_await_cb(
     // we only read and write from static memory
     (void)reads;
     (void)writes;
+    req->reading = false;
     req->writing = false;
 
     m->stream = NULL;
