@@ -144,9 +144,12 @@ fail:
     return e;
 }
 
-derr_t ssl_context_new_client(ssl_context_t* ctx){
+derr_t ssl_context_new_client_ex(
+    ssl_context_t* ctx, bool include_os, const char **cafiles, size_t ncafiles
+){
     derr_t e = E_OK;
     long lret;
+    int ret;
     // pick method
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
     // openssl pre-1.1.0 API
@@ -170,13 +173,25 @@ derr_t ssl_context_new_client(ssl_context_t* ctx){
 #endif
     PROP_GO(&e, set_safe_protocol(ctx->ctx), cleanup);
 
-    // load SSL certificate location
-    PROP_GO(&e, ssl_context_load_from_os(ctx), cleanup);
+    // load SSL certificate location first (may overwrite X509_STORE)
+    if(include_os){
+        PROP_GO(&e, ssl_context_load_from_os(ctx), cleanup);
+    }
+
+    X509_STORE *store = SSL_CTX_get_cert_store(ctx->ctx);
+    for(size_t i = 0; i < ncafiles; i++){
+        // put the cert in the store
+        ret = X509_STORE_load_locations(store, cafiles[i], NULL);
+        if(!ret){
+            trace_ssl_errors(&e);
+            ORIG_GO(&e, E_SSL, "X509_STORE_load_file failed", cleanup);
+        }
+    }
 
     /* no reason to accept weak ciphers with splintermail.com.  Note that the
        server is set to choose the cipher and the server is easier to keep
        up-to-date, but this is a good precaution. */
-    int ret = SSL_CTX_set_cipher_list(ctx->ctx, PREFERRED_CIPHERS);
+    ret = SSL_CTX_set_cipher_list(ctx->ctx, PREFERRED_CIPHERS);
     if(ret != 1){
         trace_ssl_errors(&e);
         ORIG_GO(&e, E_SSL, "could not set ciphers", cleanup);
@@ -193,6 +208,12 @@ derr_t ssl_context_new_client(ssl_context_t* ctx){
 cleanup:
     SSL_CTX_free(ctx->ctx);
     ctx->ctx = NULL;
+    return e;
+}
+
+derr_t ssl_context_new_client(ssl_context_t* ctx){
+    derr_t e = E_OK;
+    PROP(&e, ssl_context_new_client_ex(ctx, true, NULL, 0) );
     return e;
 }
 

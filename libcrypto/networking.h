@@ -33,6 +33,10 @@ derr_t connection_new_ssl(connection_t* conn, ssl_context_t* ctx,
            E_CONN (failed to connect to host)
            E_SSL (server SSL certificate invalid) */
 
+derr_t ssl_context_new_client_ex(
+    ssl_context_t* ctx, bool include_os, const char **cafiles, size_t ncafiles
+);
+// equivalent to ssl_context_new_client_ex(ctx, true, NULL, 0)
 derr_t ssl_context_new_client(ssl_context_t* ctx);
 
 // server side
