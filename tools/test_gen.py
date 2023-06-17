@@ -547,7 +547,7 @@ int do_test(struct token *tokens, size_t ntokens, int exp){
     int out;
     while(!status && i < ntokens){
         status = parse_maybe_num(
-            &p, tokens[i].tok, (val_u){.i=tokens[i].val}, &out
+            &p, tokens[i].tok, (val_u){.i=tokens[i].val}, &out, NULL
         );
         i++;
     }
@@ -622,7 +622,7 @@ int main(int argc, char **argv){
     status_e status = STATUS_OK;
 
     for(size_t n = 0; n < 5; n++){
-        status = parse_tuple(&p, LPAREN);
+        status = parse_tuple(&p, LPAREN, NULL);
         if(status != STATUS_OK){
             fprintf(stderr, "bad status after LPAREN: %d\n", (int)status);
             return 1;
@@ -630,7 +630,7 @@ int main(int argc, char **argv){
 
         for(size_t i = 0; i < n; i++){
             token_e token = i%2==0 ? ITEM : COMMA;
-            status = parse_tuple(&p, token);
+            status = parse_tuple(&p, token, NULL);
             if(status != STATUS_OK){
                 fprintf(stderr,
                     "bad status after %s: %d\n",
@@ -641,7 +641,7 @@ int main(int argc, char **argv){
             }
         }
 
-        status = parse_tuple(&p, RPAREN);
+        status = parse_tuple(&p, RPAREN, NULL);
         if(status != STATUS_DONE){
             fprintf(stderr, "bad status after RPAREN: %d\n", (int)status);
             return 1;
@@ -650,22 +650,22 @@ int main(int argc, char **argv){
 
 
     // feed double commas
-    status = parse_tuple(&p, LPAREN);
+    status = parse_tuple(&p, LPAREN, NULL);
     if(status != STATUS_OK){
         fprintf(stderr, "bad status after LPAREN: %d\n", (int)status);
         return 1;
     }
-    status = parse_tuple(&p, ITEM);
+    status = parse_tuple(&p, ITEM, NULL);
     if(status != STATUS_OK){
         fprintf(stderr, "bad status after ITEM: %d\n", (int)status);
         return 1;
     }
-    status = parse_tuple(&p, COMMA);
+    status = parse_tuple(&p, COMMA, NULL);
     if(status != STATUS_OK){
         fprintf(stderr, "bad status after COMMA: %d\n", (int)status);
         return 1;
     }
-    status = parse_tuple(&p, COMMA);
+    status = parse_tuple(&p, COMMA, NULL);
     if(status != STATUS_SYNTAX_ERROR){
         fprintf(stderr, "bad status after double-COMMA: %d\n", (int)status);
         return 1;
@@ -753,13 +753,13 @@ int main(int argc, char **argv){
     int wrong = 0;
 
     #define RUN_TEST(name, ...) do { \
-        int tokens[] = {__VA_ARGS__}; \
+        token_e tokens[] = {__VA_ARGS__}; \
         size_t ntokens = sizeof(tokens)/sizeof(*tokens); \
         \
         status_e status = STATUS_OK; \
         size_t i = 0; \
         while(!status && i < ntokens){ \
-            status = parse_##name(&p, tokens[i]); \
+            status = parse_##name(&p, tokens[i], NULL); \
             i++; \
         } \
         \
@@ -885,6 +885,7 @@ int main(int argc, char **argv){
             (val_u){.i=tokens[i].val},
             tokens[i].loc,
             &numout,
+            NULL,
             NULL
         );
         i++;
@@ -998,7 +999,7 @@ int main(int argc, char **argv){
     while(!status && i < ntokens){
         // printf("feeding %s (%s)\n", token_name(tokens[i].tok), tokens[i].str);
         status = parse_sum(
-            &p, tokens[i].tok, (val_u){.str=tokens[i].str}, &out
+            &p, tokens[i].tok, (val_u){.str=tokens[i].str}, &out, NULL
         );
         i++;
     }
@@ -1089,7 +1090,7 @@ int main(int argc, char **argv){
     while(!status && i < ntokens){
         // printf("feeding %s (%s)\n", token_name(tokens[i].tok), tokens[i].str);
         status = parse_sum(
-            &p, tokens[i].tok, (val_u){.str=tokens[i].str}, &out
+            &p, tokens[i].tok, (val_u){.str=tokens[i].str}, &out, NULL
         );
         i++;
     }
@@ -1201,7 +1202,13 @@ int main(int argc, char **argv){
     while(!status && i < ntokens){
         // printf("feeding %s (%s)\n", token_name(tokens[i].tok), tokens[i].str);
         status = parse_sum(
-            &p, tokens[i].tok, (val_u){.str=tokens[i].str}, tokens[i].loc, &out, &loc
+            &p,
+            tokens[i].tok,
+            (val_u){.str=tokens[i].str},
+            tokens[i].loc,
+            &out,
+            &loc,
+            NULL
         );
         i++;
     }
@@ -1265,7 +1272,7 @@ typedef struct sem_t sem_t;
 
 static void handle_error(
     parser_t *p,
-    int token,
+    unsigned int token,
     sem_t sem,
     const unsigned char *expected_mask,
     const char *loc_summary
@@ -1289,7 +1296,7 @@ runon = 5*WORD DOT;
 
 static void handle_error(
     parser_t *p,
-    int token,
+    token_e token,
     sem_t sem,
     const unsigned char *expected_mask,
     const char *loc_summary
@@ -1424,7 +1431,7 @@ typedef struct sem_t sem_t;
 
 static void handle_error(
     parser_t *p,
-    int token,
+    unsigned int token,
     sem_t sem,
     const unsigned char *expected_mask,
     const char *loc_summary
@@ -1454,7 +1461,7 @@ line:str = {$$=strdup("hi");} start:s (
 {{{
 static void handle_error(
     parser_t *p,
-    int token,
+    token_e token,
     sem_t sem,
     const unsigned char *expected_mask,
     const char *loc_summary

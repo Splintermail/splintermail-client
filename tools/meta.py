@@ -221,7 +221,7 @@ def term(e):
                             raise MetaSyntaxError(
                                 "illegal tag with bare multiplier; a tag here "
                                 "would not be accessible from any scope",
-                                @ref.tag
+                                @ref
                             )
                         $$.term = $ref
                         $$.loc = text_span(@m, @ref)

@@ -1871,7 +1871,7 @@ class C:
             "semloc_type": self.semloc_type,
             "span_fn": self.span_fn,
             "zero_loc_fn": self.zero_loc_fn,
-            "error_fn": self.error_fn or "%shandle_syntax_error"%self.prefix_,
+            "error_fn": self.error_fn or "%sdefault_error_fn"%self.prefix_,
             "parse_fn_args": (
                 "\n    %scall_t *call,"
                 "\n    %sparser_t *p"
@@ -2481,7 +2481,7 @@ class C:
         self.fprint(
             "static ${prefix_}status_e %s($parse_fn_args){"%self.parse_fn(expr)
         )
-        self.fprint("(void)token; (void)sem;$voids")
+        self.fprint("    (void)token; (void)sem;$voids")
         # Jump to state.
         self.fprint("    switch(call->state){")
         self.fprint("        case " + str(0) + ": break;")
@@ -2549,11 +2549,17 @@ class C:
                 self.fprint(",\n    $type_spec *val_out", end="")
             if self.semloc_type:
                 self.fprint(",\n    $semloc_type *loc_out", end="")
+            if self.error_fn is None:
+                self.fprint(",\n    ${prefix_}error_f error_fn", end="")
             self.fprint("")
             if header:
                 self.fprint(");")
                 return
             self.fprint("){")
+            if self.error_fn is None:
+                self.fprint("    p->error_fn = error_fn ? error_fn : ${prefix_}default_error_fn;")
+            else:
+                self.fprint("    p->error_fn = $error_fn;")
             self.fprint("    ${prefix_}sem_t sem = {")
             if self.tokens_have_value:
                 self.fprint("        .type = _${prefix_}token_types[token],")
@@ -2674,6 +2680,14 @@ class C:
             #endif
             };
 
+            typedef void (*${prefix_}error_f)(
+                ${prefix_}parser_t *p$params,
+                ${prefix_}token_e token,
+                ${prefix_}sem_t sem,
+                const unsigned char *expected_mask,
+                const char *loc_summary
+            );
+
             struct ${prefix_}parser_t {
                 // stack of calls
                 ${prefix_}call_t *callstack;
@@ -2686,6 +2700,7 @@ class C:
                 unsigned char mask[${PREFIX_}MASKLEN];
                 // a mask of all possible optimized token groups
                 unsigned long long groupmask;
+                ${prefix_}error_f error_fn;
             #ifdef ${PREFIX_}HAVE_SEMLOC
                 // the last location we accepted
                 $semloc_type last;
@@ -2720,6 +2735,15 @@ class C:
 
             // get a (read-only) string with the name of a token
             const char *${prefix_}token_name(${prefix_}token_e t);
+
+            // configure an on-stack parser, backed by stack memory
+            void ${prefix_}parser_prep(
+                ${prefix_}parser_t *p,
+                ${prefix_}call_t *calls,
+                size_t callsmax,
+                ${prefix_}sem_t *sems,
+                size_t semsmax
+            );
 
             // allocate a new fixed-size parser, backed by heap memory
             ${prefix_}parser_t *${prefix_}parser_new(size_t callsmax, size_t semsmax);
@@ -3107,21 +3131,36 @@ class C:
                 *pp = NULL;
             }
 
-            ${prefix_}parser_t *${prefix_}parser_new(size_t callsmax, size_t semsmax){
-                ${prefix_}parser_t *p = malloc(sizeof(*p));
+            // configure an on-stack parser, backed by stack memory
+            void ${prefix_}parser_prep(
+                ${prefix_}parser_t *p,
+                ${prefix_}call_t *calls,
+                size_t callsmax,
+                ${prefix_}sem_t *sems,
+                size_t semsmax
+            ){
+                memset(calls, 0, sizeof(*calls) * callsmax);
+                memset(sems, 0, sizeof(*sems) * semsmax);
                 *p = (${prefix_}parser_t){
-                    .callstack = malloc(sizeof(p->callstack[0]) * callsmax),
+                    .callstack = calls,
                     .callsmax = callsmax,
-                    .semstack = malloc(sizeof(p->semstack[0]) * semsmax),
+                    .semstack = sems,
                     .semsmax = semsmax,
                 };
+            }
 
-                if(!p->callstack || !p->semstack){
-                    ${prefix_}parser_free(&p);
-                }else{
-                    memset(p->callstack, 0, sizeof(p->callstack[0]) * callsmax);
-                    memset(p->semstack, 0, sizeof(p->semstack[0]) * semsmax);
+            ${prefix_}parser_t *${prefix_}parser_new(size_t callsmax, size_t semsmax){
+                ${prefix_}parser_t *p = malloc(sizeof(*p));
+                ${prefix_}call_t *calls = malloc(sizeof(p->callstack[0]) * callsmax);
+                ${prefix_}sem_t *sems = malloc(sizeof(p->semstack[0]) * semsmax);
+                if(!p || !calls || !sems){
+                    free(p);
+                    free(calls);
+                    free(sems);
+                    return NULL;
                 }
+
+                ${prefix_}parser_prep(p, calls, callsmax, sems, semsmax);
 
                 return p;
             }
@@ -3178,7 +3217,7 @@ class C:
                 *token = _${PREFIX_}NOT_A_TOKEN
 
             #define ${PREFIX_}SYNTAX_ERROR(_token, _sem) do { \
-                $error_fn( \
+                p->error_fn( \
                     p$args, \
                     _token, \
                     _sem, \
@@ -3268,10 +3307,10 @@ class C:
         """)
 
         if self.error_fn is None:
-            # default error function
+            # default error function definition
             self.fprint("")
             self.fprint_multi(r"""
-                static void $error_fn(
+                static void ${prefix_}default_error_fn(
                     ${prefix_}parser_t *p$params,
                     ${prefix_}token_e token,
                     ${prefix_}sem_t sem,
@@ -3803,10 +3842,11 @@ class Python:
         self.fprint_multi(r"""
             class ${prefix}SyntaxError(Exception):
                 def __init__(self, msg=None, loc=None):
+                    self.msg = msg or "invalid syntax"
                     self.loc = loc
 
                 def __repr__(self):
-                    return str(msg) + ": " + str(self.loc)
+                    return str(self.msg) + ": " + str(self.loc)
 
             class ${prefix}Expression:
                 def __init__(self, val=None, loc=None):
@@ -4413,7 +4453,10 @@ def parse_doc(grammar_text):
             # the last time this is called it should return non-None
             parsed_doc = parser.feed(t)
     except MetaSyntaxError as e:
-        msg = "syntax error at " + render_location(e.loc, grammar_text)
+        msg = (
+            "syntax error: " + str(e.msg) + " at "
+            + render_location(e.loc, grammar_text)
+        )
         raise RenderedError(msg) from e
 
     assert parsed_doc, "didn't get a doc!"
