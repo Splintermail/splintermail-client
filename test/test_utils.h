@@ -341,7 +341,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
         "-- for value '%x', expected:\n" \
         "%x%x" \
         "-- but got:\n" \
-        "%x%x-- (end) --" \
+        "%x%x-- (end) --\n" \
         "-- first difference: --\n" \
         "expected: \"%x\"\n" \
         "but got:  \"%x\"\n" \

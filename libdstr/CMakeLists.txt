@@ -45,4 +45,5 @@ endif()
 
 sm_test(test_fmt.c DEPS dstr)
 sm_test(test_unicode.c DEPS dstr)
+sm_test(test_jspec.c DEPS dstr)
 sm_test(test_jdump.c DEPS dstr)

@@ -1,6 +1,26 @@
-#include <stdlib.h>
-
 #include "libdstr/libdstr.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+DEF_CONTAINER_OF(jspec_dstr_t, jspec, jspec_t)
+DEF_CONTAINER_OF(jspec_bool_t, jspec, jspec_t)
+DEF_CONTAINER_OF(jspec_object_t, jspec, jspec_t)
+DEF_CONTAINER_OF(jspec_map_t, jspec, jspec_t)
+DEF_CONTAINER_OF(jspec_optional_t, jspec, jspec_t)
+DEF_CONTAINER_OF(jspec_tuple_t, jspec, jspec_t)
+DEF_CONTAINER_OF(jspec_list_t, jspec, jspec_t)
+DEF_CONTAINER_OF(jspec_jptr_t, jspec, jspec_t)
+
+#define DECLARE_NUMERICS(suffix, type) \
+    DEF_CONTAINER_OF(jspec_to ## suffix ## _t, jspec, jspec_t)
+INTEGERS_MAP(DECLARE_NUMERICS)
+FLOATS_MAP(DECLARE_NUMERICS)
+#undef DECLARE_NUMERICS
+
+DEF_CONTAINER_OF(jspec_xdstr_t, jspec, jspec_t)
+DEF_CONTAINER_OF(jspec_xstr_t, jspec, jspec_t)
+DEF_CONTAINER_OF(jspec_xstrn_t, jspec, jspec_t)
 
 jctx_t jctx_fork(jctx_t *base, json_node_t *node, bool *ok, dstr_t *errbuf){
     jctx_t ctx = {
@@ -244,7 +264,7 @@ derr_t jspec_map_read(jspec_t *jspec, jctx_t *ctx){
     size_t index = 0;
     for(json_node_t *key = ctx->node->child; key; key = key->next){
         dstr_t keytext = key->text;
-        jctx_t subctx = jctx_sub_index(ctx, index, key->child);
+        jctx_t subctx = jctx_sub_key(ctx, keytext, key->child);
         PROP(&e, j->read_kvp(&subctx, keytext, index, j->data) );
         index++;
     }
@@ -355,3 +375,57 @@ INTEGERS_MAP(DEFINE_INTEGERS)
     }
 
 FLOATS_MAP(DEFINE_FLOATS)
+
+// jspect-expect series
+
+derr_t jspec_xdstr_read(jspec_t *jspec, jctx_t *ctx){
+    derr_t e = E_OK;
+
+    if(!jctx_require_type(ctx, JSON_STRING)) return e;
+    dstr_t text = jctx_text(ctx);
+    dstr_t d = CONTAINER_OF(jspec, jspec_xdstr_t, jspec)->d;
+    if(!dstr_eq(text, d)){
+        jctx_error(ctx,
+            "wrong value: expected \"%x\" but got \"%x\"\n",
+            FD_DBG(d),
+            FD_DBG(text)
+        );
+    }
+    return e;
+}
+
+derr_t jspec_xstr_read(jspec_t *jspec, jctx_t *ctx){
+    derr_t e = E_OK;
+
+    if(!jctx_require_type(ctx, JSON_STRING)) return e;
+    dstr_t text = jctx_text(ctx);
+    const char *s = CONTAINER_OF(jspec, jspec_xstr_t, jspec)->s;
+    size_t n = strlen(s);
+    if(text.len != n || strncmp(text.data, s, text.len) != 0){
+        jctx_error(ctx,
+            "wrong value: expected \"%x\" but got \"%x\"\n",
+            FSN_DBG(s, n),
+            FD_DBG(text)
+        );
+    }
+    return e;
+}
+
+derr_t jspec_xstrn_read(jspec_t *jspec, jctx_t *ctx){
+    derr_t e = E_OK;
+
+    if(!jctx_require_type(ctx, JSON_STRING)) return e;
+    dstr_t text = jctx_text(ctx);
+    jspec_xstrn_t *arg = CONTAINER_OF(jspec, jspec_xstrn_t, jspec);
+    const char *s = arg->s;
+    size_t n = arg->n;
+    if(text.len != n || strncmp(text.data, s, text.len) != 0){
+        jctx_error(ctx,
+            "wrong value: expected \"%x\" but got \"%x\"\n",
+            FSN_DBG(s, n),
+            FD_DBG(text)
+        );
+    }
+    return e;
+}
+
