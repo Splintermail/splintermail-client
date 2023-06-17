@@ -68,22 +68,31 @@ static derr_t parse_chunk_header(chunked_rstream_t *c, bool *ok){
 
     // parse a whole chunk header in one go or give up
     dstr_t buf = dstr_sub2(c->buf, nread, SIZE_MAX);
-    http_scanner_t s = http_scanner(&buf);
-    HTTP_ONSTACK_PARSER(p, HTTP_CHUNK_MAX_CALLSTACK, HTTP_CHUNK_MAX_SEMSTACK);
+    web_scanner_t s = web_scanner(&buf);
+    WEB_ONSTACK_PARSER(p, WEB_CHUNK_MAX_CALLSTACK, WEB_CHUNK_MAX_SEMSTACK);
+    bool hex = false;
     while(true){
-        http_scanned_t scanned = http_scanner_next(&s);
+        web_scanned_t scanned = web_scanner_next(&s, hex);
         if(scanned.wantmore){
             // don't need a parser to tell us we didn't get a whole header
             goto done;
         }
         size_t chunk_size;
-        http_status_e status = http_parse_chunk(
-            &p, &buf, &e, scanned.token, scanned.loc, &chunk_size, NULL
+        web_status_e status = web_parse_chunk(
+            &p,
+            &buf,
+            &hex,
+            &e,
+            scanned.token,
+            scanned.loc,
+            &chunk_size,
+            NULL,
+            http_handle_error
         );
         switch(status){
-            case HTTP_STATUS_OK: break;
+            case WEB_STATUS_OK: break;
 
-            case HTTP_STATUS_DONE:
+            case WEB_STATUS_DONE:
                 c->first_chunk_parsed = true;
                 nread += s.used;
                 c->nbufread = nread;
@@ -91,23 +100,23 @@ static derr_t parse_chunk_header(chunked_rstream_t *c, bool *ok){
                 *ok = true;
                 return e;
 
-            case HTTP_STATUS_SYNTAX_ERROR:
+            case WEB_STATUS_SYNTAX_ERROR:
                 // allow a pre-formatted error
                 if(is_error(e)) goto done;
                 ORIG_GO(&e, E_RESPONSE, "invalid http response", done);
 
-            case HTTP_STATUS_CALLSTACK_OVERFLOW:
+            case WEB_STATUS_CALLSTACK_OVERFLOW:
                 LOG_FATAL("http parser CALLSTACK_OVERFLOW\n");
                 break;
 
-            case HTTP_STATUS_SEMSTACK_OVERFLOW:
+            case WEB_STATUS_SEMSTACK_OVERFLOW:
                 LOG_FATAL("http parser SEMSTACK_OVERFLOW\n");
                 break;
         }
     }
 
 done:
-    http_parser_reset(&p);
+    web_parser_reset(&p);
     return e;
 }
 
@@ -204,24 +213,33 @@ static void advance_trailer(chunked_rstream_t *c, bool *complete){
 
     size_t initial_nbufread = c->nbufread;
     dstr_t buf = dstr_sub2(c->buf, c->nbufread, SIZE_MAX);
-    http_scanner_t s = http_scanner(&buf);
-    HTTP_ONSTACK_PARSER(
-        p, HTTP_HDR_LINE_MAX_CALLSTACK, HTTP_HDR_LINE_MAX_SEMSTACK
+    web_scanner_t s = web_scanner(&buf);
+    WEB_ONSTACK_PARSER(
+        p, WEB_HDR_LINE_MAX_CALLSTACK, WEB_HDR_LINE_MAX_SEMSTACK
     );
+    bool hex = false;
     while(true){
-        http_scanned_t scanned = http_scanner_next(&s);
+        web_scanned_t scanned = web_scanner_next(&s, hex);
         if(scanned.wantmore){
             // don't need a parser to tell us we didn't get a whole header
             goto read_more;
         }
         http_pair_t hdr;
-        http_status_e status = http_parse_hdr_line(
-            &p, &buf, &c->e, scanned.token, scanned.loc, &hdr, NULL
+        web_status_e status = web_parse_hdr_line(
+            &p,
+            &buf,
+            &hex,
+            &c->e,
+            scanned.token,
+            scanned.loc,
+            &hdr,
+            NULL,
+            http_handle_error
         );
         switch(status){
-            case HTTP_STATUS_OK: break;
+            case WEB_STATUS_OK: break;
 
-            case HTTP_STATUS_DONE:
+            case WEB_STATUS_DONE:
                 // checkpoint read progress
                 c->nbufread = initial_nbufread + s.used;
                 if(!hdr.key.len){
@@ -241,16 +259,16 @@ static void advance_trailer(chunked_rstream_t *c, bool *complete){
                 c->hdr_cb(c, hdr);
                 break;
 
-            case HTTP_STATUS_SYNTAX_ERROR:
+            case WEB_STATUS_SYNTAX_ERROR:
                 // allow a pre-formatted error
                 if(is_error(c->e)) goto done;
                 ORIG_GO(&c->e, E_RESPONSE, "invalid http response", done);
 
-            case HTTP_STATUS_CALLSTACK_OVERFLOW:
+            case WEB_STATUS_CALLSTACK_OVERFLOW:
                 LOG_FATAL("http parser CALLSTACK_OVERFLOW\n");
                 break;
 
-            case HTTP_STATUS_SEMSTACK_OVERFLOW:
+            case WEB_STATUS_SEMSTACK_OVERFLOW:
                 LOG_FATAL("http parser SEMSTACK_OVERFLOW\n");
                 break;
         }
@@ -260,7 +278,7 @@ read_more:
     PROP_GO(&c->e, fill_buffer(c, "trailer"), done);
 
 done:
-    http_parser_reset(&p);
+    web_parser_reset(&p);
     return;
 }
 

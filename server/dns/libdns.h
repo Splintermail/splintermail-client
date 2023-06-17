@@ -2,7 +2,7 @@
 #define LIBDNS_H
 
 #include "libdstr/libdstr.h"
-#include "liburl/liburl.h"
+#include "libweb/libweb.h"
 #include "libduv/libduv.h"
 #include "server/libkvpsync/libkvpsync.h"
 

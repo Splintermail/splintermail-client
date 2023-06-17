@@ -1,3 +1,15 @@
+// for low-level http parsing
+void http_handle_error(
+    web_parser_t *p,
+    const dstr_t *buf,
+    bool *hex,
+    void *data, // dstr_t *errbuf required
+    web_token_e web_token,
+    web_sem_t sem,
+    const unsigned char *expected_mask,
+    const char *loc_summary
+);
+
 // A struct for handling a single, transport-independent response.
 typedef struct {
     /* status and reason are guaranteed to be defined after at least one header
@@ -7,20 +19,20 @@ typedef struct {
     dstr_t reason; // first 256 bytes of the reason anyway
 
     dstr_t *buf;
-    http_scanner_t s;
-    http_call_t callstack[
+    web_scanner_t s;
+    web_call_t callstack[
         MAX(
-            HTTP_STATUS_LINE_MAX_CALLSTACK,
-            HTTP_HDR_LINE_MAX_CALLSTACK
+            WEB_STATUS_LINE_MAX_CALLSTACK,
+            WEB_HDR_LINE_MAX_CALLSTACK
         )
     ];
-    http_sem_t semstack[
+    web_sem_t semstack[
         MAX(
-            HTTP_STATUS_LINE_MAX_SEMSTACK,
-            HTTP_HDR_LINE_MAX_SEMSTACK
+            WEB_STATUS_LINE_MAX_SEMSTACK,
+            WEB_HDR_LINE_MAX_SEMSTACK
         )
     ];
-    http_parser_t p;
+    web_parser_t p;
     size_t consumed;
     char errbuf[256];
 } http_reader_t;
@@ -39,3 +51,5 @@ void http_reader_init(http_reader_t *r, dstr_t *buf);
 derr_t http_read(http_reader_t *r, http_pair_t *pair, int *state_out);
 
 void http_reader_free(http_reader_t *r);
+
+derr_type_t http_quoted_string_decode(const dstr_t in, dstr_t *out);

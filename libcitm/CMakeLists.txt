@@ -14,7 +14,7 @@ sm_lib(
     responses.c
     citm.c
     uv.c
-    DEPS dstr crypto url duv duvtls imap imaildir
+    DEPS dstr crypto web duv duvtls imap imaildir
 )
 
 sm_exe(citm main.c DEPS libcitm)

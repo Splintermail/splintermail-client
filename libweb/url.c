@@ -1,39 +1,76 @@
-#include "liburl/liburl.h"
+#include "libweb/libweb.h"
 
 #include <string.h>
+
+// recorded error message is based on sem.loc and buf, and is written to errbuf
+static void url_handle_error(
+    web_parser_t *p,
+    const dstr_t *buf,
+    bool *hex,
+    void *data,
+    web_token_e web_token,
+    web_sem_t sem,
+    const unsigned char *expected_mask,
+    const char *loc_summary
+){
+    (void)p;
+    (void)buf;
+    (void)hex;
+    (void)web_token;
+    (void)expected_mask;
+    (void)loc_summary;
+
+    dstr_t *errbuf = data;
+
+    // only generate an error if the user gave a buffer for it
+    if(errbuf == NULL) return;
+    errbuf->len = 0;
+
+    FMT_QUIET(errbuf, "invalid url: ");
+    // aim for 80 characters of context
+    get_token_context(errbuf, sem.loc, 80);
+}
 
 bool parse_url_ex(const dstr_t *text, url_t *out, dstr_t *errbuf){
     bool ok = true;
     *out = (url_t){0};
 
     bool hex = false;
-    url_scanner_t s = url_scanner(text);
-    URL_ONSTACK_PARSER(p, URL_URI_MAX_CALLSTACK, URL_URI_MAX_SEMSTACK);
+    web_scanner_t s = web_scanner(text);
+    WEB_ONSTACK_PARSER(p, WEB_URI_MAX_CALLSTACK, WEB_URI_MAX_SEMSTACK);
 
     while(true){
-        url_scanned_t scanned = url_scanner_next(&s, hex);
+        web_scanned_t scanned = web_scanner_next(&s, hex);
         hex = false;
-        url_status_e status = url_parse_uri(
-            &p, text, &hex, errbuf, scanned.token, scanned.loc, out, NULL
+        web_status_e status = web_parse_uri(
+            &p,
+            text,
+            &hex,
+            errbuf,
+            scanned.token,
+            scanned.loc,
+            out,
+            NULL,
+            url_handle_error
         );
         switch(status){
-            case URL_STATUS_OK: continue;
-            case URL_STATUS_DONE: goto done;
-            case URL_STATUS_SYNTAX_ERROR:
+            case WEB_STATUS_OK: continue;
+            case WEB_STATUS_DONE: goto done;
+            case WEB_STATUS_SYNTAX_ERROR:
                 // message was written in url_handle_error
                 ok = false;
                 goto done;
 
-            case URL_STATUS_CALLSTACK_OVERFLOW:
+            case WEB_STATUS_CALLSTACK_OVERFLOW:
                 if(errbuf){
-                    FMT_QUIET(errbuf, "url_parse_uri() CALLSTACK_OVERFLOW");
+                    FMT_QUIET(errbuf, "web_parse_uri() CALLSTACK_OVERFLOW");
                 }
                 ok = false;
                 goto done;
 
-            case URL_STATUS_SEMSTACK_OVERFLOW:
+            case WEB_STATUS_SEMSTACK_OVERFLOW:
                 if(errbuf){
-                    FMT_QUIET(errbuf, "url_parse_uri() SEMSTACK_OVERFLOW");
+                    FMT_QUIET(errbuf, "web_parse_uri() SEMSTACK_OVERFLOW");
                 }
                 ok = false;
                 goto done;
@@ -41,7 +78,7 @@ bool parse_url_ex(const dstr_t *text, url_t *out, dstr_t *errbuf){
     }
 
 done:
-    url_parser_reset(&p);
+    web_parser_reset(&p);
     return ok;
 }
 
@@ -63,39 +100,47 @@ bool parse_url_reference_ex(const dstr_t *text, url_t *out, dstr_t *errbuf){
     *out = (url_t){0};
 
     bool hex = false;
-    url_scanner_t s = url_scanner(text);
-    URL_ONSTACK_PARSER(p,
-        URL_URI_REFERENCE_MAX_CALLSTACK,
-        URL_URI_REFERENCE_MAX_SEMSTACK
+    web_scanner_t s = web_scanner(text);
+    WEB_ONSTACK_PARSER(p,
+        WEB_URI_REFERENCE_MAX_CALLSTACK,
+        WEB_URI_REFERENCE_MAX_SEMSTACK
     );
 
     while(true){
-        url_scanned_t scanned = url_scanner_next(&s, hex);
+        web_scanned_t scanned = web_scanner_next(&s, hex);
         hex = false;
-        url_status_e status = url_parse_uri_reference(
-            &p, text, &hex, errbuf, scanned.token, scanned.loc, out, NULL
+        web_status_e status = web_parse_uri_reference(
+            &p,
+            text,
+            &hex,
+            errbuf,
+            scanned.token,
+            scanned.loc,
+            out,
+            NULL,
+            url_handle_error
         );
         switch(status){
-            case URL_STATUS_OK: continue;
-            case URL_STATUS_DONE: goto done;
-            case URL_STATUS_SYNTAX_ERROR:
+            case WEB_STATUS_OK: continue;
+            case WEB_STATUS_DONE: goto done;
+            case WEB_STATUS_SYNTAX_ERROR:
                 // message was written in url_handle_error
                 ok = false;
                 goto done;
 
-            case URL_STATUS_CALLSTACK_OVERFLOW:
+            case WEB_STATUS_CALLSTACK_OVERFLOW:
                 if(errbuf){
                     FMT_QUIET(errbuf,
-                        "url_parse_uri_reference() CALLSTACK_OVERFLOW"
+                        "web_parse_uri_reference() CALLSTACK_OVERFLOW"
                     );
                 }
                 ok = false;
                 goto done;
 
-            case URL_STATUS_SEMSTACK_OVERFLOW:
+            case WEB_STATUS_SEMSTACK_OVERFLOW:
                 if(errbuf){
                     FMT_QUIET(errbuf,
-                        "url_parse_uri_reference() SEMSTACK_OVERFLOW"
+                        "web_parse_uri_reference() SEMSTACK_OVERFLOW"
                     );
                 }
                 ok = false;
@@ -104,7 +149,7 @@ bool parse_url_reference_ex(const dstr_t *text, url_t *out, dstr_t *errbuf){
     }
 
 done:
-    url_parser_reset(&p);
+    web_parser_reset(&p);
     return ok;
 }
 
@@ -137,39 +182,47 @@ bool parse_addrspec_ex(const dstr_t *text, addrspec_t *out, dstr_t *errbuf){
     *out = (addrspec_t){0};
 
     bool hex = false;
-    url_scanner_t s = url_scanner(text);
-    URL_ONSTACK_PARSER(p,
-        URL_ADDRSPEC_MAX_CALLSTACK,
-        URL_ADDRSPEC_MAX_SEMSTACK
+    web_scanner_t s = web_scanner(text);
+    WEB_ONSTACK_PARSER(p,
+        WEB_ADDRSPEC_MAX_CALLSTACK,
+        WEB_ADDRSPEC_MAX_SEMSTACK
     );
 
     while(true){
-        url_scanned_t scanned = url_scanner_next(&s, hex);
+        web_scanned_t scanned = web_scanner_next(&s, hex);
         hex = false;
-        url_status_e status = url_parse_addrspec(
-            &p, text, &hex, errbuf, scanned.token, scanned.loc, out, NULL
+        web_status_e status = web_parse_addrspec(
+            &p,
+            text,
+            &hex,
+            errbuf,
+            scanned.token,
+            scanned.loc,
+            out,
+            NULL,
+            url_handle_error
         );
         switch(status){
-            case URL_STATUS_OK: continue;
-            case URL_STATUS_DONE: goto done;
-            case URL_STATUS_SYNTAX_ERROR:
+            case WEB_STATUS_OK: continue;
+            case WEB_STATUS_DONE: goto done;
+            case WEB_STATUS_SYNTAX_ERROR:
                 // message was written in url_handle_error
                 ok = false;
                 goto done;
 
-            case URL_STATUS_CALLSTACK_OVERFLOW:
+            case WEB_STATUS_CALLSTACK_OVERFLOW:
                 if(errbuf){
                     FMT_QUIET(errbuf,
-                        "url_parse_addrspec() CALLSTACK_OVERFLOW"
+                        "web_parse_addrspec() CALLSTACK_OVERFLOW"
                     );
                 }
                 ok = false;
                 goto done;
 
-            case URL_STATUS_SEMSTACK_OVERFLOW:
+            case WEB_STATUS_SEMSTACK_OVERFLOW:
                 if(errbuf){
                     FMT_QUIET(errbuf,
-                        "url_parse_addrspec() SEMSTACK_OVERFLOW"
+                        "web_parse_addrspec() SEMSTACK_OVERFLOW"
                     );
                 }
                 ok = false;
@@ -178,7 +231,7 @@ bool parse_addrspec_ex(const dstr_t *text, addrspec_t *out, dstr_t *errbuf){
     }
 
 done:
-    url_parser_reset(&p);
+    web_parser_reset(&p);
     return ok;
 }
 

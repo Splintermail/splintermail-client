@@ -1,9 +1,9 @@
 #include <stdlib.h>
 
-#include <libdstr/libdstr.h>
-#include <liburl/liburl.h>
+#include "libdstr/libdstr.h"
+#include "libweb/libweb.h"
 
-#include "test_utils.h"
+#include "test/test_utils.h"
 
 #define ASSERT(code) if(!(code)) ORIG(&e, E_VALUE, "assertion failed: " #code)
 
@@ -219,7 +219,7 @@ static bool do_off_cmp(
     const dstr_t url, const char *name, dstr_off_t exp, dstr_off_t got, char c
 ){
     if(got.buf == NULL){
-        LOG_ERROR("%x was never when parsing: %x\n", FS(name), FD(url));
+        LOG_ERROR("%x was null when parsing: %x\n", FS(name), FD(url));
         return false;
     }
     if(dstr_off_eq(exp, got)) return true;

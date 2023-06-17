@@ -1,0 +1,121 @@
+#include <libweb/libweb.h>
+
+#include <stdlib.h>
+
+web_scanner_t web_scanner(const dstr_t *buf){
+    return (web_scanner_t){ .buf = buf, .used = 0 };
+}
+
+web_scanned_t web_scanner_next(web_scanner_t *s, bool hexmode){
+    const dstr_t buf = *s->buf;
+    size_t start = s->used;
+    size_t used = s->used;
+
+    if(used >= buf.len){
+        return (web_scanned_t){
+            .token = WEB_EOF,
+            .loc = (dstr_off_t){ .buf = s->buf, .start = start, .len = 0 },
+            .wantmore = true,
+        };
+    }
+
+    if(hexmode){
+        char c = buf.data[s->used++];
+        if(
+            (c >= 'a' && c <= 'f')
+            || (c >= 'A' && c <= 'F')
+            || (c >= '0' && c <= '9')
+        ){
+            return (web_scanned_t){
+                .token = WEB_HEX,
+                .loc = (dstr_off_t){
+                    .buf = s->buf, .start = start, .len = 1,
+                },
+            };
+        }else{
+            return (web_scanned_t){
+                .token = WEB_INVALID,
+                .loc = (dstr_off_t){
+                    .buf = s->buf, .start = start, .len = 1,
+                },
+            };
+        }
+    }
+
+    web_token_e token = 0;
+
+    /* multicharcter token types can have wantmore set when they are the last
+       token token found in the buffer */
+    bool mightwant = false;
+
+    // disable YYFILL and use a check in YYPEEK that emits a sentinel instead
+    #define YYPEEK() used < buf.len ? ((unsigned char*)buf.data)[used] : '\0'
+    #define YYSKIP() used++
+    #define YYCTYPE unsigned char
+
+    /*!re2c
+        re2c:yyfill:enable = 0;
+
+        obs_text     = [\x80-\xFF];
+
+        alpha        = [A-Za-z];
+        digit        = [0-9];
+
+        "\x09"       { token = WEB_TAB; goto done; }
+        "\x0a"       { token = WEB_LF; goto done; }
+        "\x0d"       { token = WEB_CR; goto done; }
+        " "          { token = WEB_SP; goto done; }
+        "!"          { token = WEB_BANG; goto done; }
+        "\""         { token = WEB_DQUOTE; goto done; }
+        "#"          { token = WEB_POUND; goto done; }
+        "$"          { token = WEB_DOLLAR; goto done; }
+        "%"          { token = WEB_PERCENT; goto done; }
+        "&"          { token = WEB_AMPERSAND; goto done; }
+        "'"          { token = WEB_SQUOTE; goto done; }
+        "("          { token = WEB_LPAREN; goto done; }
+        ")"          { token = WEB_RPAREN; goto done; }
+        "*"          { token = WEB_ASTERISK; goto done; }
+        "+"          { token = WEB_PLUS; goto done; }
+        ","          { token = WEB_COMMA; goto done; }
+        "-"          { token = WEB_DASH; goto done; }
+        "."          { token = WEB_DOT; goto done; }
+        "/"          { token = WEB_SLASH; goto done; }
+        ":"          { token = WEB_COLON; goto done; }
+        ";"          { token = WEB_SEMI; goto done; }
+        "<"          { token = WEB_LANGLE; goto done; }
+        "="          { token = WEB_EQ; goto done; }
+        ">"          { token = WEB_RANGLE; goto done; }
+        "?"          { token = WEB_QUESTION; goto done; }
+        "@"          { token = WEB_ARUBA; goto done; }
+        "["          { token = WEB_LBRACKET; goto done; }
+        "\\"         { token = WEB_BACKSLASH; goto done; }
+        "]"          { token = WEB_RBRACKET; goto done; }
+        "^"          { token = WEB_CARET; goto done; }
+        "_"          { token = WEB_UNDER; goto done; }
+        "`"          { token = WEB_BACKTICK; goto done; }
+        "{"          { token = WEB_LBRACE; goto done; }
+        "|"          { token = WEB_PIPE; goto done; }
+        "}"          { token = WEB_RBRACE; goto done; }
+        "~"          { token = WEB_TILDE; goto done; }
+        digit        { token = WEB_DIGIT; goto done; }
+
+        "HTTP"       { token = WEB_HTTP; mightwant = true; goto done; }
+        'chunked'    { token = WEB_CHUNKED; mightwant = true; goto done; }
+
+        alpha+       { token = WEB_ALPHA; mightwant = true; goto done; }
+        obs_text+    { token = WEB_OBS_TEXT; mightwant = true; goto done; }
+
+        *            { token = WEB_INVALID; goto done; }
+    */
+
+done:
+
+    s->used = used;
+    return (web_scanned_t){
+        .token = token,
+        .loc = (dstr_off_t){
+            .buf = s->buf, .start = start, .len = used - start,
+        },
+        .wantmore = mightwant && used >= buf.len,
+    };
+}

@@ -1,8 +1,7 @@
 #include <stdlib.h>
 
 #include "libdstr/libdstr.h"
-#include "liburl/liburl.h"
-#include "libhttp/libhttp.h"
+#include "libweb/libweb.h"
 
 #include "test/test_utils.h"
 

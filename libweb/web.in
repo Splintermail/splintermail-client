@@ -1,10 +1,22 @@
-# uri grammar
-# rfc3986: uri syntax
+# http grammar
+# rfc7230: http syntax
 
-{{#include <liburl/liburl.h>
+{{#ifndef LIBWEB_H
+#include <libweb/libweb.h>
+#endif
 
 // steal %param buf via a macro
 #define DSTR_OFF_ZERO(prev) dstr_off_zero(prev, buf, 0)
+
+static bool parse_status_code(dstr_off_t off, int *code){
+    derr_t e = E_OK;
+    *code = parse_int_within(&e, off, 100, 599);
+    CATCH(e, E_ANY){
+        DROP_VAR(&e);
+        return false;
+    }
+    return true;
+}
 
 static bool is_valid_port(dstr_off_t off){
     if(!off.len) return true;
@@ -18,85 +30,38 @@ static bool is_valid_port(dstr_off_t off){
     return true;
 }
 
-// recorded error message is based on sem.loc and buf, and is written to errbuf
-static void url_handle_error(
-    url_parser_t *p,
-    const dstr_t *buf,
-    bool hex,
-    dstr_t *errbuf,
-    url_token_e url_token,
-    url_sem_t sem,
-    const unsigned char *expected_mask,
-    const char *loc_summary
-){
-    // ignore the generated values so we can call url_handle_error ourselves
-    (void)p;
-    (void)hex;
-    (void)url_token;
-    (void)expected_mask;
-    (void)loc_summary;
-
-    // only generate an error if the user gave a buffer for it
-    if(errbuf == NULL) return;
-    errbuf->len = 0;
-
-    // aim for 80 characters of context
-    size_t head_len = MIN(sem.loc.start, 40);
-    size_t token_len = MIN(sem.loc.len, 80 - head_len);
-    size_t tail_len = 80 - MIN(80, head_len + token_len);
-
-    dstr_t head = dstr_sub2(*buf, sem.loc.start - head_len, sem.loc.start);
-    dstr_t token = dstr_sub2(*buf, sem.loc.start, sem.loc.start + token_len);
-    dstr_t tail = dstr_sub2(
-        *buf, sem.loc.start + token_len, sem.loc.start + token_len + tail_len
-    );
-
-    // longest DBG char is \xNN, or 4 chars, and we have two lines of len 80
-    // 80 * 4 = 320
-    FMT_QUIET(errbuf, "invalid url: %x", FD_DBG(head));
-    size_t nspaces = errbuf->len;
-    FMT_QUIET(errbuf, "%x", FD_DBG(token));
-    size_t ncarets = MAX(errbuf->len - nspaces, 1);
-    FMT_QUIET(errbuf, "%x\n", FD_DBG(tail));
-
-    // spaces
-    for(size_t i = 0; i < nspaces; i++){
-        dstr_append_quiet(errbuf, &DSTR_LIT(" "));
-    }
-
-    // carets
-    for(size_t i = 0; i < ncarets; i++){
-        dstr_append_quiet(errbuf, &DSTR_LIT("^"));
-    }
-
-    // always null-terminate
-    derr_type_t type = dstr_null_terminate_quiet(errbuf);
-    if(type != E_NONE && errbuf->len != 0){
-        errbuf->len--;
-        dstr_null_terminate(errbuf);
-    }
-}
-
-static void manual_error(const dstr_t *buf, dstr_t *errbuf, dstr_off_t loc){
-    url_handle_error(
-        NULL, buf, false, errbuf, 0, (url_sem_t){ .loc = loc }, NULL, NULL
-    );
-}
+#define MANUAL_ERROR(customloc) \
+    p->error_fn( \
+        NULL, \
+        buf, \
+        hex, \
+        data, \
+        0, \
+        (web_sem_t){ .loc = customloc }, \
+        NULL, \
+        NULL \
+    )
 
 }}
 
 %generator c;
-%prefix url;
+%prefix web;
 
 %param buf {const dstr_t *};
-%param hex {bool*};
-%param errbuf {dstr_t *};
+%param hex {bool*};        # used by url, weblink grammars
+%param data {void*};       # root-specific type:
+                           # - http wants derr_t *e
+                           # - url wants dstr_t*
+                           # - weblink wants weblinks_t*
 
 %kwarg semloc_type dstr_off_t;
 %kwarg span_fn dstr_off_extend;
 %kwarg zero_loc_fn DSTR_OFF_ZERO;
-%kwarg error_fn url_handle_error;
 
+%type i {int};
+%type status_line {http_status_line_t};
+%type pair {http_pair_t};
+%type size {size_t};
 %type url {url_t};
 %type addrspec {addrspec_t};
 %type bool {bool};
@@ -107,9 +72,9 @@ EOF;
 
 # groups
 ALPHA;
-NUM;
+DIGIT;
 HEX;  # only emitted when hex_mode is set by the parser
-EIGHTBIT;
+OBS_TEXT;  # 8th bit is set
 
 TAB;
 LF;
@@ -148,10 +113,272 @@ PIPE;
 RBRACE;
 TILDE;
 
+# keyword tokens
+HTTP;
+CHUNKED;
+
+%fallback ALPHA HTTP CHUNKED;
+
+vchar =
+# | LF
+# | CR
+| DIGIT
+| ALPHA
+# | OBS_TEXT
+# | TAB
+# | SP
+| BANG
+| DQUOTE
+| POUND
+| DOLLAR
+| PERCENT
+| AMPERSAND
+| SQUOTE
+| LPAREN
+| RPAREN
+| ASTERISK
+| PLUS
+| COMMA
+| DASH
+| DOT
+| SLASH
+| COLON
+| SEMI
+| LANGLE
+| EQ
+| RANGLE
+| QUESTION
+| ARUBA
+| LBRACKET
+| BACKSLASH
+| RBRACKET
+| CARET
+| UNDER
+| BACKTICK
+| LBRACE
+| PIPE
+| RBRACE
+| TILDE
+;
+
+tchar =
+# | LF
+# | CR
+| DIGIT
+| ALPHA
+# | OBS_TEXT
+# | TAB
+# | SP
+| BANG
+# | DQUOTE
+| POUND
+| DOLLAR
+| PERCENT
+| AMPERSAND
+| SQUOTE
+# | LPAREN
+# | RPAREN
+| ASTERISK
+| PLUS
+# | COMMA
+| DASH
+| DOT
+# | SLASH
+# | COLON
+# | SEMI
+# | LANGLE
+# | EQ
+# | RANGLE
+# | QUESTION
+# | ARUBA
+# | LBRACKET
+# | BACKSLASH
+# | RBRACKET
+| CARET
+| UNDER
+| BACKTICK
+# | LBRACE
+| PIPE
+# | RBRACE
+| TILDE
+;
+
+qdtext =
+# | LF
+# | CR
+| DIGIT
+| ALPHA
+| OBS_TEXT
+| TAB
+| SP
+| BANG
+# | DQUOTE
+| POUND
+| DOLLAR
+| PERCENT
+| AMPERSAND
+| SQUOTE
+| LPAREN
+| RPAREN
+| ASTERISK
+| PLUS
+| COMMA
+| DASH
+| DOT
+| SLASH
+| COLON
+| SEMI
+| LANGLE
+| EQ
+| RANGLE
+| QUESTION
+| ARUBA
+| LBRACKET
+# | BACKSLASH
+| RBRACKET
+| CARET
+| UNDER
+| BACKTICK
+| LBRACE
+| PIPE
+| RBRACE
+| TILDE
+;
+
+ws = TAB|SP;
+token = 1*tchar;
+
+# at most one of {transfer-encoding:chunked, content-length} may be provided.
+# rfc7230::3.3.3: Message Body Length (paraphrased):
+#
+# 1. HEAD response -> no body
+#
+# 2. 2xx response to a CONNECT implies the connection is a tunnel after header fields
+#
+# 3. If Transfer-Encoding is present and chunked transfer coding is the final encoding,
+#    message body length is determined by reading and decoding data until the
+#    transfer coding is indicates that data is complete.
+#
+#    If chunked transfer coding is not the final encoding, the message body
+#    length is determined by reading the connection until it is closed by the
+#    server.  Only servers may do this.
+#
+#    If content-length is also set, transfer-encoding overrides.  But probably
+#    I'll just reject it as an error.
+#
+# 4. Multiple content-length fields with the same value are valid.  Invalid
+#    content-length fields are invalid (duh).
+#
+# 5. If a valid content-length is present without transfer-encoding, use it.
+#
+# 6. If none of the above are true for a request, the length of the body is 0.
+#
+# 7. Otherwise, this is a response without a declared message length, so the
+#    server just writes body bytes until it's done.
+#
+# The inclusion of close-delimited message is primarily for backwards-
+# compatibility with HTTP/1.0, so probably we just won't allow it.
+
+# Our strategy will be to parse headers line-by-line.
+
+# note: we are choosing not to support obs-fold until we encounter a server
+#       that we need to talk to which uses it.
+
+%root status_line;
+status_line:status_line =
+    HTTP SLASH DIGIT DOT DIGIT SP status_code:s SP reason_phrase:r CR LF
+    {{ $$ = (http_status_line_t){
+           .code = $s,
+           .reason = dstr_from_off(dstr_off_strip(@r, DSTR_LIT(" \t"))),
+       };
+    }}
+;
+
+status_code:i =
+    DIGIT DIGIT DIGIT
+    {{ if(!parse_status_code(@$, &$$)){
+           MANUAL_ERROR(@$);
+           return WEB_STATUS_SYNTAX_ERROR;
+       }
+    }}
+;
+reason_phrase = *(ws | vchar | OBS_TEXT);
+
+empty = %empty;
+
+# note: hdr_line returns a zero-length key when it sees end-of-headers
+%root hdr_line;
+hdr_line:pair =
+    (
+      | token:name COLON *ws field_content_ws:field CR LF
+        # a valid header
+        {{ $$ = (http_pair_t){
+               .key = dstr_from_off(@name),
+               .value = dstr_from_off(dstr_off_strip(@field, DSTR_LIT(" \t"))),
+           };
+        }}
+      | empty:e CR LF
+        # end-of-headers
+        {{ $$ = (http_pair_t){
+               .key = dstr_from_off(@e),
+               .value = dstr_from_off(@e),
+           };
+        }}
+    )
+;
+
+field_vchar = vchar | OBS_TEXT;
+field_content_ws = (vchar | OBS_TEXT) *(field_vchar|ws);
+
+%root content_length_field;
+content_length_field = 1*DIGIT EOF;
+
+%root transfer_encoding_field;
+transfer_encoding_field = transfer_codings_ws EOF;
+transfer_codings_ws =
+    *(COMMA *ws)
+    1*(
+        transfer_coding_ws
+        (
+          | 1*(COMMA *ws)
+          | %return
+        )
+    )
+;
+# Note: we only support CHUNKED encoding; all others are treated as extensions.
+transfer_coding_ws =
+  | CHUNKED *ws
+  | token *ws *(SEMI *ws transfer_parameter *ws)
+;
+transfer_parameter = token *ws EQ *ws (token | quoted_string);
+
+quoted_string = DQUOTE quoted_body:body DQUOTE { @$ = @body; };
+quoted_body = *(qdtext | quoted_pair);
+quoted_pair = BACKSLASH (TAB | SP | vchar | OBS_TEXT);
+
+
+%root chunk;
+chunk:size = chunk_size:c *(SEMI chunked_extension) CR LF { $$ = $c; };
+
+chunk_size:size = 1*(ALPHA | DIGIT)
+ {{ dstr_t text = dstr_from_off(@$);
+    derr_type_t etype = dstr_tosize_quiet(text, &$$, 16);
+    if(etype != E_NONE){
+        MANUAL_ERROR(@$);
+        return WEB_STATUS_SYNTAX_ERROR;
+    }
+ }}
+;
+
+# rfc7230: "a recipient MUST ignore unrecognized chunk extensions" (we do)
+chunked_extension = token [ EQ (token | quoted_string) ];
+
+## rfc3986: uris
+
 # No keywords for uris
 
 pct_encoded = PERCENT { *hex = true; } HEX { *hex = true; } HEX;
-unreserved = ALPHA | NUM | DASH | DOT | UNDER | TILDE;
+unreserved = ALPHA | DIGIT | DASH | DOT | UNDER | TILDE;
 sub_delims = sub_delims_noplus | PLUS;
 sub_delims_noplus = BANG | DOLLAR | AMPERSAND | SQUOTE | LPAREN | RPAREN
                   | ASTERISK | COMMA | SEMI | EQ;
@@ -159,8 +386,6 @@ sub_delims_noplus = BANG | DOLLAR | AMPERSAND | SQUOTE | LPAREN | RPAREN
 # distinguish the two we'd have to do it in post-processing.  The RFC says
 # "if it matches an ipv4 address treat it as one" basically.
 reg_name_0 = *(unreserved | pct_encoded | sub_delims);
-
-empty = %empty;
 
 %root uri;
 uri:url = scheme:s COLON hier_part:hp qf:qf EOF
@@ -176,7 +401,7 @@ uri:url = scheme:s COLON hier_part:hp qf:qf EOF
    };
 }};
 
-scheme = ALPHA *(ALPHA | NUM | PLUS | DASH | DOT);
+scheme = ALPHA *(ALPHA | DIGIT | PLUS | DASH | DOT);
 
 qf:url =
     (
@@ -266,8 +491,8 @@ authority:url =
       | %empty
         # treat precolon and postcolon as host and port
         {{ if(!is_valid_port(@post)){
-               manual_error(buf, errbuf, @post);
-               return URL_STATUS_SYNTAX_ERROR;
+               MANUAL_ERROR(@post);
+               return WEB_STATUS_SYNTAX_ERROR;
            }
            $$.user = @e;
            $$.pass = @e;
@@ -302,7 +527,7 @@ path_after_auth = [SLASH *(pchar | SLASH)];
 pchar = pchar_nocolon | COLON;
 pchar_nocolon = unreserved | pct_encoded | sub_delims | ARUBA;
 
-port_0 = [NUM];
+port_0 = *DIGIT;
 
 # note: ipv4address is not present, it gets matches as part of reg-name
 host_0 = ip_literal | reg_name_0;
@@ -312,7 +537,8 @@ host_0 = ip_literal | reg_name_0;
 ip_literal = LBRACKET 1*(unreserved|sub_delims|COLON) RBRACKET;
 
 %root uri_reference;
-uri_reference:url = uri_reference_noqf:ref qf:qf EOF
+uri_reference:url = _uri_reference:uri EOF { $$ = $uri; };
+_uri_reference:url = uri_reference_noqf:ref qf:qf
 {{ $$ = (url_t){
         .scheme = $ref.scheme,
         .user = $ref.user,
@@ -330,7 +556,7 @@ scheme_or_path:bool =
   | ALPHA
     # still don't know for sure what it is...
       *(
-      | (ALPHA | NUM | PLUS | DASH | DOT)
+      | (ALPHA | DIGIT | PLUS | DASH | DOT)
         # still don't know for sure what it is...
 
       | (UNDER | TILDE | pct_encoded | sub_delims_noplus | ARUBA)
@@ -341,7 +567,7 @@ scheme_or_path:bool =
       # this is the only codepath where it might be a scheme
       { $$ = true; }
 
-  | (NUM|DASH|DOT|UNDER|TILDE|pct_encoded|sub_delims|ARUBA)
+  | (DIGIT|DASH|DOT|UNDER|TILDE|pct_encoded|sub_delims|ARUBA)
     # it must be a path, but still no colon is allowed
     *pchar_nocolon
 ;
@@ -371,8 +597,8 @@ uri_reference_noqf:url =
             # normal uri
             {{ // validate the scheme_or_path could have been a scheme
                if(!$sop){
-                   manual_error(buf, errbuf, @sop);
-                   return URL_STATUS_SYNTAX_ERROR;
+                   MANUAL_ERROR(@sop);
+                   return WEB_STATUS_SYNTAX_ERROR;
                }
                $$ = (url_t){
                    .scheme = @sop,
@@ -438,7 +664,7 @@ uri_reference_noqf:url =
 addrspec:addrspec =
     empty:start
     (
-      | COLON NUM:p
+      | COLON num:p
         # bare port
         { $$.scheme = @start; $$.host = @start; $$.port = @p; }
       | scheme_or_host:soh
@@ -451,13 +677,13 @@ addrspec:addrspec =
               | SLASH SLASH host_0:h maybe_port:p
                 # soh must have been scheme
                 {{ if(!$soh){
-                       manual_error(buf, errbuf, @soh);
-                       return URL_STATUS_SYNTAX_ERROR;
+                       MANUAL_ERROR(@soh);
+                       return WEB_STATUS_SYNTAX_ERROR;
                    }
                    $$.scheme = @soh;
                    $$.host = @h;
                    $$.port = @p; }}
-              | NUM:p
+              | num:p
                 # host:port form
                 { $$.scheme = @start; $$.host = @soh; $$.port = @p; }
               | empty:end
@@ -469,12 +695,14 @@ addrspec:addrspec =
     EOF
 ;
 
+num = 1*DIGIT;
+
 # returns bool indicating if it might be a scheme
 scheme_or_host:bool =
   | ALPHA
     # still don't know for sure what it is...
       *(
-        | (ALPHA | NUM | PLUS | DASH | DOT)
+        | (ALPHA | DIGIT | PLUS | DASH | DOT)
           # still don't know for sure what it is...
 
         | (UNDER | TILDE | pct_encoded | sub_delims_noplus)
@@ -484,9 +712,60 @@ scheme_or_host:bool =
       )
       # this is the only codepath where it might be a scheme
       { $$ = true; }
-  | (NUM|DASH|DOT|UNDER|TILDE|pct_encoded|sub_delims)
+  | (DIGIT|DASH|DOT|UNDER|TILDE|pct_encoded|sub_delims)
     # it must be a host (non-ip-literal)
     reg_name_0
   | ip_literal
     # just an ip literal
 ;
+
+
+## rfc8288: web linking
+%root weblink;
+
+weblink = link_value_ws *(COMMA *ws link_value_ws) EOF;
+
+# not for reuse outside of weblink root parser
+link_value_ws =
+    # disable weblinks_next_param()
+    { ((weblinks_t*)data)->nlabel = 0; }
+    LANGLE
+    _uri_reference:url
+    { ((weblinks_t*)data)->url = $url; }
+    { ((weblinks_t*)data)->nurl++; }
+    # re-enable weblinks_next_param()
+    { ((weblinks_t*)data)->nlabel = 1; }
+    RANGLE
+    *ws *(SEMI *ws link_param_ws)
+;
+
+# not for reuse outside of weblink root parser
+link_param_ws =
+    token:key *ws
+    (
+      | EQ *ws link_param_val_0 *ws
+      | empty:val { ((weblinks_t*)data)->param.value = dstr_from_off(@val); }
+    )
+    {{  weblinks_t *wp = data;
+        wp->param.key = dstr_from_off(@key);
+        wp->nlabel++;
+    }}
+;
+
+# not for reuse outside of weblink root parser
+link_param_val_0 =
+  | token:val
+    { ((weblinks_t*)data)->param.value = dstr_from_off(@val); }
+  | quoted_string:q
+    {{  weblinks_t *wp = data;
+        wp->buf.len = 0;
+        wp->etype = http_quoted_string_decode(dstr_from_off(@q), &wp->buf);
+        if(wp->etype == E_FIXEDSIZE){
+            FMT_QUIET(&wp->errbuf, "link header too large");
+        }else if(wp->etype){
+            MANUAL_ERROR(@q);
+        }
+        wp->param.value = wp->buf;
+    }}
+;
+
