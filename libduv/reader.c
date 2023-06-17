@@ -62,9 +62,6 @@ void stream_read_all(
     if(rstream->eof || rstream->canceled){
         LOG_FATAL("stream_reader constructed on non-readable stream\n");
     }
-    if(out->size == 0){
-        LOG_FATAL("stream_reader constructed with empty dstr\n");
-    }
     rstream->wrapper_data = r;
     // start reading
     do_read(r);

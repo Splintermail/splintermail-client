@@ -150,16 +150,16 @@ static derr_type_t do_bin2b64url(const dstr_t bin, writer_i *out){
         unsigned char c = ((unsigned char*)bin.data)[i];
         switch(i%3){
             case 0:
-                u = (c >> 2) & 0x3f;
+                u = (unsigned char)((c >> 2) & 0x3f);
                 etype = w.putc(out, b64ify(u));
                 if(etype) return etype;
-                u = (c & 0x03) << 4;
+                u = (unsigned char)((c & 0x03) << 4);
                 break;
             case 1:
-                u |= (c >> 4) & 0x0f;
+                u |= (unsigned char)((c >> 4) & 0x0f);
                 etype = w.putc(out, b64ify(u));
                 if(etype) return etype;
-                u = (c & 0x0f) << 2;
+                u = (unsigned char)((c & 0x0f) << 2);
                 break;
             case 2:
                 u |= (c >> 6) & 0x03;
@@ -202,6 +202,21 @@ derr_type_t _fmt_b64url(const fmt_i *iface, writer_i *out){
     return do_bin2b64url(bin, out);
 }
 
+DEF_CONTAINER_OF(_jdump_dstr_t, iface, jdump_i)
+
+derr_type_t _jdump_b64url(jdump_i *iface, writer_i *out, int indent, int pos){
+    derr_type_t etype;
+    (void)indent; (void)pos;
+    dstr_t d = CONTAINER_OF(iface, _jdump_dstr_t, iface)->d;
+    writer_t w = *out->w;
+    etype = w.putc(out, '"');
+    if(etype) return etype;
+    // no additional son encoding necessary
+    etype = do_bin2b64url(d, out);
+    if(etype) return etype;
+    return w.putc(out, '"');
+}
+
 derr_type_t b64url2bin_quiet(const dstr_t b64, dstr_t *bin){
     derr_type_t etype = E_NONE;
 
@@ -219,19 +234,19 @@ derr_type_t b64url2bin_quiet(const dstr_t b64, dstr_t *bin){
         if(u == 255) return E_PARAM;
         switch(i%4){
             case 0:
-                l = u << 2;
+                l = (unsigned char)(u << 2);
                 break;
             case 1:
-                l |= (u >> 4) & 0x03;
+                l |= (unsigned char)((u >> 4) & 0x03);
                 etype = dstr_append_char(bin, *view);
                 if(etype) return etype;
-                l = (u & 0x0f) << 4;
+                l = (unsigned char)((u & 0x0f) << 4);
                 break;
             case 2:
-                l |= (u >> 2) & 0x0f;
+                l |= (unsigned char)((u >> 2) & 0x0f);
                 etype = dstr_append_char(bin, *view);
                 if(etype) return etype;
-                l = (u & 0x03) << 6;
+                l = (unsigned char)((u & 0x03) << 6);
                 break;
             case 3:
                 l |= u;

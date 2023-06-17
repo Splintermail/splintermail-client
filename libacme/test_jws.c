@@ -161,7 +161,7 @@ static derr_t test_es256(void){
     PROP_GO(&e, jwk_to_key(json.root, &k), cu);
 
     DSTR_VAR(jwk_out, 256);
-    PROP_GO(&e, k->to_jwk_pvt(k, &jwk_out), cu);
+    PROP_GO(&e, jdump(DJWKPVT(k), WD(&jwk_out), 0), cu);
 
     // can write the key back to match the input
     jwk_out = dstr_strip_chars(jwk_out, '\n');

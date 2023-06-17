@@ -175,6 +175,11 @@ url_t must_parse_url(const dstr_t *text){
     return out;
 }
 
+// get the string behind the url
+dstr_t url_text(url_t url){
+    return dstr_from_off(dstr_off_extend(url.scheme, url.fragment));
+}
+
 //
 
 bool parse_addrspec_ex(const dstr_t *text, addrspec_t *out, dstr_t *errbuf){
@@ -259,6 +264,10 @@ addrspec_t must_parse_addrspec(const dstr_t *text){
     return out;
 }
 
+// get the string behind the addrspec
+dstr_t addrspec_text(addrspec_t spec){
+    return dstr_from_off(dstr_off_extend(spec.scheme, spec.port));
+}
 
 // out must be freed with freeaddrinfo
 derr_t getaddrspecinfo(

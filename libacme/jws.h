@@ -2,16 +2,27 @@ struct key_i;
 typedef struct key_i key_i;
 
 struct key_i {
-    const dstr_t *protected_params;
-    derr_t (*to_jwk_pvt)(key_i*, dstr_t *out);
+    dstr_t protected_params;
+    derr_type_t (*to_jwk_pvt)(key_i*, writer_i *out, int indent, int pos);
     // to_jwk_pub emits sorted keys for thumbprint purposes
-    derr_t (*to_jwk_pub)(key_i*, dstr_t *out);
+    derr_type_t (*to_jwk_pub)(key_i*, writer_i *out, int indent, int pos);
     derr_t (*to_pem_pub)(key_i*, dstr_t *out);
     derr_t (*sign)(key_i*, const dstr_t in, dstr_t *out);
     void (*free)(key_i*);
 };
 
-/* I'd prefer using Ed25519 over ES256, but zerossl doesn't support Ed25519 */
+typedef struct {
+    jdump_i iface;
+    key_i *k;
+} _jdump_jwk_t;
+
+derr_type_t _jdump_jwkpvt(jdump_i *iface, writer_i *out, int indent, int pos);
+derr_type_t _jdump_jwkpub(jdump_i *iface, writer_i *out, int indent, int pos);
+
+#define DJWKPVT(k) (&(_jdump_jwk_t){ { _jdump_jwkpvt }, k }.iface)
+#define DJWKPUB(k) (&(_jdump_jwk_t){ { _jdump_jwkpub }, k }.iface)
+
+// I'd prefer using Ed25519 over ES256, but letsencrypt doesn't support it
 derr_t gen_ed25519(key_i **out);
 
 derr_t ed25519_from_bytes(const dstr_t bytes, key_i **out);

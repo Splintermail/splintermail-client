@@ -45,5 +45,5 @@ dstr_t weblinks_errbuf(weblinks_t *p);
 //         }
 //     }
 //     // check for iteration errors
-//     derr_type_t etype =  weblinks_stauts(&p);
+//     derr_type_t etype =  weblinks_status(&p);
 // }

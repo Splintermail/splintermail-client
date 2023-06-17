@@ -16,8 +16,14 @@ typedef struct {
     derr_t e;
 } globals_t;
 
-static void _new_account_cb(
-    void *data, derr_t err, acme_account_t acct
+static void _get_authz_cb(
+    void *data,
+    derr_t err,
+    dstr_t domain,
+    dstr_t status,
+    dstr_t expires,
+    dstr_t challenge,
+    dstr_t token
 ){
     derr_t e = E_OK;
 
@@ -27,24 +33,30 @@ static void _new_account_cb(
 
     // dump key info and exit
     jdump_i *obj =  DOBJ(
-        DKEY("key", DJWKPVT(acct.key)),
-        DKEY("kid", DD(acct.kid)),
-        DKEY("orders", DD(acct.orders)),
+        DKEY("domain", DD(domain)),
+        DKEY("status", DD(status)),
+        DKEY("expires", DD(expires)),
+        DKEY("challenge", DD(challenge)),
+        DKEY("token", DD(token)),
     );
     PROP_GO(&e, jdump(obj, WF(stdout), 2), done);
 
     g->success = true;
 
 done:
-    acme_account_free(&acct);
+    dstr_free(&domain);
+    dstr_free(&status);
+    dstr_free(&expires);
+    dstr_free(&challenge);
+    dstr_free(&token);
     duv_http_close(g->http, http_close_cb);
     TRACE_PROP_VAR(&g->e, &e);
 }
 
-static derr_t new_account(
-    dstr_t contact_email,
-    key_i **key,
+static derr_t get_authz(
     dstr_t directory,
+    char *acct_file,
+    const dstr_t authz,
     SSL_CTX *ctx
 ){
     derr_t e = E_OK;
@@ -52,8 +64,9 @@ static derr_t new_account(
     uv_loop_t loop = {0};
     duv_scheduler_t scheduler = {0};
     duv_http_t http = {0};
-    globals_t g = { &http };
     acme_t *acme = NULL;
+    acme_account_t acct = {0};
+    globals_t g = { &http };
 
     PROP(&e, duv_loop_init(&loop) );
 
@@ -63,8 +76,9 @@ static derr_t new_account(
 
     PROP_GO(&e, acme_new(&acme, &http, directory, NULL), fail);
 
-    // request a new account
-    acme_new_account(acme, key, contact_email, _new_account_cb, &g);
+    PROP_GO(&e, acme_account_from_file(&acct, acct_file, acme), fail);
+
+    acme_get_authz(acct, authz, _get_authz_cb, &g);
 
     derr_t e2 = duv_run(&loop);
     TRACE_PROP_VAR(&e, &e2);
@@ -74,9 +88,11 @@ static derr_t new_account(
     }
 
 fail:
+    acme_account_free(&acct);
     acme_free(&acme);
     duv_http_close(&http, http_close_cb);
     DROP_CMD( duv_run(&loop) );
+
     duv_scheduler_close(&scheduler);
     uv_loop_close(&loop);
     DROP_CMD( duv_run(&loop) );
@@ -85,9 +101,9 @@ fail:
 
 static void print_help(void){
     fprintf(stdout,
-        "new-account: create an ACME account\n"
+        "get-authz: get an existing ACME authorization\n"
         "\n"
-        "usage: new-account [OPTIONS] CONTACT_EMAIL > account.json\n"
+        "usage: get-authz [OPTIONS] ACCOUNT.JSON AUTHZ > authz.json\n"
         "\n"
         "where OPTIONS may contain:\n"
         "\n"
@@ -127,30 +143,24 @@ int main(int argc, char **argv){
         return 0;
     }
 
-    if(newargc < 2){
+    if(newargc < 3){
         fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
         return 1;
     }
 
-    char *contact_str = argv[1];
-
-    dstr_t contact_email;
-    DSTR_WRAP(contact_email, contact_str, strlen(contact_str), true);
+    char *acct = argv[1];
+    dstr_t authz = dstr_from_cstr(argv[2]);
 
     dstr_t directory = o_dir.found ? o_dir.val : DSTR_LIT(LETSENCRYPT);
     const char *ca = o_ca.found ? o_ca.val.data : NULL;
 
     ssl_context_t ssl_ctx = {0};
-    key_i *k = NULL;
 
     PROP_GO(&e, ssl_library_init(), fail);
 
     PROP_GO(&e, ssl_context_new_client_ex(&ssl_ctx, true, &ca, !!ca), fail);
 
-    // generate a new key
-    PROP_GO(&e, gen_es256(&k), fail);
-
-    PROP_GO(&e, new_account(contact_email, &k, directory, ssl_ctx.ctx), fail);
+    PROP_GO(&e, get_authz(directory, acct, authz, ssl_ctx.ctx), fail);
 
 fail:
     (void)main;
@@ -162,7 +172,6 @@ fail:
     }
 
     ssl_context_free(&ssl_ctx);
-    if(k) k->free(k);
 
     ssl_library_close();
 

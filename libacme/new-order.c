@@ -6,18 +6,78 @@
 
 #include <string.h>
 
-static void http_close_cb(duv_http_t *http){
-    (void)http;
-}
-
 typedef struct {
     duv_http_t *http;
     bool success;
     derr_t e;
 } globals_t;
 
-static void _new_account_cb(
-    void *data, derr_t err, acme_account_t acct
+static void http_close_cb(duv_http_t *http){
+    (void)http;
+}
+
+static derr_t parse_timestamp(dstr_t d, time_t *out){
+    derr_t e = E_OK;
+
+    // calculate seconds offset between localtime and UTC with stdlib functions
+    static time_t offset = LONG_MAX;
+    if(offset == LONG_MAX){
+        // get current epoch seconds
+        time_t now;
+        PROP(&e, dtime(&now) );
+        // convert to utc calendar time
+        struct tm utc;
+        #ifdef _WIN32
+        gmtime_s(&utc, &now);
+        #else
+        gmtime_r(&now, &utc);
+        #endif
+        // convert utc calendar time to epoch time, to measure offset
+        offset = now - mktime(&utc);
+    }
+
+    DSTR_VAR(buf, 32);
+    PROP(&e, dstr_copy(&d, &buf) );
+    PROP(&e, dstr_null_terminate(&buf) );
+
+    // example time: 2000-01-12T13:14:15Z
+    struct tm tm = {0};
+    int ret = sscanf(
+        buf.data,
+        "%d-%d-%dT%d:%d:%dZ",
+        &tm.tm_year,
+        &tm.tm_mon,
+        &tm.tm_mday,
+        &tm.tm_hour,
+        &tm.tm_min,
+        &tm.tm_sec
+    );
+    if(ret != 6) ORIG(&e, E_PARAM, "unable to parse timestamp: %x\n", FD(d));
+
+    // year 0 is 1900
+    tm.tm_year -= 1900;
+    // month 0 is january
+    tm.tm_mon -= 1;
+
+    // get the timestamp in epoch seconds (as if the time were local)
+    time_t stamp = mktime(&tm);
+    if(stamp == (time_t)-1){
+        ORIG(&e, E_PARAM, "mktime(%x): %x\n", FD(d), FE(errno));
+    }
+
+    // apply offset
+    *out = stamp + offset;
+
+    return e;
+}
+
+static void _new_order_cb(
+    void *data,
+    derr_t err,
+    dstr_t order,
+    dstr_t expires,
+    dstr_t authorization,
+    dstr_t finalize
 ){
     derr_t e = E_OK;
 
@@ -25,26 +85,39 @@ static void _new_account_cb(
 
     PROP_VAR_GO(&e, &err, done);
 
-    // dump key info and exit
     jdump_i *obj =  DOBJ(
-        DKEY("key", DJWKPVT(acct.key)),
-        DKEY("kid", DD(acct.kid)),
-        DKEY("orders", DD(acct.orders)),
+        DKEY("order", DD(order)),
+        DKEY("expires", DD(expires)),
+        DKEY("authorization", DD(authorization)),
+        DKEY("finalize", DD(finalize)),
     );
     PROP_GO(&e, jdump(obj, WF(stdout), 2), done);
+
+    time_t now;
+    PROP_GO(&e, dtime(&now), done);
+    time_t stamp;
+    PROP_GO(&e, parse_timestamp(expires, &stamp), done);
+
+    PFMT(
+        "now = %x, stamp = %x, diff=%x\n", FI(now), FI(stamp), FI(stamp - now)
+    );
 
     g->success = true;
 
 done:
-    acme_account_free(&acct);
+    dstr_free(&order);
+    dstr_free(&expires);
+    dstr_free(&authorization);
+    dstr_free(&finalize);
     duv_http_close(g->http, http_close_cb);
     TRACE_PROP_VAR(&g->e, &e);
 }
 
-static derr_t new_account(
-    dstr_t contact_email,
-    key_i **key,
+
+static derr_t new_order(
     dstr_t directory,
+    char *acct_file,
+    dstr_t domain,
     SSL_CTX *ctx
 ){
     derr_t e = E_OK;
@@ -52,8 +125,9 @@ static derr_t new_account(
     uv_loop_t loop = {0};
     duv_scheduler_t scheduler = {0};
     duv_http_t http = {0};
-    globals_t g = { &http };
     acme_t *acme = NULL;
+    acme_account_t acct = {0};
+    globals_t g = { &http };
 
     PROP(&e, duv_loop_init(&loop) );
 
@@ -63,8 +137,9 @@ static derr_t new_account(
 
     PROP_GO(&e, acme_new(&acme, &http, directory, NULL), fail);
 
-    // request a new account
-    acme_new_account(acme, key, contact_email, _new_account_cb, &g);
+    PROP_GO(&e, acme_account_from_file(&acct, acct_file, acme), fail);
+
+    acme_new_order(acct, domain, _new_order_cb, &g);
 
     derr_t e2 = duv_run(&loop);
     TRACE_PROP_VAR(&e, &e2);
@@ -74,6 +149,7 @@ static derr_t new_account(
     }
 
 fail:
+    acme_account_free(&acct);
     acme_free(&acme);
     duv_http_close(&http, http_close_cb);
     DROP_CMD( duv_run(&loop) );
@@ -85,9 +161,9 @@ fail:
 
 static void print_help(void){
     fprintf(stdout,
-        "new-account: create an ACME account\n"
+        "new-order: create a new ACME order\n"
         "\n"
-        "usage: new-account [OPTIONS] CONTACT_EMAIL > account.json\n"
+        "usage: new-order [OPTIONS] ACCOUNT.JSON DOMAIN > order.json\n"
         "\n"
         "where OPTIONS may contain:\n"
         "\n"
@@ -127,30 +203,25 @@ int main(int argc, char **argv){
         return 0;
     }
 
-    if(newargc < 2){
+    if(newargc < 3){
         fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
         return 1;
     }
 
-    char *contact_str = argv[1];
-
-    dstr_t contact_email;
-    DSTR_WRAP(contact_email, contact_str, strlen(contact_str), true);
+    char *acct = argv[1];
+    dstr_t domain = dstr_from_cstr(argv[2]);
 
     dstr_t directory = o_dir.found ? o_dir.val : DSTR_LIT(LETSENCRYPT);
     const char *ca = o_ca.found ? o_ca.val.data : NULL;
 
     ssl_context_t ssl_ctx = {0};
-    key_i *k = NULL;
 
     PROP_GO(&e, ssl_library_init(), fail);
 
     PROP_GO(&e, ssl_context_new_client_ex(&ssl_ctx, true, &ca, !!ca), fail);
 
-    // generate a new key
-    PROP_GO(&e, gen_es256(&k), fail);
-
-    PROP_GO(&e, new_account(contact_email, &k, directory, ssl_ctx.ctx), fail);
+    // create the order
+    PROP_GO(&e, new_order(directory, acct, domain, ssl_ctx.ctx), fail);
 
 fail:
     (void)main;
@@ -162,7 +233,6 @@ fail:
     }
 
     ssl_context_free(&ssl_ctx);
-    if(k) k->free(k);
 
     ssl_library_close();
 

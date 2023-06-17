@@ -35,6 +35,18 @@ static void from_bigendian(dstr_t *buf){
 }
 #endif
 
+DEF_CONTAINER_OF(_jdump_jwk_t, iface, jdump_i)
+
+derr_type_t _jdump_jwkpvt(jdump_i *iface, writer_i *out, int indent, int pos){
+    key_i *k = CONTAINER_OF(iface, _jdump_jwk_t, iface)->k;
+    return k->to_jwk_pvt(k, out, indent, pos);
+}
+
+derr_type_t _jdump_jwkpub(jdump_i *iface, writer_i *out, int indent, int pos){
+    key_i *k = CONTAINER_OF(iface, _jdump_jwk_t, iface)->k;
+    return k->to_jwk_pub(k, out, indent, pos);
+}
+
 typedef struct {
     key_i iface;
     EVP_PKEY *pkey;
@@ -42,63 +54,55 @@ typedef struct {
 } ed25519_t;
 DEF_CONTAINER_OF(ed25519_t, iface, key_i)
 
-static derr_t ed25519_to_jwk(ed25519_t *k, bool pvt, dstr_t *out){
-    derr_t e = E_OK;
+static derr_type_t ed25519_to_jwk(
+    ed25519_t *k, bool pvt, writer_i *out, int indent, int pos
+){
 
     DSTR_VAR(buf, 32);
+    DSTR_VAR(pvtbuf, 32);
     buf.len = buf.size;
     int ret = EVP_PKEY_get_raw_public_key(
         k->pkey, (unsigned char*)buf.data, &buf.len
     );
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "EVP_PKEY_get_raw_public_key failed");
-    }
-
-    PROP(&e,
-        dstr_append(
-            out,
-            &DSTR_LIT(
-                // public key elements in sorted order for thumbprint
-                "{"
-                    "\"crv\":\"Ed25519\","
-                    "\"kty\":\"OKP\","
-                    "\"x\":\""
-            )
-        )
-    );
-    PROP(&e, bin2b64url(buf, out) );
+    if(ret != 1) return E_SSL;
 
     if(pvt){
-        buf.len = buf.size;
+        pvtbuf.len = pvtbuf.size;
         ret = EVP_PKEY_get_raw_private_key(
-            k->pkey, (unsigned char*)buf.data, &buf.len
+            k->pkey, (unsigned char*)pvtbuf.data, &pvtbuf.len
         );
-        if(ret != 1){
-            trace_ssl_errors(&e);
-            ORIG(&e, E_SSL, "EVP_PKEY_get_raw_public_key failed");
-        }
-
-        PROP(&e, dstr_append(out, &DSTR_LIT("\",\"d\":\"")) );
-        PROP(&e, bin2b64url(buf, out) );
-
-        // zeroize private key buffer
-        dstr_zeroize(&buf);
+        if(ret != 1) return E_SSL;
     }
 
-    PROP(&e, dstr_append(out, &DSTR_LIT("\"}")) );
+    jdump_i *obj = DOBJ(
+        // public key elements in sorted order for thumbprint
+        DKEY("crv", DS("Ed25519")),
+        DKEY("kty", DS("OKP")),
+        DKEY("x", DB64URL(buf)),
+        // private key may be excluded
+        DKEY("d", pvt ? DB64URL(buf) : NULL),
+    );
 
-    return e;
+    derr_type_t etype = obj->jdump(obj, out, indent, pos);
+
+    // always zeroize private key buffer
+    if(pvt) dstr_zeroize(&pvtbuf);
+
+    return etype;
 }
 
-static derr_t ed25519_to_jwk_pvt(key_i *iface, dstr_t *out){
+static derr_type_t ed25519_to_jwk_pvt(
+    key_i *iface, writer_i *out, int indent, int pos
+){
     ed25519_t *k = CONTAINER_OF(iface, ed25519_t, iface);
-    return ed25519_to_jwk(k, true, out);
+    return ed25519_to_jwk(k, true, out, indent, pos);
 }
 
-static derr_t ed25519_to_jwk_pub(key_i *iface, dstr_t *out){
+static derr_type_t ed25519_to_jwk_pub(
+    key_i *iface, writer_i *out, int indent, int pos
+){
     ed25519_t *k = CONTAINER_OF(iface, ed25519_t, iface);
-    return ed25519_to_jwk(k, false, out);
+    return ed25519_to_jwk(k, false, out, indent, pos);
 }
 
 static derr_t ed25519_to_pem_pub(key_i *iface, dstr_t *out){
@@ -147,7 +151,7 @@ static void ed25519_prep(ed25519_t *k, EVP_PKEY **pkey, EVP_MD_CTX **mdctx){
     DSTR_STATIC(params, "\"alg\":\"EdDSA\",\"crv\":\"Ed25519\"");
     *k = (ed25519_t){
         .iface = {
-            .protected_params = &params,
+            .protected_params = params,
             .to_jwk_pvt = ed25519_to_jwk_pvt,
             .to_jwk_pub = ed25519_to_jwk_pub,
             .to_pem_pub = ed25519_to_pem_pub,
@@ -265,16 +269,22 @@ typedef struct {
 } es256_t;
 DEF_CONTAINER_OF(es256_t, iface, key_i)
 
-static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out);
+static derr_type_t es256_to_jwk(
+    es256_t *k, bool pvt, writer_i *out, int indent, int pos
+);
 
-static derr_t es256_to_jwk_pvt(key_i *iface, dstr_t *out){
+static derr_type_t es256_to_jwk_pvt(
+    key_i *iface, writer_i *out, int indent, int pos
+){
     es256_t *k = CONTAINER_OF(iface, es256_t, iface);
-    return es256_to_jwk(k, true, out);
+    return es256_to_jwk(k, true, out, indent, pos);
 }
 
-static derr_t es256_to_jwk_pub(key_i *iface, dstr_t *out){
+static derr_type_t es256_to_jwk_pub(
+    key_i *iface, writer_i *out, int indent, int pos
+){
     es256_t *k = CONTAINER_OF(iface, es256_t, iface);
-    return es256_to_jwk(k, false, out);
+    return es256_to_jwk(k, false, out, indent, pos);
 }
 
 static derr_t es256_to_pem_pub(key_i *iface, dstr_t *out){
@@ -358,8 +368,10 @@ static void es256_free(key_i *iface){
 #if OPENSSL_VERSION_NUMBER < 0x30000000L // pre-3.0
 
 // openssl-1.1 variant
-static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
-    derr_t e = E_OK;
+static derr_type_t es256_to_jwk(
+    es256_t *k, bool pvt, writer_i *out, int indent, int pos
+){
+    derr_type_t etype = E_NONE;
 
     BIGNUM *x = NULL;
     BIGNUM *y = NULL;
@@ -370,9 +382,7 @@ static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
 
     // get the elliptic curve key from the EVP_PKEY wrapper
     const EC_KEY *eckey = EVP_PKEY_get0_EC_KEY(k->pkey);
-    if(!eckey){
-        ORIG(&e, E_INTERNAL, "did not get EC_KEY from es256_t");
-    }
+    if(!eckey) LOG_FATAL("did not get EC_KEY from es256_t\n");
 
     // get the public key as an EC_POINT
     const EC_POINT *ecpoint =  EC_KEY_get0_public_key(eckey);
@@ -383,66 +393,82 @@ static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
     // get x and y as well
     x = BN_new();
     if(!x){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_new", cu);
+        etype = E_SSL;
+        goto cu;
     }
     y = BN_new();
     if(!y){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_new", cu);
+        etype = E_SSL;
+        goto cu;
     }
     int ret = EC_POINT_get_affine_coordinates(group, ecpoint, x, y, NULL);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EC_POINT_get_affine_coordinates failed", cu);
+        etype = E_SSL;
+        goto cu;
     }
 
     if(BN_num_bytes(x) > (int)xbuf.size){
-        ORIG(&e, E_INTERNAL, "xbuf too small!");
+        LOG_ERROR("xbuf too small\n");
+        etype = E_INTERNAL;
+        goto cu;
     }
     if(BN_num_bytes(y) > (int)ybuf.size){
-        ORIG(&e, E_INTERNAL, "ybuf too small!");
+        LOG_ERROR("ybuf too small\n");
+        etype = E_INTERNAL;
+        goto cu;
     }
 
     int xlen = BN_bn2bin(x, (unsigned char*)xbuf.data);
-    if(xlen < 0) ORIG(&e, E_INTERNAL, "BN_bn2bin returned negative length");
+    if(xlen < 0){
+        LOG_ERROR("BN_bn2bin returned negative length\n");
+        etype = E_INTERNAL;
+        goto cu;
+    }
     xbuf.len = (size_t)xlen;
 
     int ylen = BN_bn2bin(y, (unsigned char*)ybuf.data);
-    if(ylen < 0) ORIG(&e, E_INTERNAL, "BN_bn2bin returned negative length");
+    if(ylen < 0){
+        LOG_ERROR("BN_bn2bin returned negative length\n");
+        etype = E_INTERNAL;
+        goto cu;
+    }
     ybuf.len = (size_t)ylen;
-
-    PROP_GO(&e,
-        FMT(out,
-            "{"
-                // public key elements in sorted order for thumbprint
-                "\"crv\":\"P-256\","
-                "\"kty\":\"EC\","
-                "\"x\":\"%x\","
-                "\"y\":\"%x\"",
-            FB64URL(xbuf),
-            FB64URL(ybuf)
-        ),
-    cu);
 
     if(pvt){
         // get the private key as a bignum
         const BIGNUM *d = EC_KEY_get0_private_key(eckey);
         if(BN_num_bytes(d) > (int)dbuf.size){
-            ORIG(&e, E_INTERNAL, "dbuf too small!");
+            LOG_ERROR("dbuf too small\n");
+            etype = E_INTERNAL;
+            goto cu;
         }
-        dbuf.len = (size_t)BN_bn2bin(d, (unsigned char*)dbuf.data);
-        PROP_GO(&e, FMT(out, ",\"d\":\"%x\"", FB64URL(dbuf)), cu);
+        int dlen = BN_bn2bin(d, (unsigned char*)dbuf.data);
+        if(dlen < 0){
+            LOG_ERROR("BN_bn2bin returned negative length\n");
+            etype = E_INTERNAL;
+            goto cu;
+        }
+        dbuf.len = (size_t)dlen;
     }
 
-    PROP_GO(&e, dstr_append(out, &DSTR_LIT("}")), cu);
+    jdump_i *obj = DOBJ(
+        // public key elements in sorted order for thumbprint
+        DKEY("crv", DS("P-256")),
+        DKEY("kty", DS("EC")),
+        DKEY("x", DB64URL(xbuf)),
+        DKEY("y", DB64URL(ybuf)),
+        // private element may be skipped
+        DKEY("d", pvt ? DB64URL(dbuf) : NULL),
+    );
+    etype = obj->jdump(obj, out, indent, pos);
+    if(etype) goto cu;
 
 cu:
-    dstr_zeroize(&dbuf);
+    if(pvt) dstr_zeroize(&dbuf);
     if(x) BN_free(x);
     if(y) BN_free(y);
 
-    return e;
+    return etype;
 }
 
 // openssl-1.1 variant
@@ -480,7 +506,7 @@ static derr_t es256_from_eckey(EC_KEY **eckey, key_i **out){
     DSTR_STATIC(params, "\"alg\":\"ES256\"");
     *k = (es256_t){
         .iface = {
-            .protected_params = &params,
+            .protected_params = params,
             .to_jwk_pvt = es256_to_jwk_pvt,
             .to_jwk_pub = es256_to_jwk_pub,
             .to_pem_pub = es256_to_pem_pub,
@@ -567,7 +593,7 @@ static derr_t es256_from_jwk(
     PROP_GO(&e, es256_from_eckey(&eckey, out), cu);
 
 cu:
-    dstr_zeroize(&d);
+    dstr_zeroize(&dbuf);
     if(xbn) BN_free(xbn);
     if(ybn) BN_free(ybn);
     if(dbn) BN_clear_free(dbn);
@@ -605,8 +631,10 @@ cu:
 #else //
 
 // openssl-3.0 variant
-static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
-    derr_t e = E_OK;
+static derr_type_t es256_to_jwk(
+    es256_t *k, bool pvt, writer_i *out, int indent, int pos
+){
+    derr_type_t etype = E_NONE;
 
     DSTR_VAR(d, 32);
     DSTR_VAR(x, 32);
@@ -633,41 +661,29 @@ static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
         {0},
     };
     int ret = EVP_PKEY_get_params(k->pkey, &params[pvt ? 0 : 1]);
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "EVP_PKEY_get_params failed");
-    }
+    if(ret != 1) return E_SSL;
     if(pvt) d.len = params[0].return_size;
     x.len = params[1].return_size;
     y.len = params[2].return_size;
+    if(pvt) to_bigendian(&d);
     to_bigendian(&x);
     to_bigendian(&y);
-    if(pvt) to_bigendian(&d);
 
-    PROP_GO(&e,
-        FMT(out,
-            "{"
-                // public key elements in sorted order for thumbprint
-                "\"crv\":\"P-256\","
-                "\"kty\":\"EC\","
-                "\"x\":\"%x\","
-                "\"y\":\"%x\"",
-            FB64URL(x),
-            FB64URL(y)
-        ),
-    cu);
+    jdump_i *obj = DOBJ(
+        // public key elements in sorted order for thumbprint
+        DKEY("crv", DS("P-256")),
+        DKEY("kty", DS("EC")),
+        DKEY("x", DB64URL(x)),
+        DKEY("y", DB64URL(y)),
+        // private element may be skipped
+        DKEY("d", pvt ? DB64URL(d) : NULL),
+    );
+    etype = obj->jdump(obj, out, indent, pos);
 
-    if(pvt){
-        // get the private key as a bignum
-        PROP_GO(&e, FMT(out, ",\"d\":\"%x\"", FB64URL(d)), cu);
-    }
-
-    PROP_GO(&e, dstr_append(out, &DSTR_LIT("}")), cu);
-
-cu:
+    // always zeroize
     if(pvt) dstr_zeroize(&d);
 
-    return e;
+    return etype;
 }
 
 // openssl-3.0 variant
@@ -689,7 +705,7 @@ static derr_t es256_from_pkey(EVP_PKEY **pkey, key_i **out){
     DSTR_STATIC(params, "\"alg\":\"ES256\"");
     *k = (es256_t){
         .iface = {
-            .protected_params = &params,
+            .protected_params = params,
             .to_jwk_pvt = es256_to_jwk_pvt,
             .to_jwk_pub = es256_to_jwk_pub,
             .to_pem_pub = es256_to_pem_pub,
@@ -885,7 +901,7 @@ derr_t jwk_thumbprint(key_i *k, dstr_t *out){
     PROP(&e, dstr_grow(out, out->len + SHA256_DIGEST_LENGTH) );
 
     DSTR_VAR(json, 256);
-    PROP(&e, k->to_jwk_pub(k, &json) );
+    PROP(&e, jdump(DJWKPUB(k), WD(&json), 0));
 
     unsigned char *uret = SHA256(
         (const unsigned char*)json.data,
@@ -990,20 +1006,13 @@ derr_t acme_jws(
 
     // write protected headers
     DSTR_VAR(protected, 4096);
-    PROP(&e,
-        FMT(&protected,
-            "{"
-                "%x,"
-                "\"nonce\":\"%x\","
-                "\"kid\":\"%x\","
-                "\"url\":\"%x\""
-            "}",
-            FD(*k->protected_params),
-            FD_JSON(nonce),
-            FD_JSON(kid),
-            FD_JSON(url),
-        )
+    jdump_i *obj = DOBJ(
+        DOBJSNIPPET(k->protected_params),
+        DKEY("nonce", DD(nonce)),
+        DKEY("kid", DD(kid)),
+        DKEY("url", DD(url)),
     );
+    PROP(&e, jdump(obj, WD(&protected), 0) );
 
     PROP(&e, jws(protected, payload, SIGN_KEY(k), out) );
 

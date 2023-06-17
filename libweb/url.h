@@ -21,6 +21,9 @@ derr_t parse_url_reference(const dstr_t *text, url_t *out);
 // watch out! url is only valid as long as the dstr_t is
 url_t must_parse_url(const dstr_t *text);
 
+// get the string behind the url
+dstr_t url_text(url_t url);
+
 //
 
 // returns bool ok, errbuf can be NULL if you don't want a rendered error
@@ -31,6 +34,9 @@ derr_t parse_addrspec(const dstr_t *text, addrspec_t *out);
 
 // watch out! url is only valid as long as the dstr_t is
 addrspec_t must_parse_addrspec(const dstr_t *text);
+
+// get the string behind the addrspec
+dstr_t addrspec_text(addrspec_t addrspec);
 
 // out must be freed with freeaddrinfo
 derr_t getaddrspecinfo(

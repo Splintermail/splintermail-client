@@ -102,3 +102,42 @@ Allowing long-polling for this endpoint should not introduce a significant
 overhead to the server.  If there were a million installations, each updating
 their certificate every 60 days, and if each took an average of 1 minute to
 update, that would average less than 12 long-polling connections at a time.
+
+## ACME Step-by-step
+
+0. if certificate exists and doesn't need updating, sleep until it does.
+
+1. if an account is is on file, load it and skip to 4.
+
+2. if a jwk is on file, load it and skip to 5.
+
+3. generate a jwk, write it to file
+
+4. create an account with the jwk, write it to file
+
+5. list orders.  If one is valid, take the cert and skip to 13.  If one is
+   processing, skip to 13.
+
+6. Create a new order.
+
+7. get authz in order to view challenge token.  If status is not "valid" skip
+   to 9.
+
+8. set challenge token with rest api (blocks until challenge is ready).
+
+9. post to challenge.
+
+10. poll for authorization status to become "valid" or "invalid".  If invalid,
+    log reason and return to step 6.
+
+11. generate key, write to file.
+
+12. generate crl, finalize order.
+
+13. poll for order.status == "valid"
+
+14. write certificate to file.
+
+15. delete challenge with rest api
+
+16. return to step 0.
