@@ -2,6 +2,8 @@
 
 #include "test/test_utils.h"
 
+#include <errno.h>
+
 typedef struct {
     char *exp;
     char *fstr;
@@ -27,8 +29,11 @@ static derr_t test_fmt(void){
         {"FS hello world (nil)", "FS %x %x", FS("hello world"), FS(NULL)},
         {"FSN hi (nil)", "FSN %x %x", FSN("hi", 2), FSN(NULL, 0)},
         {"FD hello world", "FD %x", FD(DSTR_LIT("hello world"))},
+        {"FS_DBG hi\\t\\x01", "FS_DBG %x", FS_DBG("hi\t\x01")},
+        {"FSN_DBG hi\\t\\x01", "FSN_DBG %x", FSN_DBG("hi\t\x01", 4)},
         {"FD_DBG hi\\t\\x01", "FD_DBG %x", FD_DBG(DSTR_LIT("hi\t\x01"))},
         {"FX 68656c6c6f20776f726c64", "FX %x", FX(DSTR_LIT("hello world"))},
+        {"FE No such file or directory", "FE %x", FE(ENOENT)},
         // no cross-platform test for FE
     };
 

@@ -153,7 +153,9 @@ derr_type_t _fmt_float(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_ptr(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_char(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_cstr(const fmt_i *iface, writer_i *out);
+derr_type_t _fmt_cstr_dbg(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_cstrn(const fmt_i *iface, writer_i *out);
+derr_type_t _fmt_cstrn_dbg(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_dstr(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_dstr_dbg(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_dstr_hex(const fmt_i *iface, writer_i *out);
@@ -166,11 +168,14 @@ derr_type_t _fmt_errno(const fmt_i *iface, writer_i *out);
 #define FP(p) (&(_fmt_ptr_t){ {_fmt_ptr}, p }.iface)
 #define FC(c) (&(_fmt_char_t){ {_fmt_char}, c }.iface)
 #define FS(s) (&(_fmt_cstr_t){ {_fmt_cstr}, s }.iface)
+#define FS_DBG(s) (&(_fmt_cstr_t){ {_fmt_cstr_dbg}, s }.iface)
 #define FSN(s,n) (&(_fmt_cstrn_t){ {_fmt_cstrn}, s, n }.iface)
+#define FSN_DBG(s,n) (&(_fmt_cstrn_t){ {_fmt_cstrn_dbg}, s, n }.iface)
 #define FD(d) (&(_fmt_dstr_t){ {_fmt_dstr}, d }.iface)
 #define FD_DBG(d) (&(_fmt_dstr_t){ {_fmt_dstr_dbg}, d }.iface)
 #define FX(d) (&(_fmt_dstr_t){ {_fmt_dstr_hex}, d }.iface)
 #define FE(e) (&(_fmt_errno_t){ {_fmt_errno}, e }.iface)
 
 // for use by other fmt extensions
+derr_type_t fmt_strn_dbg(const char *s, size_t n, writer_i *out);
 derr_type_t fmt_dstr_dbg(dstr_t d, writer_i *out);

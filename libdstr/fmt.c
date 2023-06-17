@@ -274,20 +274,26 @@ derr_type_t _fmt_char(const fmt_i *iface, writer_i *out){
 
 derr_type_t _fmt_cstr(const fmt_i *iface, writer_i *out){
     const char *s = CONTAINER_OF(iface, _fmt_cstr_t, iface)->s;
-
-    if(!s){
-        return out->w->puts(out, "(nil)", 5);
-    }
-
+    if(!s) return out->w->puts(out, "(nil)", 5);
     return out->w->puts(out, s, strlen(s));
+}
+
+derr_type_t _fmt_cstr_dbg(const fmt_i *iface, writer_i *out){
+    const char *s = CONTAINER_OF(iface, _fmt_cstr_t, iface)->s;
+    if(!s) return out->w->puts(out, "(nil)", 5);
+    return fmt_strn_dbg(s, strlen(s), out);
 }
 
 derr_type_t _fmt_cstrn(const fmt_i *iface, writer_i *out){
     _fmt_cstrn_t *arg = CONTAINER_OF(iface, _fmt_cstrn_t, iface);
-    if(!arg->s){
-        return out->w->puts(out, "(nil)", 5);
-    }
+    if(!arg->s) return out->w->puts(out, "(nil)", 5);
     return out->w->puts(out, arg->s, arg->n);
+}
+
+derr_type_t _fmt_cstrn_dbg(const fmt_i *iface, writer_i *out){
+    _fmt_cstrn_t *arg = CONTAINER_OF(iface, _fmt_cstrn_t, iface);
+    if(!arg->s) return out->w->puts(out, "(nil)", 5);
+    return fmt_strn_dbg(arg->s, arg->n, out);
 }
 
 derr_type_t _fmt_dstr(const fmt_i *iface, writer_i *out){
@@ -295,38 +301,9 @@ derr_type_t _fmt_dstr(const fmt_i *iface, writer_i *out){
     return out->w->puts(out, d.data, d.len);
 }
 
-derr_type_t fmt_dstr_dbg(dstr_t d, writer_i *out){
-    derr_type_t etype;
-
-    writer_t w = *out->w;
-    unsigned char *udata = (unsigned char*)d.data;
-
-    for(size_t i = 0; i < d.len; i++){
-        char c = d.data[i];
-        unsigned char u = udata[i];
-        if     (c == '\r') etype = w.puts(out, "\\r", 2);
-        else if(c == '\n') etype = w.puts(out, "\\n", 2);
-        else if(c == '\0') etype = w.puts(out, "\\0", 2);
-        else if(c == '\t') etype = w.puts(out, "\\t", 2);
-        else if(c == '\\') etype = w.puts(out, "\\\\", 2);
-        else if(c == '"') etype = w.puts(out, "\\\"", 2);
-        else if(u > 31 && u < 127) etype = w.putc(out, c);
-        else{
-            etype = w.puts(out, "\\x", 2);
-            if(etype) return etype;
-            etype = w.putc(out, hex_high_nibble(u));
-            if(etype) return etype;
-            etype = w.putc(out, hex_low_nibble(u));
-            if(etype) return etype;
-        }
-        if(etype) return etype;
-    }
-    return E_NONE;
-}
-
 derr_type_t _fmt_dstr_dbg(const fmt_i *iface, writer_i *out){
     dstr_t d = CONTAINER_OF(iface, _fmt_dstr_t, iface)->d;
-    return fmt_dstr_dbg(d, out);
+    return fmt_strn_dbg(d.data, d.len, out);
 }
 
 derr_type_t _fmt_dstr_hex(const fmt_i *iface, writer_i *out){
@@ -358,3 +335,36 @@ derr_type_t _fmt_errno(const fmt_i *iface, writer_i *out){
     return out->w->puts(out, buf, len);
 }
 
+
+derr_type_t fmt_strn_dbg(const char *s, size_t n, writer_i *out){
+    derr_type_t etype;
+
+    writer_t w = *out->w;
+    const unsigned char *udata = (const unsigned char*)s;
+
+    for(size_t i = 0; i < n; i++){
+        char c = s[i];
+        unsigned char u = udata[i];
+        if     (c == '\r') etype = w.puts(out, "\\r", 2);
+        else if(c == '\n') etype = w.puts(out, "\\n", 2);
+        else if(c == '\0') etype = w.puts(out, "\\0", 2);
+        else if(c == '\t') etype = w.puts(out, "\\t", 2);
+        else if(c == '\\') etype = w.puts(out, "\\\\", 2);
+        else if(c == '"') etype = w.puts(out, "\\\"", 2);
+        else if(u > 31 && u < 127) etype = w.putc(out, c);
+        else{
+            etype = w.puts(out, "\\x", 2);
+            if(etype) return etype;
+            etype = w.putc(out, hex_high_nibble(u));
+            if(etype) return etype;
+            etype = w.putc(out, hex_low_nibble(u));
+            if(etype) return etype;
+        }
+        if(etype) return etype;
+    }
+    return E_NONE;
+}
+
+derr_type_t fmt_dstr_dbg(dstr_t d, writer_i *out){
+    return fmt_strn_dbg(d.data, d.len, out);
+}
