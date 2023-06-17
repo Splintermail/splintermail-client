@@ -49,6 +49,13 @@ typedef struct {
     size_t n;
 } _jdump_obj_t;
 
+typedef struct {
+    jdump_i iface;
+    const char *fstr;
+    const fmt_i **args;
+    size_t nargs;
+} _jdump_fmt_t;
+
 derr_type_t _jdump_null(jdump_i *iface, writer_i *out, int indent, int pos);
 derr_type_t _jdump_true(jdump_i *iface, writer_i *out, int indent, int pos);
 derr_type_t _jdump_false(jdump_i *iface, writer_i *out, int indent, int pos);
@@ -59,6 +66,8 @@ derr_type_t _jdump_str(jdump_i *iface, writer_i *out, int indent, int pos);
 derr_type_t _jdump_strn(jdump_i *iface, writer_i *out, int indent, int pos);
 derr_type_t _jdump_arr(jdump_i *iface, writer_i *out, int indent, int pos);
 derr_type_t _jdump_obj(jdump_i *iface, writer_i *out, int indent, int pos);
+derr_type_t _jdump_fmt(jdump_i *iface, writer_i *out, int indent, int pos);
+derr_type_t _jdump_snippet(jdump_i *iface, writer_i *out, int indent, int pos);
 
 #define DNULL (&(jdump_i){ _jdump_null })
 #define DB(b) (&(jdump_i){ (b) ? _jdump_true : _jdump_false })
@@ -80,7 +89,23 @@ derr_type_t _jdump_obj(jdump_i *iface, writer_i *out, int indent, int pos);
     sizeof((jdump_kvp_t[]){{{NULL}}, __VA_ARGS__})/sizeof(jdump_kvp_t) - 1, \
 }.iface)
 
-#define DKEY(k, v) ((jdump_kvp_t){ k, v })
+#define DKEY(k, v) ((jdump_kvp_t){ DSTR_LIT(k), v })
+#define DKEYD(k, v) ((jdump_kvp_t){ k, v })
+
+// writes a formatted string to the output
+#define DFMT(fstr, ...) (&(_jdump_fmt_t){\
+    { _jdump_fmt }, \
+    fstr, \
+    &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+    sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i*) - 1, \
+}.iface)
+
+// writes a predefined json snippet
+#define DSNIPPET(d) (&(_jdump_dstr_t){ { _jdump_snippet }, d }.iface)
+// a sentinel
+extern char *_objsnippet;
+// same thing, but for inclusion into an object
+#define DOBJSNIPPET(d) DKEYD((dstr_t){ _objsnippet }, DSNIPPET(d))
 
 derr_type_t jdump_quiet(jdump_i *j, writer_i *out, int indent);
 derr_t jdump(jdump_i *j, writer_i *out, int indent);

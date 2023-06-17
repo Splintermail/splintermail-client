@@ -116,6 +116,20 @@ typedef struct {
 derr_type_t _fmt_fd_json(const fmt_i *iface, writer_i *out);
 #define FD_JSON(d) (&(_fmt_fd_json_t){ {_fmt_fd_json}, d }.iface)
 
+// WJSON is a writer_i that encodes its input to a json string
+typedef struct {
+    writer_i iface;
+    // wherever we're ultimately writing to
+    writer_i *out;
+    // for successive calls to utf8_decode_stream
+    uint32_t codepoint;
+    size_t tail;
+} _writer_json_t;
+
+extern writer_t _writer_json;
+
+#define WJSON(out) (&(_writer_json_t){ {&_writer_json}, out }.iface)
+
 derr_t json_walk(
     json_ptr_t ptr,
     // when key is non-NULL, this is a object's value

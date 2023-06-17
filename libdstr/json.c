@@ -938,6 +938,50 @@ derr_type_t _fmt_fd_json(const fmt_i *iface, writer_i *out){
     return json_encode_unlocked(d.data, d.len, out);
 }
 
+DEF_CONTAINER_OF(_writer_json_t, iface, writer_i)
+
+static derr_type_t _writer_json_puts(
+    writer_i *iface, const char *bytes, size_t n
+){
+    _writer_json_t *uw = CONTAINER_OF(iface, _writer_json_t, iface);
+    return utf8_decode_stream(
+        bytes,
+        n,
+        json_encode_each_codepoint,
+        uw->out,
+        &uw->codepoint,
+        &uw->tail
+    );
+}
+
+static derr_type_t _writer_json_putc(writer_i *iface, char c){
+    _writer_json_t *uw = CONTAINER_OF(iface, _writer_json_t, iface);
+    return utf8_decode_stream(
+        &c, 1, json_encode_each_codepoint, uw->out, &uw->codepoint, &uw->tail
+    );
+}
+
+static derr_type_t _writer_json_lock(writer_i *iface){
+    _writer_json_t *uw = CONTAINER_OF(iface, _writer_json_t, iface);
+    // opening quote
+    return uw->out->w->putc(uw->out, '"');
+}
+
+static derr_type_t _writer_json_unlock(writer_i *iface){
+    _writer_json_t *uw = CONTAINER_OF(iface, _writer_json_t, iface);
+    // check for incomplete utf8 sequences
+    if(uw->tail) return E_PARAM;
+    // closing quote
+    return uw->out->w->putc(uw->out, '"');
+}
+
+writer_t _writer_json = {
+    .puts = _writer_json_puts,
+    .putc = _writer_json_putc,
+    .lock = _writer_json_lock,
+    .unlock = _writer_json_unlock,
+};
+
 derr_t json_walk(
     json_ptr_t ptr,
     // when key is non-NULL, this is a object's value

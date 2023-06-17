@@ -456,6 +456,22 @@ static derr_t test_unicode(void){
         "\xf0\x93\x85\x82" // 𓅂
     ), cu);
 
+    // also test encoding with WJSON
+    DSTR_VAR(buf2, 256);
+    const fmt_i *args[] = {FD(buf)};
+    size_t nargs = sizeof(args)/sizeof(*args);
+    PROP_GO(&e, _fmt(WJSON(WD(&buf2)), "%x", args, nargs), cu);
+    dstr_t exp = DSTR_LIT(
+        "\""
+        "A"
+        "\\u00e1"
+        "\\u2048"
+        "\\ufe62"
+        "\\ud80c\\udd42"
+        "\""
+    );
+    EXPECT_DM_GO(&e, "buf2", buf2, exp, cu);
+
 cu:
     json_free(&json);
     return e;

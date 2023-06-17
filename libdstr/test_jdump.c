@@ -8,17 +8,19 @@ static derr_t test_jdump(void){
     DSTR_VAR(buf, 4096);
 
     jdump_i *obj = DOBJ(
-        DKEY(DSTR_LIT("null"), DNULL),
-        DKEY(DSTR_LIT("true"), DB(true)),
-        DKEY(DSTR_LIT("false"), DB(false)),
-        DKEY(DSTR_LIT("int"), DI(-1)),
-        DKEY(DSTR_LIT("uint"), DU(1)),
-        DKEY(DSTR_LIT("dstr"), DD(DSTR_LIT("a dstr"))),
-        DKEY(DSTR_LIT("str"), DS("a stríng")),
-        DKEY(DSTR_LIT("strn"), DSN("a line\n", 7)),
-        DKEY(DSTR_LIT("array"), DARR(DNULL, DB(true), DB(false))),
-        DKEY(DSTR_LIT("empty array"), DARR()),
-        DKEY(DSTR_LIT("empty object"), DOBJ()),
+        DKEY("null", DNULL),
+        DKEY("true", DB(true)),
+        DKEY("false", DB(false)),
+        DKEY("int", DI(-1)),
+        DKEY("uint", DU(1)),
+        DKEY("dstr", DD(DSTR_LIT("a dstr"))),
+        DKEY("str", DS("a stríng")),
+        DKEY("strn", DSN("a line\n", 7)),
+        DKEY("array", DARR(DNULL, DB(true), DB(false))),
+        DKEY("empty array", DARR()),
+        DKEY("empty object", DOBJ()),
+        DKEY("k0", DSNIPPET(DSTR_LIT("0"))),
+        DOBJSNIPPET(DSTR_LIT("\"k1\":1,\"k2\":2")),
     );
 
     PROP(&e, jdump(obj, WD(&buf), 0) );
@@ -27,7 +29,7 @@ static derr_t test_jdump(void){
         "{\"null\":null,\"true\":true,\"false\":false,\"int\":-1,\"uint\":1,"
         "\"dstr\":\"a dstr\",\"str\":\"a str\\u00edng\","
         "\"strn\":\"a line\\n\",\"array\":[null,true,false],"
-        "\"empty array\":[],\"empty object\":{}}"
+        "\"empty array\":[],\"empty object\":{},\"k0\":0,\"k1\":1,\"k2\":2}"
     );
     EXPECT_DM(&e, "buf", buf, exp1);
 
@@ -50,8 +52,10 @@ static derr_t test_jdump(void){
         "    false\n"
         "  ],\n"
         "  \"empty array\": [],\n"
-        "  \"empty object\": {}\n"
-        "}"
+        "  \"empty object\": {},\n"
+        "  \"k0\": 0,\n"
+        "  \"k1\":1,\"k2\":2\n"
+        "}\n"
     );
     EXPECT_DM(&e, "buf", buf, exp2);
 

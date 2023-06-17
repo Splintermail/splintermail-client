@@ -9,6 +9,7 @@ DEF_CONTAINER_OF(_jdump_str_t, iface, jdump_i)
 DEF_CONTAINER_OF(_jdump_strn_t, iface, jdump_i)
 DEF_CONTAINER_OF(_jdump_arr_t, iface, jdump_i)
 DEF_CONTAINER_OF(_jdump_obj_t, iface, jdump_i)
+DEF_CONTAINER_OF(_jdump_fmt_t, iface, jdump_i)
 
 derr_type_t _jdump_null(jdump_i *iface, writer_i *out, int indent, int pos){
     (void)iface; (void)indent; (void)pos;
@@ -119,6 +120,8 @@ derr_type_t _jdump_arr(jdump_i *iface, writer_i *out, int indent, int pos){
     return w.putc(out, ']');
 }
 
+char *_objsnippet = "_objsnippet";
+
 derr_type_t _jdump_obj(jdump_i *iface, writer_i *out, int indent, int pos){
     derr_type_t etype;
 
@@ -150,15 +153,17 @@ derr_type_t _jdump_obj(jdump_i *iface, writer_i *out, int indent, int pos){
             if(etype) return etype;
         }
 
-        // the key
-        etype = quoted_json_encode(key.data, key.len, out);
-        if(etype) return etype;
-        etype = w.putc(out, ':');
-        if(etype) return etype;
-        if(indent){
-            // only put a space after the colon if an indent was requested
-            etype = w.putc(out, ' ');
+        if(key.data != _objsnippet){
+            // the key
+            etype = quoted_json_encode(key.data, key.len, out);
             if(etype) return etype;
+            etype = w.putc(out, ':');
+            if(etype) return etype;
+            if(indent){
+                // only put a space after the colon if an indent was requested
+                etype = w.putc(out, ' ');
+                if(etype) return etype;
+            }
         }
 
         // the val
@@ -174,6 +179,19 @@ derr_type_t _jdump_obj(jdump_i *iface, writer_i *out, int indent, int pos){
     return w.putc(out, '}');
 }
 
+derr_type_t _jdump_fmt(jdump_i *iface, writer_i *out, int indent, int pos){
+    (void)indent; (void)pos;
+    _jdump_fmt_t *fmt = CONTAINER_OF(iface, _jdump_fmt_t, iface);
+    // pass through the WJSON utf8+json encoder
+    return _fmt_quiet(WJSON(out), fmt->fstr, fmt->args, fmt->nargs);
+}
+
+derr_type_t _jdump_snippet(jdump_i *iface, writer_i *out, int indent, int pos){
+    (void)indent; (void)pos;
+    dstr_t d = CONTAINER_OF(iface, _jdump_dstr_t, iface)->d;
+    return out->w->puts(out, d.data, d.len);
+}
+
 derr_type_t jdump_quiet(jdump_i *j, writer_i *out, int indent){
     derr_type_t etype;
     writer_t w = *out->w;
@@ -182,6 +200,10 @@ derr_type_t jdump_quiet(jdump_i *j, writer_i *out, int indent){
         if(etype) return etype;
     }
     etype = j->jdump(j, out, indent, 0);
+    if(!etype && indent){
+        // terminating newline, only in indented cases
+        w.putc(out, '\n');
+    }
     derr_type_t etype2 = E_NONE;
     if(w.unlock){
         etype2 = w.lock(out);
