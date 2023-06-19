@@ -16,7 +16,10 @@ void get_token_context(dstr_t *buf, const dstr_off_t token, size_t ctxsize){
         text, token.start + token_len, token.start + token_len + tail_len
     );
 
+    // find the final newline in the buffer
     size_t begin = buf->len;
+    for(; begin > 0; begin--) if(buf->data[begin - 1] == '\n') break;
+
     FMT_QUIET(buf, "%x", FD_DBG(headbuf));
     size_t nspaces = buf->len - begin;
     FMT_QUIET(buf, "%x", FD_DBG(tokenbuf));

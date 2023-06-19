@@ -104,6 +104,39 @@ static derr_t test_get_token_context(void){
         EXPECT_U(&e, "got.len", got.len, got.size-1);
     }
 
+    // leading text, no newline
+    {
+        DSTR_PRESET(buf, "abcdefghijklmn12\n45abcdefghijklmn");
+        dstr_off_t token = { .buf = &buf, .start = 14, .len = 5 };
+        DSTR_STATIC(exp, "lead text: abcdefghijklmn12\\n45abcdefghijk\n"
+                         "                         ^^^^^^"
+        );
+        // 30*8 + 2 = 242
+        DSTR_VAR(got, 512);
+        memset(got.data, 'x', got.size);
+        FMT_QUIET(&got, "lead text: ");
+        get_token_context(&got, token, 30);
+        EXPECT_DM(&e, "context", got, exp);
+        EXPECT_I(&e, "null termination char", got.data[got.len], '\0');
+    }
+
+    // leading text, with newline
+    {
+        DSTR_PRESET(buf, "abcdefghijklmn12\n45abcdefghijklmn");
+        dstr_off_t token = { .buf = &buf, .start = 14, .len = 5 };
+        DSTR_STATIC(exp, "lead text:\n"
+                         "abcdefghijklmn12\\n45abcdefghijk\n"
+                         "              ^^^^^^"
+        );
+        // 30*8 + 2 = 242
+        DSTR_VAR(got, 512);
+        memset(got.data, 'x', got.size);
+        FMT_QUIET(&got, "lead text:\n");
+        get_token_context(&got, token, 30);
+        EXPECT_DM(&e, "context", got, exp);
+        EXPECT_I(&e, "null termination char", got.data[got.len], '\0');
+    }
+
     return e;
 }
 
