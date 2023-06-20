@@ -351,7 +351,7 @@ static derr_t test_jspec_read(void){
 
     // jspec_tuple_t, jspec_ptr_t;
     json_free(&json);
-    jtext = DSTR_LIT("[true, \"string\", {\"i\": 7, \"f\": 1.2}]");
+    jtext = DSTR_LIT("[true, \"string\", {\"i\": 7}]");
     PROP_GO(&e, json_parse(jtext, &json), cu);
     bool x = false;
     dstr_t y = {0};
@@ -363,14 +363,13 @@ static derr_t test_jspec_read(void){
     EXPECT_D_GO(&e, "y", y, DSTR_LIT("string"), cu);
     EXPECT_NOT_NULL_GO(&e, "p.node", p.node, cu);
 
-    // now descend into that subnode, also test jspec_toi_t and jspec_tof_t
+    // now descend into that subnode and test jspec_toi_t
     int i;
-    float f;
-    jspec = JOBJ(false, JKEY("f", JF(&f)), JKEY("i", JI(&i)));
+    unsigned int u;
+    jspec = JOBJ(false, JKEY("i", JI(&i)));
     PROP_GO(&e, jspec_read_ex(jspec, p, &ok, &errbuf), cu);
     EXPECT_VALID_JSPEC_GO(cu);
     EXPECT_I_GO(&e, "i", i, 7, cu);
-    EXPECT_F_GO(&e, "f", f, 1.2, 0.00001, cu);
 
     // jspec_list_t;
     json_free(&json);
@@ -391,7 +390,7 @@ static derr_t test_jspec_read(void){
             JI(&i),
             JDCPY(&buf),
         )),
-        JKEY("b", JF(&f)),
+        JKEY("b", JU(&u)),
         JKEY("c", JB(&a)),
     );
     PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf), cu);

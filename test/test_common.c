@@ -496,34 +496,6 @@ cleanup:
     return e;
 }
 
-
-static derr_t test_dstr_tod(void){
-    derr_t e = E_OK;
-    LOG_INFO("----- test dstr_tod ---------------------\n");
-
-    double version;
-    DSTR_STATIC(v1, "-0.001");
-    PROP(&e, dstr_tod(&v1, &version) );
-    if( ABS(version - (-0.001)) > 1e-5){
-        TRACE(&e, "version should be %x but got %x\n", FF(-0.001), FF(version));
-        ORIG(&e, E_VALUE, "FAIL");
-    }
-    DSTR_STATIC(v2, "5123.123");
-    PROP(&e, dstr_tod(&v2, &version) );
-    if( ABS(version - (5123.123)) > 1e-5){
-        TRACE(&e, "version should be %x but got %x\n", FF(5123.123), FF(version));
-        ORIG(&e, E_VALUE, "FAIL");
-    }
-    DSTR_STATIC(v3, "-12098.1984");
-    PROP(&e, dstr_tod(&v3, &version) );
-    if( ABS(version - (-12098.1984)) > 1e-5){
-        TRACE(&e, "version should be %x but got %x\n",
-              FF(-12098.1984), FF(version));
-        ORIG(&e, E_VALUE, "FAIL");
-    }
-    return e;
-}
-
 static derr_t test_dstr_leftshift(void){
     derr_t e = E_OK;
     LOG_INFO("----- test dstr_leftshift ---------------\n");
@@ -951,7 +923,6 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_dstr_split_soft(),      test_fail);
     PROP_GO(&e, test_dstr_split2(),          test_fail);
     PROP_GO(&e, test_dstr_split2_soft(),     test_fail);
-    PROP_GO(&e, test_dstr_tod(),             test_fail);
     PROP_GO(&e, test_dstr_leftshift(),       test_fail);
     PROP_GO(&e, test_list_append(),          test_fail);
     PROP_GO(&e, test_dstr_recode(),          test_fail);

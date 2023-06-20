@@ -437,39 +437,6 @@ bool dstr_ieq(const dstr_t a, const dstr_t b);
 void dstr_upper(dstr_t* text);
 void dstr_lower(dstr_t* text);
 
-/* dstr_toi and friends have stricter type enforcement than atoi or strtol.
-   Additionally, they result in an error if any part of *in is not part of the
-   parsed number.  The idea is that you should know exactly what part of your
-   string is a number and you should know what sort of number it is. */
-#define INTEGERS_MAP(XX) \
-    XX(i, int) \
-    XX(u, unsigned int) \
-    XX(l, long) \
-    XX(ul, unsigned long) \
-    XX(ll, long long) \
-    XX(ull, unsigned long long) \
-    XX(u64, uint64_t) \
-    XX(size, size_t) \
-
-#define FLOATS_MAP(XX) \
-    XX(f, float) \
-    XX(d, double) \
-    XX(ld, long double) \
-
-#define DECLARE_DSTR_TO_INTEGER(suffix, type) \
-    derr_type_t dstr_to ## suffix ## _quiet( \
-        const dstr_t in, type* out, int base \
-    ); \
-    derr_t dstr_to ## suffix(const dstr_t *in, type *out, int base);
-INTEGERS_MAP(DECLARE_DSTR_TO_INTEGER)
-#undef DECLARE_DSTR_TO_INTEGER
-
-#define DECLARE_DSTR_TO_FLOAT(suffix, type) \
-    derr_type_t dstr_to ## suffix ## _quiet(const dstr_t in, type *out); \
-    derr_t dstr_to ## suffix(const dstr_t *in, type *out);
-FLOATS_MAP(DECLARE_DSTR_TO_FLOAT)
-#undef DECLARE_DSTR_TO_FLOAT
-
 /*
    (inputs)
 text:               the text to be searched

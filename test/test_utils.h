@@ -411,6 +411,24 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_P_GO(e, name, got, exp, label) \
     _EXPECT_P(e, name, got, exp, goto label)
 
+#define _EXPECT_ETYPE(e, name, got, exp, action) do { \
+    derr_type_t _got = (got); \
+    const derr_type_t _exp = (exp); \
+    if(_got == _exp) break; \
+    TRACE_ORIG(e, \
+        E_VALUE, \
+        "expected %x == %x but got %x", \
+        FS(name), FD(error_to_dstr(_exp)), FD(error_to_dstr(_got)) \
+    ); \
+    action; \
+} while(0)
+
+#define EXPECT_ETYPE(e, name, got, exp) \
+    _EXPECT_ETYPE(e, name, got, exp, return *(e))
+
+#define EXPECT_ETYPE_GO(e, name, got, exp, label) \
+    _EXPECT_ETYPE(e, name, got, exp, goto label)
+
 #define _EXPECT_E_VAR(e, name, got, exp, action) do { \
     derr_t *_got = (got); \
     const derr_type_t _exp = (exp); \

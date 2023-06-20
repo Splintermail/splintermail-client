@@ -1,6 +1,7 @@
 sm_lib(
     dstr
     common.c
+    cvt.c
     logger.c
     fileops.c
     netops.c
@@ -43,6 +44,7 @@ elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
     # msvc: noop
 endif()
 
+sm_test(test_cvt.c DEPS dstr)
 sm_test(test_fmt.c DEPS dstr)
 sm_test(test_unicode.c DEPS dstr)
 sm_test(test_jspec.c DEPS dstr)

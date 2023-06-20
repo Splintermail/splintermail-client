@@ -9,6 +9,7 @@
 #include <stdbool.h>
 
 #include "common.h"
+#include "cvt.h"
 #include "fmt.h"
 #include "sb.h"
 

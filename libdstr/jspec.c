@@ -15,7 +15,6 @@ DEF_CONTAINER_OF(jspec_jptr_t, jspec, jspec_t)
 #define DECLARE_NUMERICS(suffix, type) \
     DEF_CONTAINER_OF(jspec_to ## suffix ## _t, jspec, jspec_t)
 INTEGERS_MAP(DECLARE_NUMERICS)
-FLOATS_MAP(DECLARE_NUMERICS)
 #undef DECLARE_NUMERICS
 
 DEF_CONTAINER_OF(jspec_xdstr_t, jspec, jspec_t)
@@ -357,24 +356,6 @@ derr_t jspec_jptr_read(jspec_t *jspec, jctx_t *ctx){
     }
 
 INTEGERS_MAP(DEFINE_INTEGERS)
-
-#define DEFINE_FLOATS(suffix, type) \
-    derr_t jspec_to ## suffix ## _read(jspec_t *jspec, jctx_t *ctx){ \
-        derr_t e = E_OK; \
-        if(!jctx_require_type(ctx, JSON_NUMBER)) return e; \
-        jspec_to ## suffix ## _t *j = \
-            CONTAINER_OF(jspec, jspec_to ## suffix ## _t, jspec); \
-        dstr_t text = jctx_text(ctx); \
-        derr_type_t etype = dstr_to ## suffix ## _quiet(text, j->out); \
-        if(etype != E_NONE){ \
-            jctx_error(ctx, \
-                "unable to convert to \"%x\" into " #type "\n", FD(text) \
-            ); \
-        } \
-        return e; \
-    }
-
-FLOATS_MAP(DEFINE_FLOATS)
 
 // jspect-expect series
 

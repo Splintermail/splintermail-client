@@ -61,9 +61,6 @@ static derr_t test_jspec(void){
         "  \"long long\": -5,"
         "  \"unsigned long long\": 6,"
         "  \"uint64\": 7,"
-        "  \"float\": 8.9489,"
-        "  \"double\": 18.9489,"
-        "  \"long double\": 28.9489,"
         "  \"present\": \"present\","
         "  \"cpy\": \"cpy\","
         "  \"list\": [\"1\", \"2\", \"3\", \"4\"],"
@@ -93,9 +90,6 @@ static derr_t test_jspec(void){
     long long ll;
     unsigned long long ull;
     uint64_t u64;
-    float f;
-    double d;
-    long double ld;
     dstr_t present;
     bool have_present;
     dstr_t notpresent;
@@ -110,12 +104,9 @@ static derr_t test_jspec(void){
 
     jspec_t *spec = JOBJ(true,
         JKEY("cpy", JDCPY(&cpy)),
-        JKEY("double", JD(&d)),
         JKEY("false", JB(&fa)),
-        JKEY("float", JF(&f)),
         JKEY("list", JLIST(jlist_dstr, &list)),
         JKEY("long", JL(&l)),
-        JKEY("long double", JLD(&ld)),
         JKEY("long long", JLL(&ll)),
         JKEY("map", JMAP(jmap_read, &map)),
         JKEY("nonnull", JOPT(&have_nonnull, JI(&nonnull))),
@@ -149,9 +140,6 @@ static derr_t test_jspec(void){
     EXPECT_I(&e, "ll", ll, -5);
     EXPECT_U(&e, "ull", ull, 6);
     EXPECT_U(&e, "u64", u64, 7);
-    EXPECT_F(&e, "f", f, 8.9489, 0.00001);
-    EXPECT_F(&e, "d", d, 18.9489, 0.00001);
-    EXPECT_F(&e, "ld", ld, 28.9489, 0.00001);
     EXPECT_B(&e, "have_present", have_present, true);
     EXPECT_D(&e, "present", present, DSTR_LIT("present"));
     EXPECT_B(&e, "have_notpresent", have_notpresent, false);

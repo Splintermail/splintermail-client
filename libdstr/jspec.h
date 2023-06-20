@@ -236,7 +236,6 @@ derr_t jspec_jptr_read(jspec_t *jspec, jctx_t *ctx);
     derr_t jspec_to ## suffix ## _read(jspec_t *jspec, jctx_t *ctx);
 
 INTEGERS_MAP(DECLARE_NUMERICS)
-FLOATS_MAP(DECLARE_NUMERICS)
 
 #undef DECLARE_NUMERICS
 
@@ -252,9 +251,6 @@ FLOATS_MAP(DECLARE_NUMERICS)
 #define JLL(_out) _JNUMERIC(ll, long long, _out)
 #define JULL(_out) _JNUMERIC(ull, unsigned long long, _out)
 #define JU64(_out) _JNUMERIC(u64, uint64_t, _out)
-#define JF(_out) _JNUMERIC(f, float, _out)
-#define JD(_out) _JNUMERIC(d, double, _out)
-#define JLD(_out) _JNUMERIC(ld, long double, _out)
 #define JSIZE(_out) _JNUMERIC(size, size_t, _out)
 
 // "jspec-expect" series, for asserting constants without outputting anything
