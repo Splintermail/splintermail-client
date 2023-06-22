@@ -2,10 +2,23 @@
 
 #include "test/test_utils.h"
 
+static derr_type_t dlist_dstr(void *data, jdump_list_i *item){
+    derr_type_t etype;
+    LIST(dstr_t) *l = data;
+    for(size_t i = 0; i < l->len; i++){
+        etype = item->item(item, DD(l->data[i]));
+        if(etype) return etype;
+    }
+    return E_NONE;
+}
+
+
 static derr_t test_jdump(void){
     derr_t e = E_OK;
 
     DSTR_VAR(buf, 4096);
+
+    LIST_PRESET(dstr_t, l, DSTR_LIT("1"), DSTR_LIT("2"), DSTR_LIT("3"));
 
     jdump_i *obj = DOBJ(
         DKEY("null", DNULL),
@@ -21,6 +34,7 @@ static derr_t test_jdump(void){
         DKEY("empty object", DOBJ()),
         DKEY("k0", DSNIPPET(DSTR_LIT("0"))),
         DOBJSNIPPET(DSTR_LIT("\"k1\":1,\"k2\":2")),
+        DKEY("list", DLIST(dlist_dstr, &l)),
     );
 
     PROP(&e, jdump(obj, WD(&buf), 0) );
@@ -29,7 +43,8 @@ static derr_t test_jdump(void){
         "{\"null\":null,\"true\":true,\"false\":false,\"int\":-1,\"uint\":1,"
         "\"dstr\":\"a dstr\",\"str\":\"a str\\u00edng\","
         "\"strn\":\"a line\\n\",\"array\":[null,true,false],"
-        "\"empty array\":[],\"empty object\":{},\"k0\":0,\"k1\":1,\"k2\":2}"
+        "\"empty array\":[],\"empty object\":{},\"k0\":0,\"k1\":1,\"k2\":2,"
+        "\"list\":[\"1\",\"2\",\"3\"]}"
     );
     EXPECT_DM(&e, "buf", buf, exp1);
 
@@ -54,7 +69,12 @@ static derr_t test_jdump(void){
         "  \"empty array\": [],\n"
         "  \"empty object\": {},\n"
         "  \"k0\": 0,\n"
-        "  \"k1\":1,\"k2\":2\n"
+        "  \"k1\":1,\"k2\":2,\n"
+        "  \"list\": [\n"
+        "    \"1\",\n"
+        "    \"2\",\n"
+        "    \"3\"\n"
+        "  ]\n"
         "}\n"
     );
     EXPECT_DM(&e, "buf", buf, exp2);

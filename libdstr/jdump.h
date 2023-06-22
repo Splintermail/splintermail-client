@@ -43,6 +43,20 @@ typedef struct {
     size_t n;
 } _jdump_arr_t;
 
+/* jdump_list has an items() function which recieves a jdump_list_i interface
+   to call once per item */
+struct jdump_list_i;
+typedef struct jdump_list_i jdump_list_i;
+struct jdump_list_i{
+    derr_type_t (*item)(jdump_list_i*, jdump_i*);
+};
+
+typedef struct {
+    jdump_i iface;
+    derr_type_t (*items)(void *data, jdump_list_i *item);
+    void *data;
+} _jdump_list_t;
+
 typedef struct {
     jdump_i iface;
     jdump_kvp_t *kvps;
@@ -65,6 +79,7 @@ derr_type_t _jdump_dstr(jdump_i *iface, writer_i *out, int indent, int pos);
 derr_type_t _jdump_str(jdump_i *iface, writer_i *out, int indent, int pos);
 derr_type_t _jdump_strn(jdump_i *iface, writer_i *out, int indent, int pos);
 derr_type_t _jdump_arr(jdump_i *iface, writer_i *out, int indent, int pos);
+derr_type_t _jdump_list(jdump_i *iface, writer_i *out, int indent, int pos);
 derr_type_t _jdump_obj(jdump_i *iface, writer_i *out, int indent, int pos);
 derr_type_t _jdump_fmt(jdump_i *iface, writer_i *out, int indent, int pos);
 derr_type_t _jdump_snippet(jdump_i *iface, writer_i *out, int indent, int pos);
@@ -82,6 +97,9 @@ derr_type_t _jdump_snippet(jdump_i *iface, writer_i *out, int indent, int pos);
     &(jdump_i*[]){NULL, __VA_ARGS__}[1], \
     sizeof((jdump_i*[]){NULL, __VA_ARGS__})/sizeof(jdump_i*) - 1, \
 }.iface)
+
+#define DLIST(items, data) \
+    (&(_jdump_list_t){ {_jdump_list}, items, data}.iface)
 
 #define DOBJ(...) (&(_jdump_obj_t){\
     { _jdump_obj }, \

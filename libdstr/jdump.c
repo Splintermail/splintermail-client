@@ -8,6 +8,7 @@ DEF_CONTAINER_OF(_jdump_dstr_t, iface, jdump_i)
 DEF_CONTAINER_OF(_jdump_str_t, iface, jdump_i)
 DEF_CONTAINER_OF(_jdump_strn_t, iface, jdump_i)
 DEF_CONTAINER_OF(_jdump_arr_t, iface, jdump_i)
+DEF_CONTAINER_OF(_jdump_list_t, iface, jdump_i)
 DEF_CONTAINER_OF(_jdump_obj_t, iface, jdump_i)
 DEF_CONTAINER_OF(_jdump_fmt_t, iface, jdump_i)
 
@@ -113,6 +114,70 @@ derr_type_t _jdump_arr(jdump_i *iface, writer_i *out, int indent, int pos){
     }
 
     if(started && indent){
+        etype = nl_indent(out, pos);
+        if(etype) return etype;
+    }
+
+    return w.putc(out, ']');
+}
+
+typedef struct {
+    jdump_list_i iface;
+    bool started;
+    writer_i *out;
+    int indent;
+    int pos;
+} jdump_list_t;
+
+DEF_CONTAINER_OF(jdump_list_t, iface, jdump_list_i)
+
+static derr_type_t jdump_list_item(jdump_list_i *iface, jdump_i *item){
+    derr_type_t etype;
+
+    if(item == NULL) return E_NONE;
+
+    jdump_list_t *l = CONTAINER_OF(iface, jdump_list_t, iface);
+    writer_t w = *l->out->w;
+
+    // joining comma
+    if(!l->started){
+        l->started = true;
+    }else{
+        etype = w.putc(l->out, ',');
+        if(etype) return etype;
+    }
+
+    // whitespace
+    if(l->indent){
+        etype = nl_indent(l->out, l->pos);
+        if(etype) return etype;
+    }
+
+    // the item
+    return item->jdump(item, l->out, l->indent, l->pos);
+}
+
+derr_type_t _jdump_list(jdump_i *iface, writer_i *out, int indent, int pos){
+    derr_type_t etype;
+
+    _jdump_list_t *list = CONTAINER_OF(iface, _jdump_list_t, iface);
+    writer_t w = *out->w;
+
+    etype = w.putc(out, '[');
+    if(etype) return etype;
+
+    jdump_list_t l = {
+        .iface = { jdump_list_item },
+        .started = false,
+        .out = out,
+        .indent = indent,
+        .pos = pos + indent,
+    };
+
+    etype = list->items(list->data, &l.iface);
+    if(etype) return etype;
+
+    if(l.started && indent){
         etype = nl_indent(out, pos);
         if(etype) return etype;
     }
