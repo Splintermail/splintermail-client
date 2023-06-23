@@ -64,6 +64,7 @@ derr_t duv_scheduler_init(duv_scheduler_t *s, uv_loop_t *loop){
 
     *s = (duv_scheduler_t){
         .iface = { .schedule = duv_schedule },
+        .initialized = true,
     };
     link_init(&s->scheduled);
     int ret = uv_timer_init(loop, &s->timer);
@@ -107,7 +108,7 @@ static void detect_unclosed_handles(uv_handle_t *handle, void *data){
 }
 
 void duv_scheduler_close(duv_scheduler_t *s){
-    if(s->closed) return;
+    if(!s->initialized || s->closed) return;
     s->closed = true;
     // close the timer
     duv_timer_close(&s->timer, close_cb);

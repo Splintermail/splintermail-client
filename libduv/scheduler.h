@@ -36,6 +36,7 @@ struct duv_scheduler_t {
     uv_timer_t timer;
     bool timer_set;
     link_t scheduled;  // schedulable_t->link
+    bool initialized;
     bool closed;
 };
 DEF_CONTAINER_OF(duv_scheduler_t, iface, scheduler_i)

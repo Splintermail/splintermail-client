@@ -89,7 +89,7 @@ closing:
 }
 
 void duv_http_close(duv_http_t *h, duv_http_close_cb close_cb){
-    if(h->close_cb) return;
+    if(!h->initialized || h->close_cb) return;
     h->close_cb = close_cb;
 
     if(h->req) req_cancel(h->req);
@@ -120,6 +120,7 @@ derr_t duv_http_init(
             .ssl_ctx = ssl_ctx,
         },
         .own_ssl_ctx = !ssl_ctx,
+        .initialized = true,
     };
 
     link_init(&h->pending);

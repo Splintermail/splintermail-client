@@ -44,6 +44,7 @@ endforeach()
 
 sm_lib(fakestream fake_stream.c DEPS duv TEST)
 
+sm_test(test_scheduler.c DEPS duv)
 sm_test(test_connect.c DEPS duv)
 sm_test(test_passthru.c DEPS duv)
 sm_test(test_dstr_rstream.c DEPS duv)

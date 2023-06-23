@@ -922,6 +922,35 @@ die:
     exit(1);
 }
 
+static derr_t test_close(void){
+    derr_t e = E_OK;
+
+    // test closing zeroized
+    duv_http_t zeroized = {0};
+    duv_http_close(&zeroized, noop_http_close_cb);
+
+    // test double-close
+    uv_loop_t loop = {0};
+    duv_scheduler_t scheduler = {0};
+    duv_http_t doubleclose = {0};
+
+    PROP(&e, duv_loop_init(&loop) );
+    PROP_GO(&e, duv_scheduler_init(&scheduler, &loop), fail);
+    PROP_GO(&e, duv_http_init(&doubleclose, &loop, &scheduler, NULL), fail);
+
+    duv_http_close(&doubleclose, noop_http_close_cb);
+    PROP_GO(&e, duv_run(&loop), fail);
+
+fail:
+    duv_http_close(&doubleclose, noop_http_close_cb);
+    DROP_CMD( duv_run(&loop) );
+    duv_scheduler_close(&scheduler);
+    uv_loop_close(&loop);
+    DROP_CMD( duv_run(&loop) );
+
+    return e;
+}
+
 int main(int argc, char **argv){
     derr_t e = E_OK;
     // parse options and set default log level
@@ -931,8 +960,8 @@ int main(int argc, char **argv){
 #endif
     PROP_GO(&e, ssl_library_init(), test_fail);
 
-
     PROP_GO(&e, test_duv_http(), test_fail);
+    PROP_GO(&e, test_close(), test_fail);
 
     LOG_ERROR("PASS\n");
     ssl_library_close();

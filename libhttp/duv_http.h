@@ -66,6 +66,7 @@ struct duv_http_t {
     // current request
     duv_http_req_t *req;
 
+    bool initialized : 1;
     bool canceled : 1;
     bool reqs_canceled : 1;
     bool closed : 1;
