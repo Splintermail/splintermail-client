@@ -332,7 +332,7 @@ derr_t list_ ## type ## _grow(LIST(type)* list, size_t num_items){ \
         if(list->fixed_size){ \
             ORIG(&e, E_FIXEDSIZE, "unable to grow a fixed-size list"); \
         } \
-        size_t newsize = MIN(list->size, 2); \
+        size_t newsize = MAX(list->size, 2); \
         while(newsize < min_size){ \
             newsize *= 2; \
         } \
