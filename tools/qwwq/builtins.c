@@ -7,13 +7,9 @@
    explicitly created, so they can all safely share a single scope_id */
 #define BUILTIN 0
 
-#define STATIC_DSTR_LIT(s) { \
-    .data = s, .len = sizeof(s)-1, .size = sizeof(s), .fixed_size = true, \
-}
-
-static dstr_t newline = STATIC_DSTR_LIT("\n");
-static dstr_t space = STATIC_DSTR_LIT(" ");
-static dstr_t doublespace = STATIC_DSTR_LIT("  ");
+static dstr_t newline = DSTR_GLOBAL("\n");
+static dstr_t space = DSTR_GLOBAL(" ");
+static dstr_t doublespace = DSTR_GLOBAL("  ");
 
 // given a value, put a method binding the value on the stack
 static void method(
@@ -44,10 +40,10 @@ static void method(
 
 static qw_string_t strip_chars_default = {
     .type = QW_VAL_STRING,
-    .dstr = STATIC_DSTR_LIT(" \n\r\t"),
+    .dstr = DSTR_GLOBAL(" \n\r\t"),
 };
 
-static dstr_t strip_params[] = { STATIC_DSTR_LIT("chars") };
+static dstr_t strip_params[] = { DSTR_GLOBAL("chars") };
 static qw_val_t *strip_defaults[] = { &strip_chars_default.type };
 
 typedef dstr_t (*strip_f)(const dstr_t in, const char *chars, size_t n);
@@ -338,9 +334,9 @@ static void qw_instr_wrap(qw_env_t env){
 void qw_method_wrap(qw_env_t env, qw_string_t *string){
     static void *instr = (void*)qw_instr_wrap;
     static dstr_t params[] = {
-        STATIC_DSTR_LIT("width"),
-        STATIC_DSTR_LIT("indent"),
-        STATIC_DSTR_LIT("hang"),
+        DSTR_GLOBAL("width"),
+        DSTR_GLOBAL("indent"),
+        DSTR_GLOBAL("hang"),
     };
     static qw_string_t empty = { .type = QW_VAL_STRING };
     static qw_val_t *defaults[] = { NULL, &empty.type, &empty.type };
@@ -436,14 +432,14 @@ static void qw_instr_post(qw_env_t env){
 }
 
 static dstr_t fix_params[] = {
-    STATIC_DSTR_LIT("text"),
-    STATIC_DSTR_LIT("split"),
-    STATIC_DSTR_LIT("skip_empty"),
+    DSTR_GLOBAL("text"),
+    DSTR_GLOBAL("split"),
+    DSTR_GLOBAL("skip_empty"),
 };
 
 static qw_string_t fix_split_default = {
     .type = QW_VAL_STRING,
-    .dstr = STATIC_DSTR_LIT("\n"),
+    .dstr = DSTR_GLOBAL("\n"),
 };
 
 static qw_val_t *fix_defaults[] = { NULL, &fix_split_default.type, &thefalse };
@@ -507,7 +503,7 @@ static void qw_instr_repl(qw_env_t env){
 void qw_method_repl(qw_env_t env, qw_string_t *string){
     static void *instr = (void*)qw_instr_repl;
     static dstr_t params[] = {
-        STATIC_DSTR_LIT("find"), STATIC_DSTR_LIT("repl"),
+        DSTR_GLOBAL("find"), DSTR_GLOBAL("repl"),
     };
     static qw_val_t *defaults[] = { NULL, NULL };
     method(env, &string->type, &instr, params, 2, defaults);
@@ -562,12 +558,12 @@ static void _instr_pad(qw_env_t env, const char *name, bool left){
 }
 
 static dstr_t pad_params[] = {
-    STATIC_DSTR_LIT("width"),  STATIC_DSTR_LIT("char")
+    DSTR_GLOBAL("width"),  DSTR_GLOBAL("char")
 };
 
 static qw_string_t pad_char_default = {
     .type = QW_VAL_STRING,
-    .dstr = STATIC_DSTR_LIT(" "),
+    .dstr = DSTR_GLOBAL(" "),
 };
 
 static qw_val_t *pad_defaults[] = { NULL, &pad_char_default.type };
@@ -616,7 +612,7 @@ static void qw_instr_get(qw_env_t env){
 
 void qw_method_get(qw_env_t env, qw_dict_t *dict){
     static void *instr = (void*)qw_instr_get;
-    static dstr_t params[] = { STATIC_DSTR_LIT("key") };
+    static dstr_t params[] = { DSTR_GLOBAL("key") };
     static qw_val_t *defaults[] = { NULL };
     method(env, &dict->type, &instr, params, 1, defaults);
 }
@@ -740,7 +736,7 @@ static void qw_instr_table(qw_env_t env){
 
 static void *void_instr_table = (void*)qw_instr_table;
 
-static dstr_t table_params[] = { STATIC_DSTR_LIT("rows") };
+static dstr_t table_params[] = { DSTR_GLOBAL("rows") };
 
 static qw_val_t *table_defaults[] = { NULL };
 
@@ -782,7 +778,7 @@ static void qw_instr_relpath(qw_env_t env){
     dstr_append_quiet(out, &path);
 }
 static void *void_instr_relpath = (void*)qw_instr_relpath;
-static dstr_t relpath_params[] = { STATIC_DSTR_LIT("path") };
+static dstr_t relpath_params[] = { DSTR_GLOBAL("path") };
 static qw_val_t *relpath_defaults[] = { NULL };
 qw_func_t qw_builtin_relpath = {
     .type = QW_VAL_FUNC,
@@ -809,7 +805,7 @@ static void qw_instr_cat(qw_env_t env){
     qw_stack_put_file(env, path);
 }
 static void *void_instr_cat = (void*)qw_instr_cat;
-static dstr_t cat_params[] = { STATIC_DSTR_LIT("path") };
+static dstr_t cat_params[] = { DSTR_GLOBAL("path") };
 static qw_val_t *cat_defaults[] = { NULL };
 qw_func_t qw_builtin_cat = {
     .type = QW_VAL_FUNC,
@@ -846,7 +842,7 @@ static void qw_instr_exists(qw_env_t env){
     qw_stack_put_bool(env.engine, ret == 0);
 }
 static void *void_instr_exists = (void*)qw_instr_exists;
-static dstr_t exists_params[] = { STATIC_DSTR_LIT("path") };
+static dstr_t exists_params[] = { DSTR_GLOBAL("path") };
 static qw_val_t *exists_defaults[] = { NULL };
 qw_func_t qw_builtin_exists = {
     .type = QW_VAL_FUNC,

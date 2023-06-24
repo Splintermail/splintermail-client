@@ -193,11 +193,14 @@ void consume_e_usermsg(derr_t *e, dstr_t *buf);
                     sizeof(name ## _buffer) - 1, \
                     1}
 
+// for global variables, where msvc is offended by the leading (dstr_t)
+#define DSTR_GLOBAL(str) {.data=str, \
+                          .size=sizeof(str), \
+                          .len=sizeof(str) - 1, \
+                          .fixed_size=true}
+
 // for right-hand side of declaration/definitions
-#define DSTR_LIT(str) ((dstr_t){.data=str, \
-                                .size=sizeof(str), \
-                                .len=sizeof(str) - 1, \
-                                .fixed_size=true})
+#define DSTR_LIT(str) ((dstr_t)DSTR_GLOBAL(str))
 
 // this allocates a new dstr on the heap
 derr_type_t dstr_new_quiet(dstr_t *ds, size_t size);

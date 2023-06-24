@@ -11,12 +11,10 @@ static inline http_pairs_t http_pair(dstr_t k, dstr_t v){
 
 // meant to be used for manually chaining a base set of headers as globals
 #define HTTP_PAIR_GLOBAL(k, v, _prev) \
-    { .pair = { .key=DSTR_LIT(k), .value=DSTR_LIT(v) }, .prev = _prev }
+    { .pair = { .key=DSTR_GLOBAL(k), .value=DSTR_GLOBAL(v) }, .prev = _prev }
 
 #define HTTP_PAIR(k, v) \
-    (http_pairs_t){ \
-        .pair = (http_pair_t){ .key=DSTR_LIT(k), .value=DSTR_LIT(v) } \
-    }
+    (http_pairs_t)HTTP_PAIR_GLOBAL(k, v, NULL)
 
 // optional: link an array of http_pair_t's into a list
 #define HTTP_PAIR_CHAIN(prev, ...) \
