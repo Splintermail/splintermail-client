@@ -35,7 +35,7 @@ derr_t _pyarg_dstr_null_pre(pyarg_i *iface, LIST(voidp) *params, dstr_t *fstr){
     _pyarg_dstr_null_t *arg = CONTAINER_OF(iface, _pyarg_dstr_null_t, iface);
     PROP(&e, LIST_APPEND(voidp, params, &arg->text) );
     PROP(&e, LIST_APPEND(voidp, params, &arg->len) );
-    PROP(&e, FMT(fstr, "s#") );
+    PROP(&e, FMT(fstr, "z#") );
     arg->text = unset;
     return e;
 }
