@@ -65,7 +65,7 @@ endif()
 
 if("${DISABLE_ASAN}" STREQUAL "")
     if(NOT "${lowerbuild}" STREQUAL "debug")
-        set(DISABLE_ASAN TRUE)
+        set(DISABLE_ASAN TRUE CACHE INTERNAL "")
     endif()
 endif()
 
@@ -90,6 +90,9 @@ if(NOT "${requested_ssl}" STREQUAL "")
     endif()
 endif()
 
+set(proj_src_dir "${PROJECT_SOURCE_DIR}" CACHE INTERNAL "")
+set(proj_bin_dir "${PROJECT_BINARY_DIR}" CACHE INTERNAL "")
+
 function(default_compile_options tgt)
     set(options "NOASAN" "NOCOV")
     set(one_value_args)
@@ -101,6 +104,11 @@ function(default_compile_options tgt)
         "${multi_value_args}"
         "${ARGN}"
     )
+
+    # always include the source directory (for compiling generated .c files)
+    target_include_directories("${tgt}" PUBLIC "${proj_src_dir}")
+    # always include the binary directory (for including generated .h files)
+    target_include_directories("${tgt}" PUBLIC "${proj_bin_dir}")
 
     # compiler-specific flags
     if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
@@ -303,7 +311,7 @@ function(sm_test)
 
     set(options "FILES")
     set(one_value_args "CWD")
-    set(multi_value_args "DEPS")
+    set(multi_value_args "DEPS" "ENV")
     cmake_parse_arguments(
         SM_TEST
         "${options}"
@@ -329,6 +337,7 @@ function(sm_test)
             set(args)
         endif()
         add_test(NAME "do_${name}" COMMAND "./${name}" ${args})
+        set(testname "do_${name}")
     else()
         # script test
         # name is first arg
@@ -341,6 +350,10 @@ function(sm_test)
             set(args)
         endif()
         add_test(NAME ${name} COMMAND ${cmd} ${args})
+        set(testname "${name}")
+    endif()
+    if(SM_TEST_ENV)
+        set_property(TEST "${testname}" PROPERTY ENVIRONMENT ${SM_TEST_ENV})
     endif()
 endfunction()
 
@@ -478,11 +491,6 @@ function(sm_exe)
     define_file_logname_for_target("${name}")
     target_link_libraries("${name}" PRIVATE ${SM_EXE_DEPS})
 endfunction()
-
-# always include the source directory (for compiling generated .c files)
-include_directories("${PROJECT_SOURCE_DIR}")
-# always include the binary directory (for including generated .h files)
-include_directories("${PROJECT_BINARY_DIR}")
 
 add_subdirectory(tools)
 

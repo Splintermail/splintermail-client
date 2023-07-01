@@ -40,6 +40,7 @@ struct qw_engine_t {
     qw_comp_scope_t *comp_scope;
     uintptr_t last_scope_id;
     // runtime stuff
+    qw_plugins_t *plugins;
     qw_stack_t *stack;
     qw_stack_t *extrastack;
     qw_dict_t *config;
@@ -70,7 +71,9 @@ void qw_scope_pop(qw_engine_t *engine);
 // raises error on val-not-found
 qw_val_t *qw_scope_eval_ref(qw_engine_t *engine, qw_ref_t ref);
 
-derr_t qw_engine_init(qw_engine_t *engine, size_t stack);
+derr_t qw_engine_init(
+    qw_engine_t *engine, qw_plugins_t *plugins, size_t stack
+);
 void qw_engine_free(qw_engine_t *out);
 
 SM_NORETURN(

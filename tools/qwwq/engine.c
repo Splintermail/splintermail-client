@@ -33,10 +33,12 @@ qw_val_t *qw_scope_eval_ref(qw_engine_t *engine, qw_ref_t ref){
     qw_error(engine, "encountered ref without matching scope_id");
 }
 
-derr_t qw_engine_init(qw_engine_t *engine, size_t stack){
+derr_t qw_engine_init(
+    qw_engine_t *engine, qw_plugins_t *plugins, size_t stack
+){
     derr_t e = E_OK;
 
-    *engine = (qw_engine_t){0};
+    *engine = (qw_engine_t){ .plugins = plugins };
 
     engine->parser = qw_parser_new(stack, stack);
     if(!engine->parser) ORIG_GO(&e, E_NOMEM, "nomem", fail);

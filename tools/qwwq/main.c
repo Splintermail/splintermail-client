@@ -14,12 +14,14 @@ static void print_help(void){
         "  -h, --help      Print help information and usage.\n"
         "  -i, --input     Specify an input file.  Default: stdin.\n"
         "  -o, --output    Specify an output file.  Default: stdout.\n"
-        "  -o, --stamp     Specify a stamp file.  In cases where the output\n"
+        "  -s, --stamp     Specify a stamp file.  In cases where the output\n"
         "                  file would be unchanged, touch the stamp file\n"
         "                  instead.  Requires --output.  Default: none.\n"
         "  -b  --boundary  Specify alternate snippet boundaries in PRE:POST\n"
         "                  format.  Default: QW:WQ\n"
         "      --stack     Parser stack size.  Default: 4096\n"
+        "  -p, --plugins   Specify a plugin search path.  May be provided\n"
+        "                  multiple times.  Default: none.\n"
         "\n"
         "CONFIG must be a qwwq-code file.\n"
         "\n"
@@ -33,13 +35,26 @@ static void print_help(void){
     );
 }
 
+static derr_t path_cb(void *data, dstr_t val){
+    derr_t e = E_OK;
+    LIST(dstr_t) *paths = data;
+    IF_PROP(&e, LIST_APPEND(dstr_t, paths, val) ){
+        fprintf(stderr, "too many --modpath args\n");
+        return e;
+    }
+    return e;
+}
+
 int main(int argc, char **argv){
+    LIST_VAR(dstr_t, paths, 8);
+
     opt_spec_t o_help  = {'h',  "help",     false};
     opt_spec_t o_in    = {'i',  "input",    true };
     opt_spec_t o_out   = {'o',  "output",   true };
     opt_spec_t o_stamp = {'s',  "stamp",    true };
     opt_spec_t o_bound = {'b',  "boundary", true };
     opt_spec_t o_stack = {'\0', "stack",    true };
+    opt_spec_t o_plug  = {'p',  "plugins",  true, path_cb, &paths};
 
     opt_spec_t* spec[] = {
         &o_help,
@@ -48,6 +63,7 @@ int main(int argc, char **argv){
         &o_stamp,
         &o_bound,
         &o_stack,
+        &o_plug,
     };
     size_t speclen = sizeof(spec) / sizeof(*spec);
     int newargc;
@@ -153,6 +169,7 @@ int main(int argc, char **argv){
             conf,
             &confdirname,
             dynamics,
+            paths,
             templ,
             o_in.found ? &templdirname : NULL,
             pre,

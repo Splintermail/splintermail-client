@@ -19,3 +19,4 @@ extern qw_func_t qw_builtin_table;
 extern qw_func_t qw_builtin_relpath;
 extern qw_func_t qw_builtin_cat;
 extern qw_func_t qw_builtin_exists;
+extern qw_func_t qw_builtin_load;

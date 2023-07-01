@@ -40,5 +40,6 @@ typedef void (*qw_instr_f)(qw_env_t env);
 #include "tools/qwwq/compile.h"
 #include <tools/qwwq/generated/parse.h>
 #include "tools/qwwq/scan.h"
+#include "tools/qwwq/plugin.h"
 #include "tools/qwwq/engine.h"
 #include "tools/qwwq/qw.h"

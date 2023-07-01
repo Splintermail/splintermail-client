@@ -31,6 +31,7 @@ derr_t qwwq(
     dstr_t conf,
     const dstr_t *confdirname,
     qw_dynamics_t dynamics,
+    LIST(dstr_t) paths,
     dstr_t templ,
     const dstr_t *templdirname,
     dstr_t preguard,

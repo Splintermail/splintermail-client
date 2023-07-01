@@ -268,6 +268,7 @@ derr_t qwwq(
     dstr_t conf,
     const dstr_t *confdirname,
     qw_dynamics_t dynamics,
+    LIST(dstr_t) paths,
     dstr_t templ,
     const dstr_t *templdirname,
     dstr_t preguard,
@@ -277,13 +278,15 @@ derr_t qwwq(
 ){
     derr_t e = E_OK;
 
-    qw_engine_t engine = {0};
     qw_origin_t origin_config = {0};
     qw_origin_t origin_snippet = {0};
+    qw_plugins_t plugins = {0};
+    qw_engine_t engine = {0};
 
-    PROP(&e, qw_engine_init(&engine, stack) );
     PROP_GO(&e, qw_origin_init(&origin_config, confdirname), cu);
     PROP_GO(&e, qw_origin_init(&origin_snippet, templdirname), cu);
+    PROP_GO(&e, qw_plugins_init(&plugins, &origin_config, paths), cu);
+    PROP_GO(&e, qw_engine_init(&engine, &plugins, stack), cu);
 
     if(setjmp(engine.jmp_env)){
         // we longjmp'd back with an error
@@ -311,7 +314,8 @@ derr_t qwwq(
 
 cu:
     qw_engine_free(&engine);
-    qw_origin_free(&origin_config);
+    qw_plugins_free(&plugins);
     qw_origin_free(&origin_snippet);
+    qw_origin_free(&origin_config);
     return e;
 }

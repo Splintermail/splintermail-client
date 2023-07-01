@@ -338,6 +338,10 @@ void qw_instr_global(qw_env_t env){
         qw_stack_put(env.engine, &qw_builtin_exists.type);
         return;
     }
+    if(dstr_eq(key, DSTR_LIT("load"))){
+        qw_stack_put(env.engine, &qw_builtin_load.type);
+        return;
+    }
     qw_error(env.engine, "global key \"%x\" not found", FD_DBG(key));
 }
 

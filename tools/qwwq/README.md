@@ -277,6 +277,14 @@ Returns a boolean if `path` exists.  The `qwwq` command-line tool interprets
     extern qw_func_t qw_builtin_cat;
     extern qw_func_t qw_builtin_exists;
 
+### `load(name)`
+
+Load a plugin named `name.so`, `name.dll`, or `name.dynlib`, depending on the
+platform.  Search paths are configured with the `-p` or `--plugins` option
+provided on the `qwwq` command line (no search paths are configured by
+default).  The return value is defined by the return value of the `qw_init()`
+function inside of the plugin.  See Plugins, below.
+
 ## Builtin Methods
 
 Many builtins act as methods on some type.
@@ -346,3 +354,36 @@ This is only necessary for dereferencing special keys in the root of the config
 dict:
 
     G."my strange key"
+
+## Plugins
+
+Qwwq supports loading user-defined plugins.  A plugin is a dynamic library
+exporting a `qw_init()` function and optionally a `qw_free()` function.  The
+return value of the `qw_init()` function defines the return value of the
+`load()` builtin used to actually load the plugin.  See `load()`, above.
+
+An example plugin:
+
+    #include <tools/qwwq/libqw.h>
+
+    QW_EXPORT qw_val_t *qw_init(qw_env_t env);
+    QW_EXPORT void qw_free(void);
+
+    qw_func_t func_a = {...};
+    qw_func_t func_b = {...};
+
+    qw_val_t *qw_init(qw_env_t env){
+        OPENSSL_init_ssl();
+
+        // return a dict as the plugin return value
+        return QW_MKDICT(env,
+            {"a", &func_a.type},
+            {"b", &func_b.type},
+        );
+    }
+
+    void qw_free(void){
+        OPENSSL_cleanup();
+    }
+
+See `plugin.h` and `test_plugin.c` for more details.

@@ -102,3 +102,6 @@ exists("asdfzxcv") = no
 # command-line dynamics
 dynamic = "DYN"
 static = "not actually static"
+
+# plugins
+test_plugin = "test val, test val"

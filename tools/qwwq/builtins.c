@@ -855,3 +855,30 @@ qw_func_t qw_builtin_exists = {
     .binds = NULL,
     .nbinds = 0,
 };
+
+static void qw_instr_load(qw_env_t env){
+    // get the first argument, the plugin name
+    qw_val_t *nameval = qw_scope_eval_ref(env.engine, qw_ref(BUILTIN, 0));
+    if(*nameval != QW_VAL_STRING){
+        qw_error(env.engine,
+            "load(name=) must be a str, not %x", FS(qw_val_name(*nameval))
+        );
+    }
+    dstr_t name = CONTAINER_OF(nameval, qw_string_t, type)->dstr;
+    qw_val_t *plugin = qw_plugin_load(env.engine->plugins, env, name);
+    qw_stack_put(env.engine, plugin);
+}
+static void *void_instr_load = (void*)qw_instr_load;
+static dstr_t load_params[] = { DSTR_GLOBAL("name") };
+static qw_val_t *load_defaults[] = { NULL };
+qw_func_t qw_builtin_load = {
+    .type = QW_VAL_FUNC,
+    .scope_id = BUILTIN,
+    .instr = &void_instr_load,
+    .ninstr = 1,
+    .params = load_params,
+    .nparams = 1,
+    .defaults = load_defaults,
+    .binds = NULL,
+    .nbinds = 0,
+};

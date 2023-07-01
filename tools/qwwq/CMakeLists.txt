@@ -1,4 +1,13 @@
-set(raw_srcs types.c instr.c builtins.c compile.c engine.c qw.c convert.c)
+set(raw_srcs
+    types.c
+    instr.c
+    builtins.c
+    compile.c
+    plugin.c
+    engine.c
+    qw.c
+    convert.c
+)
 
 foreach(src ${raw_srcs})
     define_file_logname_for_source("${src}" "${src}")
@@ -42,4 +51,50 @@ sm_lib(
 
 sm_exe(qwwq main.c DEPS qw)
 
-sm_test(test_qw.c DEPS qw FILES)
+# Our static linking + plugin strategy is quick and easy but ends up violating
+# the "one definition rule" due to duplicate instances of singletons.  The code
+# checks for *val=QW_VAL_SKIP instead of val==&theskip so it should be fine.
+# A real solution would involve more dynamic linking and installing libqw.so to
+# the operating system before running qwwq.
+sm_test(test_qw.c DEPS qw FILES ENV "ASAN_OPTIONS=detect_odr_violation=0")
+
+function(qw_plugin)
+    set(options)
+    set(one_value_args)
+    set(multi_value_args "DEPS")
+    cmake_parse_arguments(
+        QW_PLUGIN
+        "${options}"
+        "${one_value_args}"
+        "${multi_value_args}"
+        "${ARGN}"
+    )
+
+    list(GET QW_PLUGIN_UNPARSED_ARGUMENTS 0 first)
+    get_filename_component(ext "${first}" EXT)
+    if(ext)
+        # derive the name from the first argument
+        get_filename_component(name "${first}" NAME_WE)  # "without extension"
+        set(srcs ${QW_PLUGIN_UNPARSED_ARGUMENTS})
+    else()
+        # have an explicit name
+        set(name "${first}")
+        list(SUBLIST QW_PLUGIN_UNPARSED_ARGUMENTS 1 -1 srcs)
+    endif()
+
+    add_library("${name}" SHARED ${srcs})
+    if(QW_PLUGIN_DEPS)
+        target_link_libraries("${name}" PUBLIC ${QW_PLUGIN_DEPS})
+    endif()
+    default_compile_options("${name}" ${nocov})
+    define_file_logname_for_target("${name}")
+    set_target_properties("${name}" PROPERTIES PREFIX "")
+
+    # plugins won't build without generating qw code
+    add_dependencies("${name}" gen-qw-scan gen-qw-parse)
+endfunction()
+
+if(BUILD_TESTS)
+    qw_plugin(test_plugin.c DEPS qw)
+    add_dependencies(test_qw test_plugin)
+endif()

@@ -23,6 +23,9 @@ static derr_t test_qwwq(void){
     // we intentionally lie about the confdirname for testing purposes
     DSTR_STATIC(confdirname, "confdirname");
 
+    // we only load from right here
+    LIST_PRESET(dstr_t, paths, DSTR_LIT("."));
+
     char *dynstrs[] = {"dynamic=DYN", "static=not actually static"};
     size_t ndynstrs = sizeof(dynstrs)/sizeof(*dynstrs);
     PROP_GO(&e, qw_dynamics_init(&dynamics, dynstrs, ndynstrs), cu);
@@ -38,6 +41,7 @@ static derr_t test_qwwq(void){
             conf,
             &confdirname,
             dynamics,
+            paths,
             templ,
             &templdirname,
             DSTR_LIT("QW"),
