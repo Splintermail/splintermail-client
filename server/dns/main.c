@@ -4,6 +4,8 @@
 #include "server/dns/libdns.h"
 
 #include <string.h>
+#include <stdlib.h>
+#include <systemd/sd-daemon.h>
 
 #define MAX_PEERS 8
 #define NMEMBUFS 256
@@ -111,11 +113,26 @@ static void on_send(uv_udp_send_t *req, int status){
 
     if(status == 0 || status == UV_ECANCELED) return;
 
+    /* Since our kvpsync network is backed by wireguard, if we try to send to
+       a peer without an endpoint, we can recieve EDESTADDRREQ suggesting that
+       we didn't configure a valid peer address.  Since we always provide a
+       destination to uv_udp_send(), we can treat this error in the wireguard
+       layer as if it were silently dropped by the network. */
+    if(status == UV_EDESTADDRREQ){
+        LOG_ERROR("EDESTADDRREQ: dst=%x\n", FNTOPS(&req->addr));
+        return;
+    }
+
+    // similarly, don't crash the service if one wg endpoint is misconfigured
+    if(status == -ENOKEY){
+        LOG_ERROR("ENOKEY: dst=%x\n", FNTOPS(&req->addr));
+        return;
+    }
+
     // error condition
     int uvret = status;
     derr_t e = E_OK;
     TRACE_ORIG(&e, uv_err_type(uvret), "on_send: %x", FUV(uvret));
-    DUMP(e);
     dns_close(g, e);
     PASSED(e);
 }
@@ -243,7 +260,7 @@ static void on_recv(
         // should have been prevented by a read_stop when membufs ran out
         ORIG_GO(&e, E_INTERNAL, "empty buffer pool in on_recv", fail);
     }else if(nread == UV_ECANCELED){
-        // somebody called read stop
+        // somebody called recv stop
         goto buf_return;
     }else if(nread < 0){
         // error condition
@@ -386,6 +403,9 @@ static void send_initial_resyncs(uv_timer_t *timer){
         membuf = NULL;
     }
 
+    // don't care about failures from this call
+    (void)sd_notify(0, "READY=1");
+
 fail:
     if(membuf) membuf_return(&membuf);
     if(is_error(e)){
@@ -398,7 +418,10 @@ fail:
 
 static derr_t dns_main(
     addrspec_t dnsspec,
+    int *udp_fd,
+    int *tcp_fd,
     addrspec_t syncspec,
+    int *kvp_fd,
     struct sockaddr_storage *peers,
     size_t npeers,
     size_t rrl_nbuckets
@@ -428,16 +451,28 @@ static derr_t dns_main(
     // configure kvpsync listener
     PROP_GO(&e, duv_udp_init(&g.loop, &g.sync_udp), fail_loop);
     g.sync_udp.data = &g;
-    PROP_GO(&e, udp_bind_addrspec(&g.sync_udp, syncspec), fail_loop);
-    PROP_GO(&e,
-        recv_start(&g.sync_udp, allocator, on_recv),
-    fail_loop);
+    if(kvp_fd && *kvp_fd > -1){
+        // use provided socket
+        PROP_GO(&e, duv_udp_open(&g.sync_udp, *kvp_fd), fail_loop);
+        *kvp_fd = -1;
+    }else{
+        PROP_GO(&e, udp_bind_addrspec(&g.sync_udp, syncspec), fail_loop);
+    }
+    PROP_GO(&e, recv_start(&g.sync_udp, allocator, on_recv), fail_loop);
 
     // configure dns listener
     PROP_GO(&e, duv_udp_init(&g.loop, &g.dns_udp), fail_loop);
     g.dns_udp.data = &g;
-    PROP_GO(&e, udp_bind_addrspec(&g.dns_udp, dnsspec), fail_loop);
+    if(udp_fd && *udp_fd > -1){
+        // use provided socket
+        PROP_GO(&e, duv_udp_open(&g.dns_udp, *udp_fd), fail_loop);
+        *udp_fd = -1;
+    }else{
+        PROP_GO(&e, udp_bind_addrspec(&g.dns_udp, dnsspec), fail_loop);
+    }
     PROP_GO(&e, recv_start(&g.dns_udp, allocator, on_recv), fail_loop);
+
+    (void)tcp_fd;
 
 fail_loop:
     if(!is_error(e)){
@@ -473,38 +508,149 @@ cu:
 
 static void print_help(FILE *f){
     fprintf(f,
-        "usage: dns [--dns SPEC] [--rrl NBUCKETS] SYNC_SPEC PEER_SPEC...\n"
+        "usage: dns [-c CONFIG] OPTIONS\n"
         "\n"
-        "each address SPEC is of the form [HOST][:PORT]:\n"
+        "Where OPTIONS may be any of the following:\n"
         "\n"
-        "NBUCKETS should probably be prime (default is 249999991).\n"
+        "--sync SPEC     Configure how the kvpsync will listen to its\n"
+        "                peers.  Required.\n"
+        "--peer SPEC     Add a peer that kvpsync should talk to.  May\n"
+        "                be provided multiple times.  Must be provided at\n"
+        "                least once.\n"
+        "--rrl NBUCKETS  Configure the number of rrl buckets.  Should\n"
+        "                probably be prime.  Default is 249999991 (about\n"
+        "                250MB).\n"
+        "--dns SPEC      Configure how dns is served.  Defaults to :53.\n"
         "\n"
-        "example:\n"
+        "Each address SPEC is of the form [HOST][:PORT].\n"
         "\n"
-        "    dns --dns :53 10.7.1.4:5243 peer1:5243 peer2:5243\n"
+        "CONFIG points to a file with the same available OPTIONS.\n"
+        "Command-line values will override the config file values.\n"
         "\n"
     );
+}
+
+typedef struct sockaddr_storage sockaddr_t;
+LIST_HEADERS(sockaddr_t)
+LIST_FUNCTIONS(sockaddr_t)
+
+static derr_t on_peer(void *data, dstr_t val){
+    derr_t e = E_OK;
+    LIST(sockaddr_t) *peers = data;
+
+    // make sure there's room
+    PROP(&e, LIST_GROW(sockaddr_t, peers, peers->len + 1) );
+
+    addrspec_t peerspec;
+    PROP(&e, parse_addrspec(&val, &peerspec) );
+    // validate
+    if(peerspec.scheme.len){
+        ORIG(&e, E_VALUE, "peer scheme will be ignored: %x", FD(val));
+    }
+    if(!peerspec.host.len){
+        ORIG(&e, E_VALUE, "peer host is required: %x", FD(val));
+    }
+    if(!peerspec.port.len){
+        ORIG(&e, E_VALUE, "peer port is required: %x", FD(val));
+    }
+    /* convert to struct sockaddr_storage; we don't really have a way to
+       check for connectivity so we just take the first addr */
+    struct addrinfo *ai;
+    PROP(&e, getaddrspecinfo(peerspec, false, &ai) );
+    if(ai->ai_addrlen > sizeof(*peers->data)){
+        LOG_FATAL("ai_addrlen too big\n");
+    }
+    memcpy(&peers->data[peers->len++], ai->ai_addr, ai->ai_addrlen);
+    freeaddrinfo(ai);
+
+    return e;
+}
+
+static derr_t detect_sd_fds(int *udp, int *tcp, int *kvp){
+    derr_t e = E_OK;
+
+    /* all Listen* directives are in the same service file so
+       sd_listen_fds_with_names() is unhelpful, and we have to rely on a
+       well-known ordering of fd's */
+
+    int nfds = sd_listen_fds(1); // 1 means "unset_env = true"
+    if(nfds < 0) ORIG(&e, E_OS, "sd_listen_fds: %x", FE(-nfds));
+    if(nfds == 0) return e;
+    if(nfds != 3){
+        ORIG(&e,
+            E_PARAM,
+            "sd_listen_fds() returned %x; expected 0 or 3",
+            FI(nfds)
+        );
+    }
+    *udp = SD_LISTEN_FDS_START + 0;
+    *tcp = SD_LISTEN_FDS_START + 1;
+    *kvp = SD_LISTEN_FDS_START + 2;
+
+    /* also close stdout and dup stderr; systemd doesn't seem to want to
+       respect stdout no matter what I configure */
+    close(1); int x = dup(2);
+    stdout = stderr;
+    (void)x;
+
+    return e;
 }
 
 int main(int argc, char **argv){
     derr_t e = E_OK;
 
+    int udp_fd = -1;
+    int tcp_fd = -1;
+    int kvp_fd = -1;
+
     signal(SIGPIPE, SIG_IGN);
     PROP_GO(&e, logger_add_fileptr(LOG_LVL_DEBUG, stderr), fail);
 
     opt_spec_t o_help = {'h',  "help", false};
-    opt_spec_t o_dns  = {'\0', "dns", true};
+    opt_spec_t o_conf = {'c',  "config", true};
+    opt_spec_t* prespec[] = {
+        &o_help,
+        &o_conf,
+    };
+    size_t prespeclen = sizeof(prespec) / sizeof(*prespec);
+    int preargc;
+    derr_t e2 = opt_parse_soft(argc, argv, prespec, prespeclen, &preargc);
+    CATCH(e2, E_ANY){
+        DUMP(e2);
+        DROP_VAR(&e2);
+        print_help(stderr);
+        return 1;
+    }
+    argc = preargc;
+
+    if(o_help.found){
+        print_help(stdout);
+        return 0;
+    }
+
+    LIST_VAR(sockaddr_t, peers, MAX_PEERS);
+
+    opt_spec_t o_sync = {'\0', "sync", true};
+    opt_spec_t o_peer = {'\0', "peer", true, on_peer, &peers};
     opt_spec_t o_rrl  = {'\0', "rrl", true};
+    opt_spec_t o_dns  = {'\0', "dns", true};
 
     opt_spec_t* spec[] = {
-        &o_help,
-        &o_dns,
+        &o_sync,
+        &o_peer,
         &o_rrl,
+        &o_dns,
     };
     size_t speclen = sizeof(spec) / sizeof(*spec);
 
+    DSTR_VAR(confbuf, 4096);
+    if(o_conf.found){
+        PROP_GO(&e, dstr_read_file(o_conf.val.data, &confbuf), fail);
+        PROP_GO(&e, conf_parse(&confbuf, spec, speclen), fail);
+    }
+
     int newargc;
-    derr_t e2 = opt_parse(argc, argv, spec, speclen, &newargc);
+    e2 = opt_parse(argc, argv, spec, speclen, &newargc);
     CATCH(e2, E_ANY){
         DUMP(e2);
         DROP_VAR(&e2);
@@ -512,12 +658,29 @@ int main(int argc, char **argv){
         return 1;
     }
 
-    if(o_help.found){
-        print_help(stdout);
-        return 0;
+    if(newargc > 1){
+        print_help(stderr);
+        return 1;
     }
 
-    if(newargc < 3){
+    PROP_GO(&e, detect_sd_fds(&udp_fd, &tcp_fd, &kvp_fd), fail);
+
+    // require either --sync or the systemd filedescriptors
+    addrspec_t syncspec;
+    if(o_sync.found){
+        PROP_GO(&e, parse_addrspec(&o_sync.val, &syncspec), fail);
+        // validate
+        if(syncspec.scheme.len){
+            ORIG_GO(&e, E_VALUE, "sync scheme would be ignored", fail);
+        }
+    }else if(udp_fd == -1){
+        fprintf(stderr, "--sync is required\n");
+        print_help(stderr);
+        return 1;
+    }
+
+    if(!peers.len){
+        fprintf(stderr, "at least one --peer is required\n");
         print_help(stderr);
         return 1;
     }
@@ -541,52 +704,25 @@ int main(int argc, char **argv){
         }
     }
 
-    addrspec_t syncspec;
-    dstr_t dsyncspec;
-    DSTR_WRAP(dsyncspec, argv[1], strlen(argv[1]), true);
-    PROP_GO(&e, parse_addrspec(&dsyncspec, &syncspec), fail);
-    // validate
-    if(syncspec.scheme.len){
-        ORIG_GO(&e, E_VALUE, "sync scheme would be ignored", fail);
-    }
-
-    struct sockaddr_storage peers[MAX_PEERS];
-    size_t npeers = 0;
-    for(int i = 2; i < newargc; i++){
-        if(npeers >= MAX_PEERS){
-            fprintf(stderr, "too many peers!\n\n");
-            print_help(stderr);
-            return 1;
-        }
-        dstr_t dpeer;
-        DSTR_WRAP(dpeer, argv[i], strlen(argv[i]), true);
-        addrspec_t peerspec;
-        PROP_GO(&e, parse_addrspec(&dpeer, &peerspec), fail);
-        // validate
-        if(peerspec.scheme.len){
-            ORIG_GO(&e, E_VALUE, "peer scheme will be ignored", fail);
-        }
-        if(!peerspec.host.len){
-            ORIG_GO(&e, E_VALUE, "peer host is required", fail);
-        }
-        if(!peerspec.port.len){
-            ORIG_GO(&e, E_VALUE, "peer port is required", fail);
-        }
-        /* convert to struct sockaddr_storage; we don't really have a way to
-           check for connectivity so we just take the first addr */
-        struct addrinfo *ai;
-        PROP_GO(&e, getaddrspecinfo(peerspec, false, &ai), fail);
-        if(ai->ai_addrlen > sizeof(*peers)) LOG_FATAL("ai_addrlen too big\n");
-        memcpy(&peers[npeers], ai->ai_addr, ai->ai_addrlen);
-        freeaddrinfo(ai);
-        npeers++;
-    }
-
-    PROP_GO(&e, dns_main(dnsspec, syncspec, peers, npeers, nbuckets), fail);
+    PROP_GO(&e,
+        dns_main(
+            dnsspec,
+            &udp_fd,
+            &tcp_fd,
+            syncspec,
+            &kvp_fd,
+            peers.data,
+            peers.len,
+            nbuckets
+        ),
+    fail);
 
     return 0;
 
 fail:
+    if(udp_fd > -1) close(udp_fd);
+    if(tcp_fd > -1) close(tcp_fd);
+    if(kvp_fd > -1) close(kvp_fd);
     DUMP(e);
     DROP_VAR(&e);
     return 1;

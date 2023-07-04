@@ -5,6 +5,19 @@
 #include "libdstr/libdstr.h"
 #include "server/dns/libdns.h"
 
+DEF_CONTAINER_OF(_fmt_lstr_t, iface, fmt_i)
+
+derr_type_t _fmt_lstr(const fmt_i *iface, writer_i *out){
+    lstr_t l = CONTAINER_OF(iface, _fmt_lstr_t, iface)->l;
+    return out->w->puts(out, l.str, l.len);
+}
+
+derr_type_t _fmt_lstr_dbg(const fmt_i *iface, writer_i *out){
+    lstr_t l = CONTAINER_OF(iface, _fmt_lstr_t, iface)->l;
+    return fmt_strn_dbg(l.str, l.len, out);
+}
+
+
 bool is_bad_parse(size_t n){
     return n >= BP_MINVAL;
 }

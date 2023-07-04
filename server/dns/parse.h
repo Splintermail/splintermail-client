@@ -6,6 +6,15 @@ typedef struct {
 
 #define LSTR(literal) (lstr_t){ .str = literal, .len = sizeof(literal)-1 }
 
+typedef struct {
+    fmt_i iface;
+    const lstr_t l;
+} _fmt_lstr_t;
+derr_type_t _fmt_lstr(const fmt_i *iface, writer_i *out);
+derr_type_t _fmt_lstr_dbg(const fmt_i *iface, writer_i *out);
+#define FL(l) (&(_fmt_lstr_t){ {_fmt_lstr}, l }.iface)
+#define FL_DBG(l) (&(_fmt_lstr_t){ {_fmt_lstr_dbg}, l }.iface)
+
 bool lstr_eq(const lstr_t a, const lstr_t b);
 
 typedef enum {

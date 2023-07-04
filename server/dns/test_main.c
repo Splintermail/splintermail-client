@@ -487,7 +487,8 @@ static derr_t test_main(void){
         peers[i] = must_read_addr("127.0.0.1", BASEPORT + i);
     }
 
-    PROP(&e, dns_main(dnsspec, syncspec, peers, NPEERS, 997) );
+    int fd = -1;
+    PROP(&e, dns_main(dnsspec, &fd, &fd, syncspec, &fd, peers, NPEERS, 997) );
 
     return e;
 }

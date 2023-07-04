@@ -1,5 +1,5 @@
 sm_lib(libdns membuf.c dns.c parse.c write.c rrl.c DEPS web duv kvpsync)
-sm_exe(dns main.c DEPS libdns)
+sm_exe(dns main.c DEPS libdns systemd)
 
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     source_compile_options(parse.c "-Wno-conversion")
@@ -12,4 +12,4 @@ sm_test(test_parse.c DEPS libdns)
 sm_test(test_write.c DEPS libdns)
 sm_test(test_dns.c DEPS libdns)
 sm_test(test_rrl.c DEPS libdns)
-sm_test(test_main.c DEPS libdns)
+sm_test(test_main.c DEPS libdns systemd)
