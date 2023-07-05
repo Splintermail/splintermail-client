@@ -26,10 +26,7 @@ static derr_t add_key(
     PROP(&e, FMT(&d_sock, "%x", FS(sock)) );
 
     MYSQL sql;
-    MYSQL* mret = mysql_init(&sql);
-    if(!mret){
-        ORIG(&e, E_SQL, "unable to init mysql object");
-    }
+    PROP(&e, dmysql_init(&sql) );
 
     PROP_GO(&e, sql_connect_unix(&sql, NULL, NULL, &d_sock), cu_sql);
 

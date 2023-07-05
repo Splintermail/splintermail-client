@@ -48,6 +48,24 @@ derr_type_t _fmt_sql(const fmt_i *iface, writer_i *out){
     return out->w->puts(out, msg, len);
 }
 
+derr_t dmysql_library_init(void){
+    derr_t e = E_OK;
+
+    int ret = mysql_library_init(0, NULL, NULL);
+    if(ret != 0) ORIG(&e, E_SQL, "unable to init mysql library");
+
+    return e;
+}
+
+derr_t dmysql_init(MYSQL *sql){
+    derr_t e = E_OK;
+
+    MYSQL* mret = mysql_init(sql);
+    if(!mret) ORIG(&e, E_SQL, "unable to init mysql object");
+
+    return e;
+}
+
 derr_t sql_connect_unix_ex(
     MYSQL *sql,
     const dstr_t *user,

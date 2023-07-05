@@ -57,10 +57,7 @@ derr_t smsql_connect(py_smsql_t *self){
         ORIG(&e, E_INTERNAL, "sql already connected!");
     }
 
-    MYSQL* mret = mysql_init(&self->sql);
-    if(!mret){
-        ORIG(&e, E_SQL, "unable to init mysql object");
-    }
+    PROP(&e, dmysql_init(&self->sql) );
 
     PROP_GO(&e,
         sql_connect_unix_ex(

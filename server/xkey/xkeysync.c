@@ -240,10 +240,7 @@ static bool xkeysync_check_now(struct cmd_xkeysync_context *ctx){
     PROP_GO(&e, FMT(&d_sock, "%x", FS(sock)), done);
 
     MYSQL sql;
-    MYSQL* mret = mysql_init(&sql);
-    if(!mret){
-        ORIG_GO(&e, E_SQL, "unable to init mysql object", done);
-    }
+    PROP_GO(&e, dmysql_init(&sql), done);
 
     PROP_GO(&e, sql_connect_unix(&sql, NULL, NULL, &d_sock), cu_sql);
 

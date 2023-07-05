@@ -636,17 +636,10 @@ static derr_t smsql(
 ){
     derr_t e = E_OK;
 
-    // get sql server ready
-    int ret = mysql_library_init(0, NULL, NULL);
-    if(ret != 0){
-        ORIG(&e, E_SQL, "unable to init mysql library");
-    }
+    PROP(&e, dmysql_library_init() );
 
     MYSQL sql;
-    MYSQL* mret = mysql_init(&sql);
-    if(!mret){
-        ORIG_GO(&e, E_SQL, "unable to init mysql object", cu_sql_lib);
-    }
+    PROP_GO(&e, dmysql_init(&sql), cu_sql_lib);
 
     PROP_GO(&e, sql_connect_unix(&sql, user, pass, sock), cu_sql);
 

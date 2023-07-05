@@ -31,6 +31,12 @@ derr_type_t _fmt_sql(const fmt_i *iface, writer_i *out);
 
 #define FSQL(sql) (&(_fmt_sql_t){ {_fmt_sql}, sql }.iface)
 
+derr_t dmysql_library_init(void);
+// use normal mysql_library_end()
+
+derr_t dmysql_init(MYSQL *sql);
+// use normal mysql_close(sql)
+
 // sock is allowed to be NULL (defaults to "/var/run/mysqld/mysqld.sock")
 // dbname can be NULL to not choose a database
 derr_t sql_connect_unix_ex(

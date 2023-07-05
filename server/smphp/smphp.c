@@ -100,10 +100,7 @@ static zend_string *print_error(derr_t e_in){
 static derr_t _sql_init(MYSQL *sql){
     derr_t e = E_OK;
 
-    MYSQL* mret = mysql_init(sql);
-    if(!mret){
-        ORIG(&e, E_SQL, "unable to init mysql object");
-    }
+    PROP(&e, dmysql_init(sql) );
 
     // connect with php.ini's sql_sock setting
     char *sql_sock = (char *)smphp_globals.sql_sock;
