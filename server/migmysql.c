@@ -399,16 +399,16 @@ static derr_t mig_override(MYSQL *sql, const dstr_t *path){
     PROP_GO(&e, dstr_read_path(&SBD(*path), &content), cu);
 
     DSTR_STATIC(query,
-        "INSERT INTO migmysql (id, name, exe, `undo`) VALUES (?,?,?,?)"
+        "UPDATE migmysql set name=?, exe=?, `undo`=? where id=?"
     );
     PROP_GO(&e,
         sql_norow_query(sql,
             query,
             NULL,
-            uint_bind_in(&id),
             string_bind_in(&name),
             bool_bind_in(&exe),
-            blob_bind_in(&content)
+            blob_bind_in(&content),
+            uint_bind_in(&id)
         ),
     cu);
 
@@ -772,6 +772,11 @@ static void print_help(FILE *f){
         "     --pass\n"
         "     --host            (not yet supported)\n"
         "     --port            (not yet supported)\n"
+        "\n"
+        "Note that --override mode will simply modify a dn script that has\n"
+        "been stored in the database, but it won't run the down migration.\n"
+        "It is for reparing broken migrations which are under development.\n"
+        "\n"
     );
 }
 
