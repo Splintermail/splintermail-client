@@ -8,14 +8,19 @@
 
 REGISTER_ERROR_TYPE(E_UV, "UVERROR", "error from libuv");
 
+#ifdef _WIN32
+/* in windows, use uv_strerror(), since libuv's windows errors are arbitrary
+   negative numbers */
 DEF_CONTAINER_OF(_fmt_uverr_t, iface, fmt_i)
-
 derr_type_t _fmt_uverr(const fmt_i *iface, writer_i *out){
     int err = CONTAINER_OF(iface, _fmt_uverr_t, iface)->err;
     const char *msg = uv_strerror(err);
     size_t len = strlen(msg);
     return out->w->puts(out, msg, len);
 }
+#else
+// unix just calls fmt_error and so compiles nothing here
+#endif
 
 // all uv errors, as derr_type_t's
 #define REGISTER_UV_ERROR(ERR, MSG) \
@@ -231,6 +236,10 @@ derr_t duv_udp_init(uv_loop_t *loop, uv_udp_t *udp){
     UV_CALL(uv_udp_init, loop, udp);
 }
 
+derr_t duv_udp_open(uv_udp_t *udp, compat_socket_t fd){
+    UV_CALL(uv_udp_open, udp, fd);
+}
+
 derr_t duv_udp_bind(
     uv_udp_t *udp, const struct sockaddr *sa, unsigned int flags
 ){
@@ -271,6 +280,99 @@ derr_t duv_pipe_init(uv_loop_t *loop, uv_pipe_t *pipe, int ipc){
 derr_t duv_pipe_bind(uv_pipe_t *pipe, const char *name){
     UV_CALL(uv_pipe_bind, pipe, name);
 }
+
+derr_t duv_pipe_bind_path(uv_pipe_t *pipe, string_builder_t sb){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(&sb, &stack, &heap, &path) );
+
+    PROP_GO(&e, duv_pipe_bind(pipe, path->data), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+#ifndef _WIN32
+// unix-only: bind to a unix socket with a lock
+#include <fcntl.h>
+
+static derr_t trylock_fd(int fd, string_builder_t sb){
+    derr_t e = E_OK;
+
+    struct flock f = {
+        .l_type = F_WRLCK,
+        .l_whence = SEEK_SET,
+        .l_start = 0,
+        .l_len = 0, // 0 means "until EOF"
+    };
+    int ret = fcntl(fd, F_SETLK, &f);
+    if(ret != -1) return e;
+
+    if(errno == EACCES || errno == EAGAIN){
+        ORIG(&e,
+            E_BUSY,
+            "file %x is locked by another process (pid=%d)",
+            FSB(sb),
+            FI(f.l_pid)
+        );
+    }
+
+    ORIG(&e, E_OS, "fcntl(%x, F_SETLK, F_WRLCK): %x", FSB(sb), FE(errno));
+}
+
+derr_t duv_pipe_bind_with_lock(
+    uv_pipe_t *pipe,
+    const string_builder_t sock,
+    const string_builder_t lock,
+    int *out
+){
+    derr_t e = E_OK;
+    *out = -1;
+
+    // open lockfile
+    int fd;
+    PROP(&e, dopen_path(&lock, O_RDWR|O_CREAT, 0666, &fd) );
+
+    // attempt a lock
+    PROP_GO(&e, trylock_fd(fd, lock), fail_fd);
+
+    // with lock acquired, delete the socket file if it exists
+    bool ok;
+    PROP_GO(&e, exists_path(&sock, &ok), fail_lock);
+    if(ok) PROP_GO(&e, dunlink_path(&sock), fail_lock);
+
+    // now bind
+    PROP_GO(&e, duv_pipe_bind_path(pipe, sock), fail_lock);
+
+fail_lock:
+    duv_unlock_fd(fd);
+fail_fd:
+    close(fd);
+    return e;
+}
+
+// unlock failures are only logged
+// also closes lock fd
+// technically you should unlock inside or after your uv_pipe_t's close_cb
+void duv_unlock_fd(int fd){
+    if(fd == -1) return;
+    struct flock f = {
+        .l_type = F_UNLCK,
+        .l_whence = SEEK_SET,
+        .l_start = 0,
+        .l_len = 0, // 0 means "until EOF"
+    };
+    int ret = fcntl(fd, F_SETLK, &f);
+    if(ret == -1){
+        LOG_ERROR("fcntl(F_SETLK, F_UNLCK): %x", FE(errno));
+    }
+    close(fd);
+}
+
+#endif
 
 derr_t duv_pipe_listen(uv_pipe_t *pipe, int backlog, uv_connection_cb cb){
     UV_CALL(uv_listen, (uv_stream_t*)pipe, backlog, cb);

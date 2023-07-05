@@ -3,14 +3,21 @@ extern derr_type_t E_UV;
 
 // error handling helpers
 
+#ifdef _WIN32
+/* in windows, use uv_strerror(), since libuv's windows errors are arbitrary
+   negative numbers */
 typedef struct {
     fmt_i iface;
     int err;
 } _fmt_uverr_t;
-
 derr_type_t _fmt_uverr(const fmt_i *iface, writer_i *out);
-
 #define FUV(err) (&(_fmt_uverr_t){ {_fmt_uverr}, err }.iface)
+#else
+/* in unix, rely on standard errno handling, since libuv doesn't handle as many
+   error types as unix can have, and libuv leaks memory when it sees an erro
+   type that it doesn't recognize, which is annoying under asan */
+#define FUV(err) (&(_fmt_errno_t){ {_fmt_errno}, -err }.iface)
+#endif
 
 static inline derr_type_t uv_err_type(int err){
     return (err == UV_ENOMEM) ? E_NOMEM : E_UV;
@@ -133,6 +140,7 @@ derr_t duv_tcp_write(
 );
 derr_t duv_tcp_shutdown(uv_shutdown_t *req, uv_tcp_t *tcp, uv_shutdown_cb cb);
 derr_t duv_udp_init(uv_loop_t *loop, uv_udp_t *udp);
+derr_t duv_udp_open(uv_udp_t *udp, compat_socket_t fd);
 derr_t duv_udp_bind(
     uv_udp_t *udp, const struct sockaddr *sa, unsigned int flags
 );
@@ -153,6 +161,20 @@ derr_t duv_udp_send(
 derr_t duv_async_init(uv_loop_t *loop, uv_async_t *async, uv_async_cb cb);
 derr_t duv_pipe_init(uv_loop_t *loop, uv_pipe_t *pipe, int ipc);
 derr_t duv_pipe_bind(uv_pipe_t *pipe, const char *name);
+derr_t duv_pipe_bind_path(uv_pipe_t *pipe, string_builder_t sb);
+#ifndef _WIN32
+// unix-only: bind to a unix socket with a lock
+derr_t duv_pipe_bind_with_lock(
+    uv_pipe_t *pipe,
+    const string_builder_t sock,
+    const string_builder_t lock,
+    int *out
+);
+// unlock failures are only logged
+// also closes fd
+// technically you should unlock inside or after your uv_pipe_t's close_cb
+void duv_unlock_fd(int fd);
+#endif
 derr_t duv_pipe_listen(uv_pipe_t *pipe, int backlog, uv_connection_cb cb);
 derr_t duv_pipe_accept(uv_pipe_t *pipe, uv_pipe_t *client);
 derr_t duv_pipe_read_start(
