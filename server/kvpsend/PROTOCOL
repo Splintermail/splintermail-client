@@ -1,0 +1,19 @@
+The kvpsend socket protocol:
+
+API server sets a challenge and blocks until it is configured:
+
+    'S:' || hex(inst_uuid) || ':' || challenge || '\n'
+
+kvpsend responds with one of:
+
+    'k'  # success
+    't'  # timeout
+    EOF  # on failure
+
+healthcheck code requests a status update:
+
+    'H\n'
+
+kvpsend responds with a string of 'y' or 'n' for each peer
+
+    'yy\n'

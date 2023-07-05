@@ -98,7 +98,6 @@ typedef struct {
     #error "too many peers to fit into entry_t->readymask"
     #endif
     unsigned int readymask;
-
 } entry_t;
 DEF_CONTAINER_OF(entry_t, node, jsw_anode_t)
 DEF_CONTAINER_OF(entry_t, link, link_t)
@@ -114,7 +113,7 @@ struct kvpsend_i {
     void (*timeout_timer_start)(kvpsend_i*, xtime_t deadline);
     void (*timeout_timer_stop)(kvpsend_i*);
     void (*subscriber_close)(kvpsend_i*, subscriber_t *sub);
-    void (*subscriber_respond)(kvpsend_i*, subscriber_t *sub, char c);
+    void (*subscriber_respond)(kvpsend_i*, subscriber_t *sub, dstr_t msg);
     derr_t (*sender_send_pkt)(
         kvpsend_i*, sender_t *sender, const kvp_update_t *pkt
     );
@@ -151,3 +150,4 @@ derr_t sender_send_cb(kvpsend_t *k, sender_t *sender, xtime_t now);
 derr_t sender_recv_cb(
     kvpsend_t *k, sender_t *sender, kvp_ack_t ack, xtime_t now
 );
+void healthcheck_read_cb(kvpsend_t *k, subscriber_t *sub);

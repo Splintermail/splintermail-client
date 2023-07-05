@@ -83,13 +83,13 @@ void kvpsend_free(kvpsend_t *k){
     }
 }
 
-static void subscribers_respond_all(kvpsend_t *k, entry_t *entry, char resp){
+static void subscribers_respond_all(kvpsend_t *k, entry_t *entry, dstr_t msg){
     kvpsend_i *I = k->I;
     link_t *link;
     while((link = link_list_pop_first(&entry->subscribers))){
         subscriber_t *sub = CONTAINER_OF(link, subscriber_t, link);
         link_remove(&sub->tlink);
-        I->subscriber_respond(I, sub, resp);
+        I->subscriber_respond(I, sub, msg);
     }
     // we may have a new timeout now
     configure_sub_timeout(k);
@@ -145,10 +145,11 @@ static bool entry_ok(kvpsend_t *k, entry_t *entry){
 }
 
 static void entry_now_ready(kvpsend_t *k, entry_t *entry){
-    subscribers_respond_all(k, entry, 'k');
+    subscribers_respond_all(k, entry, DSTR_LIT("k"));
     entry->ready = true;
 }
 
+// a sender transitions states ok->notok or notok->ok
 static void state_cb(kvpsync_send_t *send, bool ok, void *data){
     sender_t *sender = CONTAINER_OF(send, sender_t, send);
     kvpsend_t *k = data;
@@ -359,7 +360,7 @@ derr_t subscriber_read_cb(
     fail_sub);
 
     if(!subdomain_ok){
-        LOG_WARN("invalid inst_uuid\n");
+        LOG_WARN("invalid inst_uuid (%x)\n", FX(inst_uuid));
         I->subscriber_close(I, sub);
         return e;
     }
@@ -398,7 +399,7 @@ derr_t subscriber_read_cb(
         I->subscriber_close(I, sub);
     }else if(entry->ready){
         // entry is already ready
-        I->subscriber_respond(I, sub, 'k');
+        I->subscriber_respond(I, sub, DSTR_LIT("k"));
     }else{
         // subscriber must wait for ready signal
         sub->deadline = now + SUBSCRIBER_TIMEOUT;
@@ -414,6 +415,19 @@ fail_sub:
     // if we failed without making a decision on this subscriber
     I->subscriber_close(I, sub);
     return e;
+}
+
+void healthcheck_read_cb(kvpsend_t *k, subscriber_t *sub){
+    kvpsend_i *I = k->I;
+
+    DSTR_VAR(buf, MAX_PEERS+1);
+    for(size_t i = 0; i < k->nsenders; i++){
+        bool ok = k->okmask & (1 << i);
+        dstr_append_char(&buf, ok ? 'y' : 'n');
+    }
+    dstr_append_char(&buf, '\n');
+
+    I->subscriber_respond(I, sub, buf);
 }
 
 derr_t sender_send_cb(kvpsend_t *k, sender_t *sender, xtime_t now){
@@ -535,7 +549,7 @@ derr_t timeout_timer_cb(kvpsend_t *k, xtime_t now){
         // this subscriber timed out
         link_remove(&sub->link);
         link_remove(&sub->tlink);
-        I->subscriber_respond(I, sub, 't');
+        I->subscriber_respond(I, sub, DSTR_LIT("t"));
     }
 
     configure_sub_timeout(k);
