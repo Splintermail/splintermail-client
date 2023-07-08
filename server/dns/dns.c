@@ -1,7 +1,5 @@
 #include <string.h>
 
-#include <uv.h>
-
 #include "server/dns/libdns.h"
 
 // for tracking UNSURE after converting to lstr_t
