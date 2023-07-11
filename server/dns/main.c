@@ -312,12 +312,36 @@ static const dstr_t *globals_kvp_get(kvp_i *iface, lstr_t user){
     memcpy(userbuf, user.str, user.len);
     dstr_t key;
     DSTR_WRAP(key, userbuf, user.len, false);
-    // check with each recv until we get a confident answer
+
+    /* If we have multiple kvpsync_recv_t's which are both OK but only one has
+       received the challenge, prefer the confident yes to the confident no.
+
+       Unfortunately, that means that both deletions will need to be received
+       before we emit a no ourselves, but there's an upper limit of about 30
+       seconds on that effect, which is less than the TTL of most DNS queries.
+
+       We could fix this by including a sequence number with each update, and
+       having the kvpsend_recv_t return the sequence number associated with the
+       answer when returning a confident answer.
+
+       The tradeoff is that having a global ordering between servers increases
+       the likelihood of splitbrain scenarios.  Using a timestamp could work
+       but would though; synced clocks is already required by the protocol.
+
+       But it's probably not worth it.  It's better to optimize for never
+       accidentally giving a confident no when a confident yes is plausible. */
+
+    // prefer confident yes to confident no, prefer confident no to unsure
+    const dstr_t *ans = UNSURE;
     for(size_t i = 0; i < g->npeers; i++){
         const dstr_t *dret = kvpsync_recv_get_value(&g->recv[i], g->now, key);
-        if(dret != UNSURE) return dret;
+        if(dret == UNSURE) continue;
+        // confident yes: return immediately
+        if(dret) return dret;
+        // confident no: prefer to UNSURE but check with other recvs
+        ans = NULL;
     }
-    return UNSURE;
+    return ans;
 }
 
 // note that you can't use udp_init_ex first
