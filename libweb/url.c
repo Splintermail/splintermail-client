@@ -89,7 +89,7 @@ derr_t parse_url(const dstr_t *text, url_t *out){
 
     bool ok = parse_url_ex(text, out, &errbuf);
     if(!ok){
-        ORIG(&e, E_PARAM, "invalid url: %x", FD(errbuf));
+        ORIG(&e, E_PARAM, "\n%x", FD(errbuf));
     }
 
     return e;

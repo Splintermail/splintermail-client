@@ -3,6 +3,7 @@
 
 {{#ifndef LIBWEB_H
 #include <libweb/libweb.h>
+#include <errno.h>
 #endif
 
 // steal %param buf via a macro
@@ -16,6 +17,10 @@ static bool parse_status_code(dstr_off_t off, int *code){
         return false;
     }
     return true;
+}
+
+static int read_digit(dstr_off_t off){
+    return dstr_from_off(off).data[0] - '0';
 }
 
 static bool is_valid_port(dstr_off_t off){
@@ -59,6 +64,7 @@ static bool is_valid_port(dstr_off_t off){
 %kwarg zero_loc_fn DSTR_OFF_ZERO;
 
 %type i {int};
+%type time {time_t};
 %type status_line {http_status_line_t};
 %type pair {http_pair_t};
 %type size {size_t};
@@ -116,8 +122,33 @@ TILDE;
 # keyword tokens
 HTTP;
 CHUNKED;
+GMT;
+MON;
+TUE;
+WED;
+THU;
+FRI;
+SAT;
+SUN;
+JAN;
+FEB;
+MAR;
+APR;
+MAY;
+JUN;
+JUL;
+AUG;
+SEP;
+OCT;
+NOV;
+DEC;
 
-%fallback ALPHA HTTP CHUNKED;
+%fallback ALPHA
+    HTTP CHUNKED
+    GMT
+    MON TUE WED THU FRI SAT SUN
+    JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC
+;
 
 vchar =
 # | LF
@@ -363,7 +394,7 @@ chunk:size = chunk_size:c *(SEMI chunked_extension) CR LF { $$ = $c; };
 chunk_size:size = 1*(ALPHA | DIGIT)
  {{ dstr_t text = dstr_from_off(@$);
     derr_type_t etype = dstr_tosize_quiet(text, &$$, 16);
-    if(etype != E_NONE){
+    if(etype){
         MANUAL_ERROR(@$);
         return WEB_STATUS_SYNTAX_ERROR;
     }
@@ -372,6 +403,95 @@ chunk_size:size = 1*(ALPHA | DIGIT)
 
 # rfc7230: "a recipient MUST ignore unrecognized chunk extensions" (we do)
 chunked_extension = token [ EQ (token | quoted_string) ];
+
+
+%root retry_after;
+# we support IMF-fixdate, but not obs-date, which is either a 2-digit year
+# (rfc850-date) or requires timezone handling (asctime-date)
+retry_after:time =
+    (
+      | delay_seconds:t  { $$ = $t; }
+      | imf_fixdate:t    { $$ = $t; }
+    )
+    *ws
+    EOF
+;
+
+# returns epoch time of now + $delay
+delay_seconds:time =
+    num:n
+    {{  dstr_t text = dstr_from_off(@n);
+        time_t delay = 0;
+        derr_type_t etype = dstr_tol_quiet(text, &delay, 10);
+        if(etype){
+            MANUAL_ERROR(@$);
+            return WEB_STATUS_SYNTAX_ERROR;
+        }
+        time_t now;
+        etype = dtime_quiet(&now);
+        if(etype){
+            // ok, not a syntax error at all but rare enough that who cares
+            LOG_ERROR("ERROR: time(): %x\n", FE(errno));
+            MANUAL_ERROR(@$);
+            return WEB_STATUS_SYNTAX_ERROR;
+        }
+        $$ = now + delay;
+    }}
+;
+
+# returns epoch time specified in header
+imf_fixdate:time =
+    day_name
+    COMMA
+    SP
+    # date1
+    twodigit:day
+    SP
+    month:month
+    SP
+    fourdigit:year
+    SP
+    # time-of-day
+    twodigit:hour
+    COLON
+    twodigit:min
+    COLON
+    twodigit:sec
+    SP
+    GMT
+    {{  dtm_t dtm = { $year, $month, $day, $hour, $min, $sec };
+        derr_type_t etype = dmktime_utc_quiet(dtm, &$$);
+        if(etype){
+            // possibly not a syntax error, but honestly a syntax error is more
+            // likely to cause a mktime() error than an actual OS error.
+            if(errno) LOG_ERROR("ERROR: mktime(): %x\n", FE(errno));
+            MANUAL_ERROR(@$);
+            return WEB_STATUS_SYNTAX_ERROR;
+        }
+    }}
+;
+day_name = MON | TUE | WED | THU | FRI | SAT | SUN;
+digit:i = DIGIT:d {{ $$ = read_digit(@d); }};
+twodigit:i = digit:a digit:b {{ $$ = 10*$a + $b; }};
+fourdigit:i =
+    digit:a digit:b digit:c digit:d
+    {{ $$ = 1000*$a + 100*$b + 10*$c + $d; }}
+;
+month:i =
+  | JAN { $$ = 1; }
+  | FEB { $$ = 2; }
+  | MAR { $$ = 3; }
+  | APR { $$ = 4; }
+  | MAY { $$ = 5; }
+  | JUN { $$ = 6; }
+  | JUL { $$ = 7; }
+  | AUG { $$ = 8; }
+  | SEP { $$ = 9; }
+  | OCT { $$ = 10; }
+  | NOV { $$ = 11; }
+  | DEC { $$ = 12; }
+;
+
 
 ## rfc3986: uris
 

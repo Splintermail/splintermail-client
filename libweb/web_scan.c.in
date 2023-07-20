@@ -101,6 +101,27 @@ web_scanned_t web_scanner_next(web_scanner_t *s, bool hexmode){
 
         "HTTP"       { token = WEB_HTTP; mightwant = true; goto done; }
         'chunked'    { token = WEB_CHUNKED; mightwant = true; goto done; }
+        'gmt'        { token = WEB_GMT; mightwant = true; goto done; }
+        'mon'        { token = WEB_MON; mightwant = true; goto done; }
+        'tue'        { token = WEB_TUE; mightwant = true; goto done; }
+        'wed'        { token = WEB_WED; mightwant = true; goto done; }
+        'thu'        { token = WEB_THU; mightwant = true; goto done; }
+        'fri'        { token = WEB_FRI; mightwant = true; goto done; }
+        'sat'        { token = WEB_SAT; mightwant = true; goto done; }
+        'sun'        { token = WEB_SUN; mightwant = true; goto done; }
+
+        'jan'        { token = WEB_JAN; mightwant = true; goto done; }
+        'feb'        { token = WEB_FEB; mightwant = true; goto done; }
+        'mar'        { token = WEB_MAR; mightwant = true; goto done; }
+        'apr'        { token = WEB_APR; mightwant = true; goto done; }
+        'may'        { token = WEB_MAY; mightwant = true; goto done; }
+        'jun'        { token = WEB_JUN; mightwant = true; goto done; }
+        'jul'        { token = WEB_JUL; mightwant = true; goto done; }
+        'aug'        { token = WEB_AUG; mightwant = true; goto done; }
+        'sep'        { token = WEB_SEP; mightwant = true; goto done; }
+        'oct'        { token = WEB_OCT; mightwant = true; goto done; }
+        'nov'        { token = WEB_NOV; mightwant = true; goto done; }
+        'dec'        { token = WEB_DEC; mightwant = true; goto done; }
 
         alpha+       { token = WEB_ALPHA; mightwant = true; goto done; }
         obs_text+    { token = WEB_OBS_TEXT; mightwant = true; goto done; }

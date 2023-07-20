@@ -1,4 +1,4 @@
-set(raw_srcs url.c http.c weblink.c)
+set(raw_srcs url.c http.c weblink.c headers.c)
 
 foreach(src ${raw_srcs})
     define_file_logname_for_source("${src}" "${src}")
@@ -39,3 +39,4 @@ endif()
 sm_test(test_url.c DEPS dstr web)
 sm_test(test_http_reader.c DEPS web)
 sm_test(test_weblink.c DEPS web)
+sm_test(test_headers.c DEPS web)

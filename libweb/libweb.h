@@ -38,6 +38,7 @@ typedef struct {
 #include "http.h"
 #include "url.h"
 #include "weblink.h"
+#include "headers.h"
 
 #endif // LIBWEB_H
 
