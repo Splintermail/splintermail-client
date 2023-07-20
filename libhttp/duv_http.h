@@ -67,8 +67,8 @@ struct duv_http_t {
     duv_http_req_t *req;
 
     bool initialized : 1;
-    bool canceled : 1;
     bool reqs_canceled : 1;
+    bool closing : 1;
     bool closed : 1;
     bool own_ssl_ctx : 1;
     bool timer_closed : 1;
@@ -85,6 +85,7 @@ derr_t duv_http_init(
 );
 
 // close is idempotent but only the first close_cb is respected
+// close_cb may be NULL
 void duv_http_close(duv_http_t *h, duv_http_close_cb close_cb);
 
 

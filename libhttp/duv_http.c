@@ -41,7 +41,7 @@ static void http_advance_state(duv_http_t *h){
 
     if(h->closed) return;
 
-    if(h->close_cb) goto closing;
+    if(h->closing) goto closing;
 
     // wait for the current request to finish
     if(h->req) return;
@@ -85,11 +85,12 @@ closing:
     duv_http_free_allocations(h);
     schedulable_cancel(&h->schedulable);
     h->closed = true;
-    h->close_cb(h);
+    if(h->close_cb) h->close_cb(h);
 }
 
 void duv_http_close(duv_http_t *h, duv_http_close_cb close_cb){
-    if(!h->initialized || h->close_cb) return;
+    if(!h->initialized || h->closing) return;
+    h->closing = true;
     h->close_cb = close_cb;
 
     if(h->req) req_cancel(h->req);
@@ -955,8 +956,8 @@ rstream_i *duv_http_req(
 
     // now we are complete enough to fail
 
-    if(http->canceled){
-        ORIG_GO(&req->e, E_PARAM, "http is already canceled", fail);
+    if(http->closing){
+        ORIG_GO(&req->e, E_PARAM, "http has already been closed", fail);
     }
 
     dstr_t scheme = dstr_from_off(url.scheme);
