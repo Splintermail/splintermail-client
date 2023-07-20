@@ -3,7 +3,10 @@
 struct acme_t;
 typedef struct acme_t acme_t;
 
+typedef void (*acme_close_cb)(acme_t*);
+
 derr_t acme_new(acme_t **out, duv_http_t *http, dstr_t directory, void *data);
+void acme_close(acme_t *acme, acme_close_cb close_cb);
 void acme_free(acme_t **acme);
 
 typedef struct {
@@ -65,7 +68,9 @@ typedef void (*acme_get_order_cb)(
     dstr_t status,
     dstr_t expires,
     dstr_t authorization,
-    dstr_t finalize
+    dstr_t finalize,
+    dstr_t certurl,     // might be empty
+    time_t retry_after  // might be zero
 );
 
 void acme_get_order(
@@ -108,5 +113,27 @@ void acme_challenge(
     const acme_account_t acct,
     const dstr_t challenge,
     acme_challenge_cb cb,
+    void *cb_data
+);
+
+// will automatically await cert
+typedef void (*acme_finalize_cb)(void*, derr_t, dstr_t cert);
+
+void acme_finalize(
+    const acme_account_t acct,
+    const dstr_t order,
+    const dstr_t finalize,
+    const dstr_t domain,
+    EVP_PKEY *pkey,  // increments the refcount
+    acme_finalize_cb cb,
+    void *cb_data
+);
+
+// finish finalizing, when you wake up to an order with status=processing
+void acme_finalize_continue(
+    const acme_account_t acct,
+    const dstr_t order,
+    time_t retry_after,
+    acme_finalize_cb cb,
     void *cb_data
 );

@@ -2,6 +2,10 @@
 
 #include <string.h>
 
+#include <openssl/evp.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+
 static http_pairs_t content_type = HTTP_PAIR_GLOBAL(
     "Content-Type", "application/jose+json", NULL
 );
@@ -46,6 +50,8 @@ typedef struct {
     dstr_t expires;
     dstr_t authorization;
     dstr_t finalize;
+    dstr_t certurl;
+    time_t retry_after;
 } acme_get_order_state_t;
 
 typedef struct {
@@ -87,6 +93,23 @@ typedef struct {
     bool sent;
 } acme_challenge_state_t;
 
+typedef struct {
+    // inputs
+    acme_account_t acct;
+    dstr_t order;
+    dstr_t finalize;
+    dstr_t domain;
+    EVP_PKEY *pkey;
+    acme_finalize_cb cb;
+    void *cb_data;
+    // state
+    bool finalized;
+    dstr_t certurl;
+    time_t retry_after;
+    // outputs
+    dstr_t cert;
+} acme_finalize_state_t;
+
 // follow a different advance_state path for each request we need to make
 typedef void (*acme_advance_state_f)(acme_t *acme, derr_t);
 typedef void (*acme_free_state_f)(acme_t *acme);
@@ -95,6 +118,7 @@ struct acme_t {
     void *data; // user-defined value
     // we'll borrow the scheduler from http
     schedulable_t schedulable;
+    uv_timer_t timer;
     duv_http_t *http;
     dstr_t directory;
     url_t directory_url;
@@ -126,18 +150,55 @@ struct acme_t {
         acme_new_account_state_t new_account;
         acme_new_order_state_t new_order;
         acme_get_order_state_t get_order;
+        acme_finalize_state_t finalize;
         acme_list_orders_state_t list_orders;
         acme_get_authz_state_t get_authz;
         acme_challenge_state_t challenge;
     } state;
+    bool closed;
+    acme_close_cb close_cb;
 };
 DEF_CONTAINER_OF(acme_t, reader, stream_reader_t)
 DEF_CONTAINER_OF(acme_t, req, duv_http_req_t)
 DEF_CONTAINER_OF(acme_t, schedulable, schedulable_t)
 
+static void timer_close_cb(uv_handle_t *handle){
+    acme_t *acme = handle->data;
+    // all done
+    if(acme->close_cb) acme->close_cb(acme);
+}
+
+// a wrapper around the per-request advance states, which handles preemption
+static void acme_advance_state(acme_t *acme, derr_t err){
+    /* cache the current closed value, in case a user cb sets closed at the
+       end of advance_state */
+    bool closed = acme->closed;
+
+    // if we are closed, ensure err is at least E_CANCELED
+    if(closed && !is_error(err)){
+        err.type = E_CANCELED;
+    }
+
+    /* in the case of acme_close() while nothing was active, there might not
+       be a type-specific advance_state to call */
+    if(acme->advance_state){
+        acme->advance_state(acme, err);
+    }
+
+    if(closed && !acme->advance_state){
+        // done processing our request, now shut down our timer
+        duv_timer_close(&acme->timer, timer_close_cb);
+    }
+}
+
+static void timer_cb(uv_timer_t *timer){
+    acme_t *acme = timer->data;
+    acme_advance_state(acme, E_OK);
+}
+
 static void scheduled(schedulable_t *schedulable){
     acme_t *acme = CONTAINER_OF(schedulable, acme_t, schedulable);
-    acme->advance_state(acme, E_OK);
+    acme_advance_state(acme, E_OK);
 }
 
 static void schedule(acme_t *acme){
@@ -161,6 +222,9 @@ derr_t acme_new(acme_t **out, duv_http_t *http, dstr_t directory, void *data){
 
     schedulable_prep(&acme->schedulable, scheduled);
 
+    duv_timer_must_init(http->loop, &acme->timer);
+    acme->timer.data = acme;
+
     *out = acme;
 
     return e;
@@ -170,6 +234,30 @@ fail_dir:
 fail:
     free(acme);
     return e;
+}
+
+void acme_close(acme_t *acme, acme_close_cb close_cb){
+    if(acme->closed) return;
+    acme->closed = true;
+    acme->close_cb = close_cb;
+
+    /* Four waiting cases:
+       - waiting on an http response: cancel it and expect an E_CANCELED cb
+       - waiting on a timer: cancel it and schedule() for right now
+       - waiting on schedule(): noop
+       - nothing was active: just schedule() a close_cb */
+
+    if(acme->reader.started && !acme->reader.done){
+        // cancel now, we'll get woken up with E_CANCELED later
+        stream_reader_cancel(&acme->reader);
+        return;
+    }
+
+    // stop our timer if it was running
+    duv_timer_must_stop(&acme->timer);
+
+    // schedule for immediate execution (if not already scheduled)
+    schedule(acme);
 }
 
 void acme_free(acme_t **old){
@@ -317,6 +405,35 @@ unhandled:
     );
 }
 
+static derr_t acme_post(
+    acme_t *acme,
+    dstr_t *url, // must point to persistent memory
+    http_pairs_t *hdrs,
+    duv_http_hdr_cb hdr_cb,
+    stream_reader_cb reader_cb
+){
+    derr_t e = E_OK;
+
+    url_t url_parsed;
+    PROP(&e, parse_url(url, &url_parsed) );
+
+    rstream_i *r = duv_http_req(
+        &acme->req,
+        acme->http,
+        HTTP_METHOD_POST,
+        url_parsed,
+        NULL,
+        hdrs,
+        acme->wbuf,
+        hdr_cb
+    );
+
+    acme->rbuf.len = 0;
+    stream_read_all(&acme->reader, r, &acme->rbuf, reader_cb);
+
+    return e;
+}
+
 static void get_directory_reader_cb(stream_reader_t *reader, derr_t err){
     acme_t *acme = CONTAINER_OF(reader, acme_t, reader);
     json_t json;
@@ -366,10 +483,10 @@ static void get_directory_reader_cb(stream_reader_t *reader, derr_t err){
 
 done:
     json_free(&json);
-    acme->advance_state(acme, e);
+    acme_advance_state(acme, e);
 }
 
-// results in a call to acme->advance_state
+// results in a call to acme_advance_state
 static void get_directory(acme_t *acme){
     rstream_i *r = duv_http_req(
         &acme->req,
@@ -410,10 +527,10 @@ static void new_nonce_reader_cb(stream_reader_t *reader, derr_t err){
     }
 
 done:
-    acme->advance_state(acme, e);
+    acme_advance_state(acme, e);
 }
 
-// results in a call to acme->advance_state
+// results in a call to acme_advance_state
 static void new_nonce(acme_t *acme){
     rstream_i *r = duv_http_req(
         &acme->req,
@@ -433,6 +550,28 @@ static void new_nonce(acme_t *acme){
 static bool need_nonce(acme_t *acme){
     if(acme->nonce.len > 0) return false;
     new_nonce(acme);
+    return true;
+}
+
+// consumes the deadline
+static bool need_wait(acme_t *acme, time_t *deadlinep){
+    time_t deadline = *deadlinep;
+    if(!deadline) return false;
+    *deadlinep = 0;
+
+    time_t now;
+    derr_type_t etype = dtime_quiet(&now);
+    if(etype){
+        LOG_ERROR("time(): %x", FE(errno));
+        // fallback behavior: wait 10 seconds
+        now = deadline - 10;
+    }
+
+    // has the deadline already passed?
+    if(now >= deadline) return false;
+
+    uint64_t diff_ms = (uint64_t)(deadline - now) * 1000;
+    duv_timer_must_start(&acme->timer, timer_cb, diff_ms);
     return true;
 }
 
@@ -494,7 +633,7 @@ static void new_account_reader_cb(stream_reader_t *reader, derr_t err){
 
 done:
     json_free(&json);
-    acme->advance_state(acme, e);
+    acme_advance_state(acme, e);
 }
 
 static void new_account_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
@@ -504,6 +643,7 @@ static void new_account_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
     if(is_error(acme->e)) return;
     if(dstr_ieq(hdr.key, DSTR_LIT("Location"))){
         PROP_GO(&acme->e, dstr_copy(&hdr.value, &state->acct.kid), done);
+        return;
     }
 
     // also grab nonce
@@ -513,24 +653,20 @@ done:
     return;
 }
 
-static derr_t new_account_body(
-    dstr_t url,
-    key_i *k,
-    dstr_t nonce,
-    dstr_t contact_email,
-    dstr_t *out
-){
+static derr_t new_account_body(acme_t *acme, key_i *k, dstr_t contact_email){
     derr_t e = E_OK;
 
     // build the outer jws
     DSTR_VAR(protected, 4096);
     jdump_i *jprotected = DOBJ(
         DOBJSNIPPET(k->protected_params),
-        DKEY("nonce", DD(nonce)),
+        DKEY("nonce", DD(acme->nonce)),
         DKEY("jwk", DJWKPUB(k)),
-        DKEY("url", DD(url)),
+        DKEY("url", DD(acme->new_account)),
     );
     PROP(&e, jdump(jprotected, WD(&protected), 0) );
+
+    acme->nonce.len = 0;
 
     DSTR_VAR(payload, 4096);
     jdump_i *jpayload = DOBJ(
@@ -541,7 +677,8 @@ static derr_t new_account_body(
     );
     PROP(&e, jdump(jpayload, WD(&payload), 0) );
 
-    PROP(&e, jws(protected, payload, SIGN_KEY(k), out) );
+    acme->wbuf.len = 0;
+    PROP(&e, jws(protected, payload, SIGN_KEY(k), &acme->wbuf) );
 
     return e;
 }
@@ -549,6 +686,7 @@ static derr_t new_account_body(
 static void new_account_advance_state(acme_t *acme, derr_t err){
     derr_t e = E_OK;
     acme_new_account_state_t *state = &acme->state.new_account;
+    acme_account_t acct = {0};
 
     // check for errors
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
@@ -558,50 +696,41 @@ static void new_account_advance_state(acme_t *acme, derr_t err){
     if(need_nonce(acme)) return;
 
     if(!state->sent){
-        acme->wbuf.len = 0;
         PROP_GO(&e,
-            new_account_body(
-                acme->new_account,
-                state->acct.key,
-                acme->nonce,
-                state->contact_email,
-                &acme->wbuf
-            ),
+            new_account_body(acme, state->acct.key, state->contact_email),
         done);
 
-        // nonce is used
-        acme->nonce.len = 0;
-
-        rstream_i *r = duv_http_req(
-            &acme->req,
-            acme->http,
-            HTTP_METHOD_POST,
-            acme->new_account_url,
-            NULL,
-            &content_type,
-            acme->wbuf,
-            new_account_hdr_cb
-        );
-
-        acme->rbuf.len = 0;
-        stream_read_all(&acme->reader, r, &acme->rbuf, new_account_reader_cb);
+        PROP_GO(&e,
+            acme_post(
+                acme,
+                &acme->new_account,
+                &content_type,
+                new_account_hdr_cb,
+                new_account_reader_cb
+            ),
+        done);
 
         state->sent = true;
         return;
     }
 
 done:
-    if(is_error(e)){
-        acme->free_state(acme);
+    if(!is_error(e)){
+        acct = state->acct;
+        state->acct = (acme_account_t){0};
     }
+    acme_new_account_cb cb = state->cb;
+    void *cb_data = state->cb_data;
+    acme->free_state(acme);
     acme->advance_state = NULL;
     acme->free_state = NULL;
-    state->cb(state->cb_data, e, state->acct);
+    cb(cb_data, e, acct);
 }
 
 static void new_account_free_state(acme_t *acme){
     acme_new_account_state_t *state = &acme->state.new_account;
     acme_account_free(&state->acct);
+    *state = (acme_new_account_state_t){0};
 }
 
 void acme_new_account(
@@ -628,6 +757,53 @@ void acme_new_account(
 
 //
 
+// all fields are refs
+typedef struct {
+    dstr_t status;
+    dstr_t expires;  // optional unless status in [pending, valid]
+    dstr_t domain; // a single dns identifier
+    dstr_t error; // optional
+    dstr_t authorization; // a single authorization
+    dstr_t finalize;
+    dstr_t certificate;  // optional
+} order_t;
+
+// all dstr outputs are refs
+static derr_t read_order(dstr_t rbuf, json_t *json, order_t *order){
+    derr_t e = E_OK;
+
+    *order = (order_t){0};
+    bool have_cert, have_error, have_expire;
+
+    PROP(&e, json_parse(rbuf, json) );
+
+    jspec_t *jspec = JOBJ(true,
+        JKEY("authorizations", JTUP(
+            JDREF(&order->authorization),
+        )),
+        JKEYOPT("certificate", &have_cert, JDREF(&order->certificate)),
+        JKEYOPT("error", &have_error, JDREF(&order->error)),
+        JKEYOPT("expires", &have_expire, JDREF(&order->expires)),
+        JKEY("finalize", JDREF(&order->finalize)),
+        JKEY("identifiers", JTUP(
+            JOBJ(true,
+                JKEY("type", JXSN("dns", 3)),
+                JKEY("value", JDREF(&order->domain)),
+            )
+        )),
+        JKEY("status", JDREF(&order->status)),
+    );
+
+    bool ok;
+    DSTR_VAR(errbuf, 512);
+    PROP(&e, jspec_read_ex(jspec, json->root, &ok, &errbuf) );
+    if(!ok){
+        ORIG(&e, E_RESPONSE, "%x", FD(errbuf));
+    }
+
+    return e;
+}
+
 static void new_order_reader_cb(stream_reader_t *reader, derr_t err){
     acme_t *acme = CONTAINER_OF(reader, acme_t, reader);
     acme_new_order_state_t *state = &acme->state.new_order;
@@ -650,34 +826,34 @@ static void new_order_reader_cb(stream_reader_t *reader, derr_t err){
         goto done;
     }
 
-    // parse body
-    PROP_GO(&e, json_parse(acme->rbuf, &json), done);
+    order_t order;
+    PROP_GO(&e, read_order(acme->rbuf, &json, &order), done);
 
-    // read body
-    jspec_t *jspec = JOBJ(true,
-        // we submitted one domain, so expect one authorization
-        JKEY("authorizations", JTUP(
-            JDCPY(&state->authorization),
-        )),
-        JKEY("expires", JDCPY(&state->expires)),
-        JKEY("finalize", JDCPY(&state->finalize)),
-        // identifiers must match what we submitted
-        JKEY("identifiers", JTUP(
-            JOBJ(true,
-                JKEY("type", JXSN("dns", 3)),
-                JKEY("value", JXD(state->domain)),
-            )
-        )),
-        // status must be "pending"
-        JKEY("status", JXSN("pending", 7)),
-    );
-
-    bool ok;
-    DSTR_VAR(errbuf, 512);
-    PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf), done);
-    if(!ok){
-        ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
+    // status must be pending
+    if(!dstr_eq(order.status, DSTR_LIT("pending"))){
+        ORIG_GO(&e,
+            E_RESPONSE,
+            "new order status = \"%x\", expected \"pending\"",
+            done,
+            FD(order.status)
+        );
     }
+
+    // domain should match what we submitted
+    if(!dstr_eq(order.domain, state->domain)){
+        ORIG_GO(&e,
+            E_RESPONSE,
+            "new order domain = \"%x\", but submitted \"%x\"",
+            done,
+            FD(order.domain),
+            FD(state->domain)
+        );
+    }
+
+    // copy outputs
+    PROP_GO(&e, dstr_copy(&order.authorization, &state->authorization), done);
+    PROP_GO(&e, dstr_copy(&order.expires, &state->expires), done);
+    PROP_GO(&e, dstr_copy(&order.finalize, &state->finalize), done);
 
     // ensure we saw a location header
     if(state->order.len == 0){
@@ -686,7 +862,7 @@ static void new_order_reader_cb(stream_reader_t *reader, derr_t err){
 
 done:
     json_free(&json);
-    acme->advance_state(acme, e);
+    acme_advance_state(acme, e);
 }
 
 static void new_order_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
@@ -696,6 +872,7 @@ static void new_order_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
     if(is_error(acme->e)) return;
     if(dstr_ieq(hdr.key, DSTR_LIT("Location"))){
         PROP_GO(&acme->e, dstr_copy(&hdr.value, &state->order), done);
+        return;
     }
 
     // also grab nonce
@@ -705,29 +882,20 @@ done:
     return;
 }
 
-static derr_t new_order_body(
-    dstr_t url,
-    key_i *k,
-    dstr_t kid,
-    dstr_t nonce,
-    dstr_t domain,
-    dstr_t *out
-){
+static derr_t new_order_body(acme_t *acme, acme_account_t acct, dstr_t domain){
     derr_t e = E_OK;
-
-    // create the jwk
-    DSTR_VAR(jwkbuf, 256);
-    PROP(&e, jdump(DJWKPUB(k), WD(&jwkbuf), 0));
 
     // build the outer jws
     DSTR_VAR(protected, 4096);
     jdump_i *jprotected = DOBJ(
-        DOBJSNIPPET(k->protected_params),
-        DKEY("kid", DD(kid)),
-        DKEY("nonce", DD(nonce)),
-        DKEY("url", DD(url)),
+        DOBJSNIPPET(acct.key->protected_params),
+        DKEY("kid", DD(acct.kid)),
+        DKEY("nonce", DD(acme->nonce)),
+        DKEY("url", DD(acme->new_order)),
     );
     PROP(&e, jdump(jprotected, WD(&protected), 0) );
+
+    acme->nonce.len = 0;
 
     DSTR_VAR(payload, 4096);
     jdump_i *jpayload = DOBJ(
@@ -737,7 +905,8 @@ static derr_t new_order_body(
     );
     PROP(&e, jdump(jpayload, WD(&payload), 0) );
 
-    PROP(&e, jws(protected, payload, SIGN_KEY(k), out) );
+    acme->wbuf.len = 0;
+    PROP(&e, jws(protected, payload, SIGN_KEY(acct.key), &acme->wbuf) );
 
     return e;
 }
@@ -745,6 +914,10 @@ static derr_t new_order_body(
 static void new_order_advance_state(acme_t *acme, derr_t err){
     derr_t e = E_OK;
     acme_new_order_state_t *state = &acme->state.new_order;
+    dstr_t order = {0};
+    dstr_t expires = {0};
+    dstr_t authorization = {0};
+    dstr_t finalize = {0};
 
     // check for errors
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
@@ -754,51 +927,35 @@ static void new_order_advance_state(acme_t *acme, derr_t err){
     if(need_nonce(acme)) return;
 
     if(!state->sent){
-        acme->wbuf.len = 0;
+        PROP_GO(&e, new_order_body(acme, state->acct, state->domain), done);
+
         PROP_GO(&e,
-            new_order_body(
-                acme->new_order,
-                state->acct.key,
-                state->acct.kid,
-                acme->nonce,
-                state->domain,
-                &acme->wbuf
+            acme_post(
+                acme,
+                &acme->new_order,
+                &content_type,
+                new_order_hdr_cb,
+                new_order_reader_cb
             ),
         done);
-
-        // nonce is used
-        acme->nonce.len = 0;
-
-        rstream_i *r = duv_http_req(
-            &acme->req,
-            acme->http,
-            HTTP_METHOD_POST,
-            acme->new_order_url,
-            NULL,
-            &content_type,
-            acme->wbuf,
-            new_order_hdr_cb
-        );
-
-        acme->rbuf.len = 0;
-        stream_read_all(&acme->reader, r, &acme->rbuf, new_order_reader_cb);
 
         state->sent = true;
         return;
     }
 
 done:
-    if(is_error(e)) acme->free_state(acme);
+    if(!is_error(e)){
+        order = STEAL(dstr_t, &state->order);
+        expires = STEAL(dstr_t, &state->expires);
+        authorization = STEAL(dstr_t, &state->authorization);
+        finalize = STEAL(dstr_t, &state->finalize);
+    }
+    acme_new_order_cb cb = state->cb;
+    void *cb_data = state->cb_data;
+    acme->free_state(acme);
     acme->advance_state = NULL;
     acme->free_state = NULL;
-    state->cb(
-        state->cb_data,
-        e,
-        state->order,
-        state->expires,
-        state->authorization,
-        state->finalize
-    );
+    cb(cb_data, e, order, expires, authorization, finalize);
 }
 
 static void new_order_free_state(acme_t *acme){
@@ -807,6 +964,7 @@ static void new_order_free_state(acme_t *acme){
     dstr_free(&state->expires);
     dstr_free(&state->authorization);
     dstr_free(&state->finalize);
+    *state = (acme_new_order_state_t){0};
 }
 
 void acme_new_order(
@@ -851,66 +1009,61 @@ static void get_order_reader_cb(stream_reader_t *reader, derr_t err){
         goto done;
     }
 
-    // parse body
-    PROP_GO(&e, json_parse(acme->rbuf, &json), done);
+    order_t order;
+    PROP_GO(&e, read_order(acme->rbuf, &json, &order), done);
 
-    // read body
-    jspec_t *jspec = JOBJ(true,
-        // we submitted one domain, so expect one authorization
-        JKEY("authorizations", JTUP(
-            JDCPY(&state->authorization),
-        )),
-        JKEY("expires", JDCPY(&state->expires)),
-        JKEY("finalize", JDCPY(&state->finalize)),
-        // identifiers must match what we submitted
-        JKEY("identifiers", JTUP(
-            JOBJ(true,
-                JKEY("type", JXSN("dns", 3)),
-                JKEY("value", JDCPY(&state->domain)),
-            )
-        )),
-        JKEY("status", JDCPY(&state->status)),
-    );
-
-    bool ok;
-    DSTR_VAR(errbuf, 512);
-    PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf), done);
-    if(!ok){
-        ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
-    }
+    // copy outputs
+    PROP_GO(&e, dstr_copy(&order.authorization, &state->authorization), done);
+    PROP_GO(&e, dstr_copy(&order.expires, &state->expires), done);
+    PROP_GO(&e, dstr_copy(&order.finalize, &state->finalize), done);
+    PROP_GO(&e, dstr_copy(&order.domain, &state->domain), done);
+    PROP_GO(&e, dstr_copy(&order.status, &state->status), done);
+    PROP_GO(&e, dstr_copy(&order.certificate, &state->certurl), done);
 
 done:
     json_free(&json);
-    acme->advance_state(acme, e);
+    acme_advance_state(acme, e);
 }
 
-static derr_t get_order_body(
-    dstr_t url,
-    key_i *k,
-    dstr_t kid,
-    dstr_t nonce,
-    dstr_t *out
-){
-    derr_t e = E_OK;
+static void get_order_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
+    acme_t *acme = CONTAINER_OF(req, acme_t, req);
+    acme_get_order_state_t *state = &acme->state.get_order;
 
-    // create the jwk
-    DSTR_VAR(jwkbuf, 256);
-    PROP(&e, jdump(DJWKPUB(k), WD(&jwkbuf), 0));
+    if(is_error(acme->e)) return;
+    if(dstr_ieq(hdr.key, DSTR_LIT("Retry-After"))){
+        PROP_GO(&acme->e,
+            parse_retry_after(hdr.value, &state->retry_after),
+        done);
+        return;
+    }
+
+    // also grab nonce
+    nonce_hdr_cb(req, hdr);
+
+done:
+    return;
+}
+
+static derr_t post_as_get(acme_t *acme, acme_account_t acct, dstr_t url){
+    derr_t e = E_OK;
 
     // build the outer jws
     DSTR_VAR(protected, 4096);
     jdump_i *jprotected = DOBJ(
-        DOBJSNIPPET(k->protected_params),
-        DKEY("kid", DD(kid)),
-        DKEY("nonce", DD(nonce)),
+        DOBJSNIPPET(acct.key->protected_params),
+        DKEY("kid", DD(acct.kid)),
+        DKEY("nonce", DD(acme->nonce)),
         DKEY("url", DD(url)),
     );
     PROP(&e, jdump(jprotected, WD(&protected), 0) );
 
+    acme->nonce.len = 0;
+
     // POST-as-GET
     dstr_t payload = {0};
 
-    PROP(&e, jws(protected, payload, SIGN_KEY(k), out) );
+    acme->wbuf.len = 0;
+    PROP(&e, jws(protected, payload, SIGN_KEY(acct.key), &acme->wbuf) );
 
     return e;
 }
@@ -918,6 +1071,13 @@ static derr_t get_order_body(
 static void get_order_advance_state(acme_t *acme, derr_t err){
     derr_t e = E_OK;
     acme_get_order_state_t *state = &acme->state.get_order;
+    dstr_t domain = {0};
+    dstr_t status = {0};
+    dstr_t expires = {0};
+    dstr_t authorization = {0};
+    dstr_t finalize = {0};
+    dstr_t certurl = {0};
+    time_t retry_after = 0;
 
     // check for errors
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
@@ -927,53 +1087,47 @@ static void get_order_advance_state(acme_t *acme, derr_t err){
     if(need_nonce(acme)) return;
 
     if(!state->sent){
-        acme->wbuf.len = 0;
+        PROP_GO(&e, post_as_get(acme, state->acct, state->order), done);
+
         PROP_GO(&e,
-            get_order_body(
-                state->order,
-                state->acct.key,
-                state->acct.kid,
-                acme->nonce,
-                &acme->wbuf
+            acme_post(
+                acme,
+                &state->order,
+                &content_type,
+                get_order_hdr_cb,
+                get_order_reader_cb
             ),
         done);
-
-        // nonce is used
-        acme->nonce.len = 0;
-
-        url_t url;
-        PROP_GO(&e, parse_url(&state->order, &url), done);
-
-        rstream_i *r = duv_http_req(
-            &acme->req,
-            acme->http,
-            HTTP_METHOD_POST,
-            url,
-            NULL,
-            &content_type,
-            acme->wbuf,
-            nonce_hdr_cb
-        );
-
-        acme->rbuf.len = 0;
-        stream_read_all(&acme->reader, r, &acme->rbuf, get_order_reader_cb);
 
         state->sent = true;
         return;
     }
 
 done:
-    if(is_error(e)) acme->free_state(acme);
+    if(!is_error(e)){
+        domain = STEAL(dstr_t, &state->domain);
+        status = STEAL(dstr_t, &state->status);
+        expires = STEAL(dstr_t, &state->expires);
+        authorization = STEAL(dstr_t, &state->authorization);
+        finalize = STEAL(dstr_t, &state->finalize);
+        certurl = STEAL(dstr_t, &state->certurl);
+        retry_after = state->retry_after;
+    }
+    acme_get_order_cb cb = state->cb;
+    void *cb_data = state->cb_data;
+    acme->free_state(acme);
     acme->advance_state = NULL;
     acme->free_state = NULL;
-    state->cb(
-        state->cb_data,
+    cb(
+        cb_data,
         e,
-        state->domain,
-        state->status,
-        state->expires,
-        state->authorization,
-        state->finalize
+        domain,
+        status,
+        expires,
+        authorization,
+        finalize,
+        certurl,
+        retry_after
     );
 }
 
@@ -984,6 +1138,7 @@ static void get_order_free_state(acme_t *acme){
     dstr_free(&state->expires);
     dstr_free(&state->authorization);
     dstr_free(&state->finalize);
+    *state = (acme_get_order_state_t){0};
 }
 
 void acme_get_order(
@@ -1072,7 +1227,7 @@ static void list_orders_reader_cb(stream_reader_t *reader, derr_t err){
 
 done:
     json_free(&json);
-    acme->advance_state(acme, e);
+    acme_advance_state(acme, e);
 }
 
 static void list_orders_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
@@ -1107,6 +1262,7 @@ static void list_orders_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
                 FD(weblinks_errbuf(&wl))
             );
         }
+        return;
     }
 
     // also grab nonce
@@ -1116,30 +1272,23 @@ done:
     return;
 }
 
-static derr_t list_orders_body(
-    dstr_t url,
-    key_i *k,
-    dstr_t kid,
-    dstr_t nonce,
-    dstr_t *out
-){
+static derr_t list_orders_body(acme_t *acme, acme_account_t acct, dstr_t url){
     derr_t e = E_OK;
-
-    // create the jwk
-    DSTR_VAR(jwkbuf, 256);
-    PROP(&e, jdump(DJWKPUB(k), WD(&jwkbuf), 0));
 
     // build the outer jws
     DSTR_VAR(protected, 4096);
     jdump_i *jprotected = DOBJ(
-        DOBJSNIPPET(k->protected_params),
-        DKEY("kid", DD(kid)),
-        DKEY("nonce", DD(nonce)),
+        DOBJSNIPPET(acct.key->protected_params),
+        DKEY("kid", DD(acct.kid)),
+        DKEY("nonce", DD(acme->nonce)),
         DKEY("url", DD(url)),
     );
     PROP(&e, jdump(jprotected, WD(&protected), 0) );
 
-    PROP(&e, jws(protected, DSTR_LIT(""), SIGN_KEY(k), out) );
+    acme->nonce.len = 0;
+
+    acme->wbuf.len = 0;
+    PROP(&e, jws(protected, DSTR_LIT(""), SIGN_KEY(acct.key), &acme->wbuf) );
 
     return e;
 }
@@ -1147,6 +1296,7 @@ static derr_t list_orders_body(
 static void list_orders_advance_state(acme_t *acme, derr_t err){
     derr_t e = E_OK;
     acme_list_orders_state_t *state = &acme->state.list_orders;
+    LIST(dstr_t) orders = {0};
 
     // check for errors
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
@@ -1165,47 +1315,32 @@ static void list_orders_advance_state(acme_t *acme, derr_t err){
 
     // keep paging and/or retrying until we run out of pages
     if(state->current.len){
-        url_t url;
-        PROP_GO(&e, parse_url(&state->current, &url), done);
+        PROP_GO(&e, list_orders_body(acme, state->acct, state->current), done);
 
-        acme->wbuf.len = 0;
         PROP_GO(&e,
-            list_orders_body(
-                url_text(url),
-                state->acct.key,
-                state->acct.kid,
-                acme->nonce,
-                &acme->wbuf
+            acme_post(
+                acme,
+                &state->current,
+                &content_type,
+                list_orders_hdr_cb,
+                list_orders_reader_cb
             ),
         done);
-
-        // nonce is used
-        acme->nonce.len = 0;
-
-        rstream_i *r = duv_http_req(
-            &acme->req,
-            acme->http,
-            HTTP_METHOD_POST,
-            url,
-            NULL,
-            &content_type,
-            acme->wbuf,
-            list_orders_hdr_cb
-        );
-
-        acme->rbuf.len = 0;
-        stream_read_all(&acme->reader, r, &acme->rbuf, list_orders_reader_cb);
 
         return;
     }
 
 done:
-    dstr_free(&state->current);
-    dstr_free(&state->next);
-    if(is_error(e)) acme->free_state(acme);
+    if(!is_error(e)){
+        orders = state->orders;
+        state->orders = (LIST(dstr_t)){0};
+    }
+    acme_list_orders_cb cb = state->cb;
+    void *cb_data = state->cb_data;
+    acme->free_state(acme);
     acme->advance_state = NULL;
     acme->free_state = NULL;
-    state->cb(state->cb_data, e, state->orders);
+    cb(cb_data, e, orders);
 }
 
 static void list_orders_free_state(acme_t *acme){
@@ -1214,6 +1349,7 @@ static void list_orders_free_state(acme_t *acme){
         dstr_free(&state->orders.data[i]);
     }
     LIST_FREE(dstr_t, &state->orders);
+    *state = (acme_list_orders_state_t){0};
 }
 
 void acme_list_orders(
@@ -1308,43 +1444,17 @@ static void get_authz_reader_cb(stream_reader_t *reader, derr_t err){
 
 done:
     json_free(&json);
-    acme->advance_state(acme, e);
-}
-
-static derr_t get_authz_body(
-    dstr_t url,
-    key_i *k,
-    dstr_t kid,
-    dstr_t nonce,
-    dstr_t *out
-){
-    derr_t e = E_OK;
-
-    // create the jwk
-    DSTR_VAR(jwkbuf, 256);
-    PROP(&e, jdump(DJWKPUB(k), WD(&jwkbuf), 0));
-
-    // build the outer jws
-    DSTR_VAR(protected, 4096);
-    jdump_i *jprotected = DOBJ(
-        DOBJSNIPPET(k->protected_params),
-        DKEY("kid", DD(kid)),
-        DKEY("nonce", DD(nonce)),
-        DKEY("url", DD(url)),
-    );
-    PROP(&e, jdump(jprotected, WD(&protected), 0) );
-
-    // POST-as-GET
-    dstr_t payload = {0};
-
-    PROP(&e, jws(protected, payload, SIGN_KEY(k), out) );
-
-    return e;
+    acme_advance_state(acme, e);
 }
 
 static void get_authz_advance_state(acme_t *acme, derr_t err){
     derr_t e = E_OK;
     acme_get_authz_state_t *state = &acme->state.get_authz;
+    dstr_t domain = {0};
+    dstr_t status = {0};
+    dstr_t expires = {0};
+    dstr_t challenge = {0};
+    dstr_t token = {0};
 
     // check for errors
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
@@ -1354,54 +1464,36 @@ static void get_authz_advance_state(acme_t *acme, derr_t err){
     if(need_nonce(acme)) return;
 
     if(!state->sent){
-        acme->wbuf.len = 0;
+        PROP_GO(&e, post_as_get(acme, state->acct, state->authz), done);
+
         PROP_GO(&e,
-            get_authz_body(
-                state->authz,
-                state->acct.key,
-                state->acct.kid,
-                acme->nonce,
-                &acme->wbuf
+            acme_post(
+                acme,
+                &state->authz,
+                &content_type,
+                nonce_hdr_cb,
+                get_authz_reader_cb
             ),
         done);
-
-        // nonce is used
-        acme->nonce.len = 0;
-
-        url_t url;
-        PROP_GO(&e, parse_url(&state->authz, &url), done);
-
-        rstream_i *r = duv_http_req(
-            &acme->req,
-            acme->http,
-            HTTP_METHOD_POST,
-            url,
-            NULL,
-            &content_type,
-            acme->wbuf,
-            nonce_hdr_cb
-        );
-
-        acme->rbuf.len = 0;
-        stream_read_all(&acme->reader, r, &acme->rbuf, get_authz_reader_cb);
 
         state->sent = true;
         return;
     }
 
 done:
-    if(is_error(e)) acme->free_state(acme);
+    if(!is_error(e)){
+        domain = STEAL(dstr_t, &state->domain);
+        status = STEAL(dstr_t, &state->status);
+        expires = STEAL(dstr_t, &state->expires);
+        challenge = STEAL(dstr_t, &state->challenge);
+        token = STEAL(dstr_t, &state->token);
+    }
+    acme_get_authz_cb cb = state->cb;
+    void *cb_data = state->cb_data;
+    acme->free_state(acme);
     acme->advance_state = NULL;
     acme->free_state = NULL;
-    state->cb(
-        state->cb_data,
-        e,
-        state->domain,
-        state->status,
-        state->expires,
-        state->challenge,
-        state->token
-    );
+    cb(cb_data, e, domain, status, expires, challenge, token);
 }
 
 static void get_authz_free_state(acme_t *acme){
@@ -1411,6 +1503,7 @@ static void get_authz_free_state(acme_t *acme){
     dstr_free(&state->expires);
     dstr_free(&state->challenge);
     dstr_free(&state->token);
+    *state = (acme_get_authz_state_t){0};
 }
 
 void acme_get_authz(
@@ -1458,36 +1551,27 @@ static void challenge_reader_cb(stream_reader_t *reader, derr_t err){
     // ignore response body, there's nothing useful in there
 
 done:
-    acme->advance_state(acme, e);
+    acme_advance_state(acme, e);
 }
 
-static derr_t challenge_body(
-    dstr_t url,
-    key_i *k,
-    dstr_t kid,
-    dstr_t nonce,
-    dstr_t *out
-){
+static derr_t challenge_body(acme_t *acme, acme_account_t acct, dstr_t url){
     derr_t e = E_OK;
-
-    // create the jwk
-    DSTR_VAR(jwkbuf, 256);
-    PROP(&e, jdump(DJWKPUB(k), WD(&jwkbuf), 0));
 
     // build the outer jws
     DSTR_VAR(protected, 4096);
     jdump_i *jprotected = DOBJ(
-        DOBJSNIPPET(k->protected_params),
-        DKEY("kid", DD(kid)),
-        DKEY("nonce", DD(nonce)),
+        DOBJSNIPPET(acct.key->protected_params),
+        DKEY("kid", DD(acct.kid)),
+        DKEY("nonce", DD(acme->nonce)),
         DKEY("url", DD(url)),
     );
     PROP(&e, jdump(jprotected, WD(&protected), 0) );
 
-    // payload is empty json object
-    DSTR_STATIC(payload, "{}");
+    acme->nonce.len = 0;
 
-    PROP(&e, jws(protected, payload, SIGN_KEY(k), out) );
+    // payload is empty json object (not quite post-as-get)
+    acme->wbuf.len = 0;
+    PROP(&e, jws(protected, DSTR_LIT("{}"), SIGN_KEY(acct.key), &acme->wbuf) );
 
     return e;
 }
@@ -1504,50 +1588,35 @@ static void challenge_advance_state(acme_t *acme, derr_t err){
     if(need_nonce(acme)) return;
 
     if(!state->sent){
-        acme->wbuf.len = 0;
+        PROP_GO(&e, challenge_body(acme, state->acct, state->challenge), done);
+
         PROP_GO(&e,
-            challenge_body(
-                state->challenge,
-                state->acct.key,
-                state->acct.kid,
-                acme->nonce,
-                &acme->wbuf
+            acme_post(
+                acme,
+                &state->challenge,
+                &content_type,
+                nonce_hdr_cb,
+                challenge_reader_cb
             ),
         done);
-
-        // nonce is used
-        acme->nonce.len = 0;
-
-        url_t url;
-        PROP_GO(&e, parse_url(&state->challenge, &url), done);
-
-        rstream_i *r = duv_http_req(
-            &acme->req,
-            acme->http,
-            HTTP_METHOD_POST,
-            url,
-            NULL,
-            &content_type,
-            acme->wbuf,
-            nonce_hdr_cb
-        );
-
-        acme->rbuf.len = 0;
-        stream_read_all(&acme->reader, r, &acme->rbuf, challenge_reader_cb);
 
         state->sent = true;
         return;
     }
 
 done:
-    if(is_error(e)) acme->free_state(acme);
+    (void)acme;
+    acme_challenge_cb cb = state->cb;
+    void *cb_data = state->cb_data;
+    acme->free_state(acme);
     acme->advance_state = NULL;
     acme->free_state = NULL;
-    state->cb(state->cb_data, e);
+    cb(cb_data, e);
 }
 
 static void challenge_free_state(acme_t *acme){
-    (void)acme;
+    acme_challenge_state_t *state = &acme->state.challenge;
+    *state = (acme_challenge_state_t){0};
 }
 
 void acme_challenge(
@@ -1566,6 +1635,426 @@ void acme_challenge(
     };
     acme->advance_state = challenge_advance_state;
     acme->free_state = challenge_free_state;
+
+    schedule(acme);
+}
+
+//
+
+static void finalize_reader_cb(stream_reader_t *reader, derr_t err){
+    acme_t *acme = CONTAINER_OF(reader, acme_t, reader);
+    acme_finalize_state_t *state = &acme->state.finalize;
+    json_t json;
+    json_prep(&json);
+
+    derr_t e = E_OK;
+
+    // check for errors
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
+    PROP_VAR_GO(&e, &acme->e, done);
+
+    // check status
+    bool badnonce;
+    PROP_GO(&e, expect_status(acme, 200, "finalizing order", &badnonce), done);
+    if(badnonce){
+        state->finalized = false;
+        goto done;
+    }
+
+    order_t order;
+    PROP_GO(&e, read_order(acme->rbuf, &json, &order), done);
+
+    if(dstr_eq(order.status, DSTR_LIT("valid"))){
+        // success
+        if(!order.certificate.len){
+            ORIG_GO(&e,
+                E_RESPONSE,
+                "successful order finalize did not return a cert url",
+                done
+            );
+        }
+        // keep the certurl
+        PROP_GO(&e, dstr_copy(&order.certificate, &state->certurl), done);
+    }else if(dstr_eq(order.status, DSTR_LIT("processing"))){
+        // success but cert isn't ready yet
+        // (noop)
+    }else if(dstr_eq(order.status, DSTR_LIT("invalid"))){
+        // certificate failure of some sort
+        ORIG_GO(&e,
+            E_RESPONSE,
+            "order finalization failed (error=\"\")",
+            done,
+            FD(order.error)
+        );
+    }else{
+        // either "ready" or "pending", which make no sense here
+        ORIG_GO(&e,
+            E_RESPONSE,
+            "invalid status on order finalize (%x)",
+            done,
+            FD(order.status)
+        );
+    }
+
+done:
+    json_free(&json);
+    acme_advance_state(acme, e);
+}
+
+static void finalize_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
+    acme_t *acme = CONTAINER_OF(req, acme_t, req);
+    acme_finalize_state_t *state = &acme->state.finalize;
+
+    if(is_error(acme->e)) return;
+    if(dstr_ieq(hdr.key, DSTR_LIT("Retry-After"))){
+        PROP_GO(&acme->e,
+            parse_retry_after(hdr.value, &state->retry_after),
+        done);
+        return;
+    }
+
+    // also grab nonce
+    nonce_hdr_cb(req, hdr);
+
+done:
+    return;
+}
+
+// output is an allocated string
+static derr_t makecsr(dstr_t domain, EVP_PKEY *pkey, dstr_t *out){
+    derr_t e = E_OK;
+
+    *out = (dstr_t){0};
+
+    X509_REQ *csr = NULL;
+    STACK_OF(X509_EXTENSION) *exts = NULL;
+
+    csr = X509_REQ_new();
+    if(!csr) ORIG(&e, E_SSL, "X509_REQ_new: %x", FSSL);
+
+    // set the pkey (increments the reference)
+    X509_REQ_set_pubkey(csr, pkey);
+
+    // v1 (0x0)
+    X509_REQ_set_version(csr, 0);
+
+    // name is still owned by the X509_REQ
+    X509_NAME *name = X509_REQ_get_subject_name(csr);
+
+    // only need CN for letsencrypt.org, anything else would be bogus anyway
+    unsigned char *udomain = (unsigned char*)domain.data;
+    if(domain.len > INT_MAX){
+        ORIG_GO(&e, E_INTERNAL, "domain is way too long", done);
+    }
+    int udomainlen = (int)domain.len;
+    int ret = X509_NAME_add_entry_by_txt(
+        name, "CN", MBSTRING_ASC, udomain, udomainlen, -1, 0
+    );
+    if(ret != 1){
+        ORIG_GO(&e, E_SSL, "X509_NAME_add_entry_by_txt: %x", done, FSSL);
+    }
+
+    // add subject alternative name extension
+    exts = sk_X509_EXTENSION_new_null();
+    if(!exts){
+        ORIG_GO(&e, E_NOMEM, "sk_X509_EXTENSION_new_null()", done);
+    }
+    DSTR_VAR(san, 260);
+    PROP_GO(&e, FMT(&san, "DNS:%x", FD(domain)), done);
+    X509_EXTENSION *ext = X509V3_EXT_conf_nid(
+        NULL, NULL, NID_subject_alt_name, san.data
+    );
+    if(!ext){
+        ORIG_GO(&e,
+            E_SSL, "X509V3_EXT_conf_nid(SAN, %x): %x", done, FD(san), FSSL
+        );
+    }
+    sk_X509_EXTENSION_push(exts, ext);
+
+    ret = X509_REQ_add_extensions(csr, exts);
+    if(ret == 0) ORIG_GO(&e, E_SSL, "X509_REQ_add_extensions: %x", done, FSSL);
+
+    // sign the request
+    ret = X509_REQ_sign(csr, pkey, EVP_sha256());
+    if(ret == 0) ORIG_GO(&e, E_SSL, "X509_REQ_sign: %x", done, FSSL);
+
+    unsigned char *bytes = NULL;
+    ret = i2d_X509_REQ(csr, &bytes);
+    if(ret < 0) ORIG_GO(&e, E_SSL, "i2d_X509_REQ: %x", done, FSSL);
+
+    *out = dstr_from_cstrn((char*)bytes, (size_t)ret, true);
+
+done:
+    X509_REQ_free(csr);
+    if(exts) sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+
+    return e;
+}
+
+static derr_t finalize_body(
+    acme_t *acme,
+    acme_account_t acct,
+    dstr_t url,
+    dstr_t domain,
+    EVP_PKEY *pkey
+){
+    derr_t e = E_OK;
+
+    dstr_t csr;
+    PROP(&e, makecsr(domain, pkey, &csr));
+
+    // build the outer jws
+    DSTR_VAR(protected, 4096);
+    jdump_i *jprotected = DOBJ(
+        DOBJSNIPPET(acct.key->protected_params),
+        DKEY("kid", DD(acct.kid)),
+        DKEY("nonce", DD(acme->nonce)),
+        DKEY("url", DD(url)),
+    );
+    PROP_GO(&e, jdump(jprotected, WD(&protected), 0), done);
+    acme->nonce.len = 0;
+
+    DSTR_VAR(payload, 4096);
+    jdump_i *jpayload = DOBJ(DKEY("csr", DB64URL(csr)));
+    PROP_GO(&e, jdump(jpayload, WD(&payload), 0), done);
+
+    acme->wbuf.len = 0;
+    PROP_GO(&e,
+        jws(protected, payload, SIGN_KEY(acct.key), &acme->wbuf),
+    done);
+
+done:
+    dstr_free(&csr);
+    return e;
+}
+
+static void poll_order_reader_cb(stream_reader_t *reader, derr_t err){
+    acme_t *acme = CONTAINER_OF(reader, acme_t, reader);
+    acme_finalize_state_t *state = &acme->state.finalize;
+    json_t json;
+    json_prep(&json);
+
+    derr_t e = E_OK;
+
+    // check for errors
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
+    PROP_VAR_GO(&e, &acme->e, done);
+
+    // check status
+    bool badnonce;
+    PROP_GO(&e, expect_status(acme, 200, "polling order", &badnonce), done);
+    if(badnonce){
+        goto done;
+    }
+
+    order_t order;
+    PROP_GO(&e, read_order(acme->rbuf, &json, &order), done);
+
+    if(dstr_eq(order.status, DSTR_LIT("valid"))){
+        // success
+        if(!order.certificate.len){
+            ORIG_GO(&e,
+                E_RESPONSE,
+                "successful order finalize did not return a cert url",
+                done
+            );
+        }
+        // keep the certurl
+        PROP_GO(&e, dstr_copy(&order.certificate, &state->certurl), done);
+    }else if(dstr_eq(order.status, DSTR_LIT("processing"))){
+        // no change
+        // (noop)
+    }else if(dstr_eq(order.status, DSTR_LIT("invalid"))){
+        // certificate failure of some sort
+        ORIG_GO(&e,
+            E_RESPONSE,
+            "order finalization failed (error=\"\")",
+            done,
+            FD(order.error)
+        );
+    }else{
+        // either "ready" or "pending", which make no sense here
+        ORIG_GO(&e,
+            E_RESPONSE,
+            "invalid status on order finalize (%x)",
+            done,
+            FD(order.status)
+        );
+    }
+
+done:
+    json_free(&json);
+    acme_advance_state(acme, e);
+}
+
+static void cert_reader_cb(stream_reader_t *reader, derr_t err){
+    acme_t *acme = CONTAINER_OF(reader, acme_t, reader);
+    acme_finalize_state_t *state = &acme->state.finalize;
+
+    derr_t e = E_OK;
+
+    // check for errors
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
+    PROP_VAR_GO(&e, &acme->e, done);
+
+    // check status
+    bool badnonce;
+    PROP_GO(&e, expect_status(acme, 200, "downloading cert", &badnonce), done);
+    if(badnonce){
+        goto done;
+    }
+
+    PROP_GO(&e, dstr_copy(&acme->rbuf, &state->cert), done);
+
+done:
+    acme_advance_state(acme, e);
+}
+
+static http_pairs_t cert_hdrs = HTTP_PAIR_GLOBAL(
+    "Accept", "application/pem-certificate-chain", &content_type
+);
+
+static void finalize_advance_state(acme_t *acme, derr_t err){
+    derr_t e = E_OK;
+    acme_finalize_state_t *state = &acme->state.finalize;
+    dstr_t cert = {0};
+
+    // check for errors
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
+    PROP_VAR_GO(&e, &acme->e, done);
+
+    if(need_directory(acme)) return;
+    if(need_nonce(acme)) return;
+
+    if(!state->finalized){
+        PROP_GO(&e,
+            finalize_body(
+                acme, state->acct, state->finalize, state->domain, state->pkey
+            ),
+        done);
+
+        PROP_GO(&e,
+            acme_post(
+                acme,
+                &state->finalize,
+                &content_type,
+                finalize_hdr_cb,
+                finalize_reader_cb
+            ),
+        done);
+
+        state->finalized = true;
+        return;
+    }
+
+    // are we done yet?
+    if(state->cert.len) goto done;
+
+    // do we have a certurl yet?
+    if(state->certurl.len){
+        // fetch the cert
+        PROP_GO(&e, post_as_get(acme, state->acct, state->certurl), done);
+
+        PROP_GO(&e,
+            acme_post(
+                acme,
+                &state->certurl,
+                &cert_hdrs,
+                nonce_hdr_cb,
+                cert_reader_cb
+            ),
+        done);
+
+        return;
+    }
+
+    // do we need to backoff?
+    if(need_wait(acme, &state->retry_after)) return;
+
+    // poll order for status=ready
+    PROP_GO(&e, post_as_get(acme, state->acct, state->order), done);
+
+    PROP_GO(&e,
+        acme_post(
+            acme,
+            &state->order,
+            &content_type,
+            finalize_hdr_cb,
+            poll_order_reader_cb
+        ),
+    done);
+
+    return;
+
+done:
+    // capture outputs
+    if(!is_error(e)) cert = STEAL(dstr_t, &state->cert);
+    acme_finalize_cb cb = state->cb;
+    void *cb_data = state->cb_data;
+    acme->free_state(acme);
+    acme->advance_state = NULL;
+    acme->free_state = NULL;
+    cb(cb_data, e, cert);
+}
+
+static void finalize_free_state(acme_t *acme){
+    acme_finalize_state_t *state = &acme->state.finalize;
+    // drop our reference
+    if(state->pkey) EVP_PKEY_free(state->pkey);
+    dstr_free(&state->certurl);
+    dstr_free(&state->cert);
+    *state = (acme_finalize_state_t){0};
+}
+
+void acme_finalize(
+    const acme_account_t acct,
+    const dstr_t order,
+    const dstr_t finalize,
+    const dstr_t domain,
+    EVP_PKEY *pkey,
+    acme_finalize_cb cb,
+    void *cb_data
+){
+    acme_t *acme = acct.acme;
+    acme_finalize_state_t *state = &acme->state.finalize;
+    *state = (acme_finalize_state_t){
+        .acct = acct,
+        .order = order,
+        .finalize = finalize,
+        .domain = domain,
+        .pkey = pkey,
+        .cb = cb,
+        .cb_data = cb_data,
+    };
+    acme->advance_state = finalize_advance_state;
+    acme->free_state = finalize_free_state;
+
+    // keep a reference
+    EVP_PKEY_up_ref(pkey);
+
+    schedule(acme);
+}
+
+void acme_finalize_continue(
+    const acme_account_t acct,
+    const dstr_t order,
+    time_t retry_after,
+    acme_finalize_cb cb,
+    void *cb_data
+){
+    acme_t *acme = acct.acme;
+    acme_finalize_state_t *state = &acme->state.finalize;
+    *state = (acme_finalize_state_t){
+        .acct = acct,
+        .order = order,
+        .cb = cb,
+        .cb_data = cb_data,
+        // configure state to skip the finalize call
+        .finalized = true,
+        .retry_after = retry_after,
+    };
+    acme->advance_state = finalize_advance_state;
+    acme->free_state = finalize_free_state;
 
     schedule(acme);
 }

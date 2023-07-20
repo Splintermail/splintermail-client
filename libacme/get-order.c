@@ -3,15 +3,13 @@
 #include "libduv/libduv.h"
 #include "libhttp/libhttp.h"
 #include "libacme/libacme.h"
+#include "libacme/pebble.h"
 
 #include <string.h>
 
-static void http_close_cb(duv_http_t *http){
-    (void)http;
-}
-
 typedef struct {
     duv_http_t *http;
+    acme_t **acme;
     bool success;
     derr_t e;
 } globals_t;
@@ -23,7 +21,9 @@ static void _get_order_cb(
     dstr_t status,
     dstr_t expires,
     dstr_t authorization,
-    dstr_t finalize
+    dstr_t finalize,
+    dstr_t certurl,
+    time_t retry_after
 ){
     derr_t e = E_OK;
 
@@ -38,8 +38,10 @@ static void _get_order_cb(
         DKEY("expires", DD(expires)),
         DKEY("authorization", DD(authorization)),
         DKEY("finalize", DD(finalize)),
+        DKEY("certificate", DD(certurl)),
     );
     PROP_GO(&e, jdump(obj, WF(stdout), 2), done);
+    (void)retry_after;
 
     g->success = true;
 
@@ -49,7 +51,9 @@ done:
     dstr_free(&expires);
     dstr_free(&authorization);
     dstr_free(&finalize);
-    duv_http_close(g->http, http_close_cb);
+    dstr_free(&certurl);
+    acme_close(*g->acme, NULL);
+    duv_http_close(g->http, NULL);
     TRACE_PROP_VAR(&g->e, &e);
 }
 
@@ -66,7 +70,7 @@ static derr_t get_order(
     duv_http_t http = {0};
     acme_t *acme = NULL;
     acme_account_t acct = {0};
-    globals_t g = { &http };
+    globals_t g = { &http, &acme };
 
     PROP(&e, duv_loop_init(&loop) );
 
@@ -90,7 +94,7 @@ static derr_t get_order(
 fail:
     acme_account_free(&acct);
     acme_free(&acme);
-    duv_http_close(&http, http_close_cb);
+    duv_http_close(&http, NULL);
     DROP_CMD( duv_run(&loop) );
 
     duv_scheduler_close(&scheduler);
@@ -110,6 +114,8 @@ static void print_help(void){
         "  -d --dir [URL]  Set the acme directory to URL.\n"
         "                  Default: " LETSENCRYPT "\n"
         "     --ca [PATH]  Include a certificate authority from PATH.\n"
+        "     --pebble     Trust pebble's certificate, and change default\n"
+        "                  --dir to localhost:14000\n"
         "\n"
     );
 }
@@ -124,8 +130,9 @@ int main(int argc, char **argv){
     opt_spec_t o_help = {'h', "help", false};
     opt_spec_t o_dir = {'d', "dir", true};
     opt_spec_t o_ca = {'\0', "ca", true};
+    opt_spec_t o_pebble = {'\0', "pebble", false};
 
-    opt_spec_t* spec[] = { &o_help, &o_dir, &o_ca };
+    opt_spec_t* spec[] = { &o_help, &o_dir, &o_ca, &o_pebble };
     size_t speclen = sizeof(spec) / sizeof(*spec);
     int newargc;
 
@@ -151,7 +158,10 @@ int main(int argc, char **argv){
     char *acct = argv[1];
     dstr_t order = dstr_from_cstr(argv[2]);
 
-    dstr_t directory = o_dir.found ? o_dir.val : DSTR_LIT(LETSENCRYPT);
+    dstr_t directory = DSTR_LIT(LETSENCRYPT);
+    if(o_pebble.found) directory = DSTR_LIT("https://localhost:14000/dir");
+    if(o_dir.found) directory = o_dir.val;
+
     const char *ca = o_ca.found ? o_ca.val.data : NULL;
 
     ssl_context_t ssl_ctx = {0};
@@ -159,6 +169,8 @@ int main(int argc, char **argv){
     PROP_GO(&e, ssl_library_init(), fail);
 
     PROP_GO(&e, ssl_context_new_client_ex(&ssl_ctx, true, &ca, !!ca), fail);
+
+    if(o_pebble.found) PROP_GO(&e, trust_pebble(ssl_ctx.ctx), fail);
 
     PROP_GO(&e, get_order(directory, acct, order, ssl_ctx.ctx), fail);
 
