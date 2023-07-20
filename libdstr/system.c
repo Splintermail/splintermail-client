@@ -205,24 +205,27 @@ cu:
 #endif
 }
 
-derr_t dtime(time_t *out){
-    derr_t e = E_OK;
-
+derr_type_t dtime_quiet(time_t *out){
     errno = 0;
     time_t ret = time(out);
     if(errno || ret == ((time_t)-1)){
-        TRACE(&e, "time(): %x\n", FE(errno));
-        ORIG(&e, E_OS, "time() failed");
+        return E_OS;
     }
+    return E_NONE;
+}
 
+derr_t dtime(time_t *out){
+    derr_t e = E_OK;
+    derr_type_t etype = dtime_quiet(out);
+    if(etype) ORIG(&e, etype, "time(): %x", FE(errno));
     return e;
 }
 
-static bool _tz_is_set = false;
 static void _ensure_tzset(void){
     // this is not thread-safe, but tzset() seems to be so this seems ok
-    if(!_tz_is_set){
-        _tz_is_set = true;
+    static bool tz_is_set = false;
+    if(!tz_is_set){
+        tz_is_set = true;
         compat_tzset();
     }
 }
@@ -267,6 +270,64 @@ derr_t dlocaltime(time_t t, struct tm *tm){
     }
     return e;
 #endif
+}
+
+// read a local time stamp
+derr_type_t dmktime_local_quiet(dtm_t dtm, time_t *out){
+    struct tm tm = {
+        .tm_year = dtm.year - 1900,  // 1900 is year 0
+        .tm_mon = dtm.month - 1,     // jan is month 0
+        .tm_mday = dtm.day,
+        .tm_hour = dtm.hour,
+        .tm_min = dtm.min,
+        .tm_sec = dtm.sec,
+    };
+    _ensure_tzset();
+    time_t t = mktime(&tm);
+    if(t == (time_t)-1){
+        *out = 0;
+        return E_OS;
+    }
+    *out = t;
+    return E_NONE;
+}
+
+derr_t dmktime_local(dtm_t dtm, time_t *out){
+    derr_t e = E_OK;
+    derr_type_t etype = dmktime_local_quiet(dtm, out);
+    if(etype) ORIG(&e, etype, "mktime(): %x", FE(errno));
+    return e;
+}
+
+
+// read a utc timestamp
+derr_type_t dmktime_utc_quiet(dtm_t dtm, time_t *out){
+    time_t local;
+    derr_type_t etype = dmktime_local_quiet(dtm, &local);
+    if(etype) return etype;
+    // calculate seconds offset between localtime and UTC with stdlib functions
+    static time_t offset = LONG_MAX;
+    if(offset == LONG_MAX){
+        // get a gmt timestamp at time=0, then see what localtime we read it as
+        time_t zero = 0;
+        struct tm utc;
+        #ifdef _WIN32
+        gmtime_s(&utc, &zero);
+        #else
+        gmtime_r(&zero, &utc);
+        #endif
+        offset = mktime(&utc);
+    }
+    // apply offset
+    *out = local - offset;
+    return E_NONE;
+}
+
+derr_t dmktime_utc(dtm_t dtm, time_t *out){
+    derr_t e = E_OK;
+    derr_type_t etype = dmktime_utc_quiet(dtm, out);
+    if(etype) ORIG(&e, etype, "mktime(): %x", FE(errno));
+    return e;
 }
 
 #ifndef _WIN32 // UNIX

@@ -12,6 +12,7 @@ derr_t dsetenv(const dstr_t name, const dstr_t value);
 derr_t dunsetenv(const dstr_t name);
 
 // sets time to epoch time or raises an error
+derr_type_t dtime_quiet(time_t *out);
 derr_t dtime(time_t *time);
 
 // get the timezone (offset from UTC in seconds)
@@ -19,6 +20,24 @@ derr_t dtimezone(long int *tz);
 
 // localtime_r in unix or localtime_s in windows
 derr_t dlocaltime(time_t t, struct tm *tm);
+
+// like struct tm but with human numbers (1900 is year=1900, jan is month=1)
+typedef struct {
+    int year;
+    int month;
+    int day;
+    int hour;
+    int min;
+    int sec;
+} dtm_t;
+
+// read a local time stamp
+derr_type_t dmktime_local_quiet(dtm_t dtm, time_t *out);
+derr_t dmktime_local(dtm_t dtm, time_t *out);
+
+// read a utc timestamp
+derr_type_t dmktime_utc_quiet(dtm_t dtm, time_t *out);
+derr_t dmktime_utc(dtm_t dtm, time_t *out);
 
 #ifndef _WIN32 // UNIX
 
