@@ -37,7 +37,7 @@ typedef struct {
     call_e type;
     xtime_t deadline;
     test_subscriber_t *sub;
-    char c;
+    char *msg;
     int sender;
     kvp_update_t *pkt;
 } call_t;
@@ -324,7 +324,9 @@ fail:
     return;
 }
 
-static void _subscriber_respond(kvpsend_i *iface, subscriber_t *sub, char c){
+static void _subscriber_respond(
+    kvpsend_i *iface, subscriber_t *sub, dstr_t msg
+){
     kvpsend_test_t *T = CONTAINER_OF(iface, kvpsend_test_t, iface);
     if(T->failing) return;
 
@@ -333,7 +335,7 @@ static void _subscriber_respond(kvpsend_i *iface, subscriber_t *sub, char c){
     size_t idx = T->call_idx++;
     EXPECT_CALL_GO(&e, idx, SUBSCRIBER_RESPOND, fail);
     EXPECT_SUBSCRIBER_GO(&e, sub, T->calls[idx].sub, fail);
-    EXPECT_I_GO(&e, "c", c, T->calls[idx].c, fail);
+    EXPECT_D_GO(&e, "msg", msg, dstr_from_cstr(T->calls[idx].msg), fail);
 
     return;
 
@@ -558,7 +560,7 @@ static kvp_ack_t ack(kvp_update_t update){
 
 #define EXPECT_SUB_RESPOND(_sub, _resp) \
     expect_call(((call_t){ \
-        .type = SUBSCRIBER_RESPOND, .sub = (_sub), .c = _resp \
+        .type = SUBSCRIBER_RESPOND, .sub = (_sub), .msg = _resp \
     }))
 
 #define EXPECT_INSERT(_pkt, _key, _val) do { \
@@ -684,7 +686,7 @@ static derr_t test_kvpsend(void){
 
     // [A] the first recv becomes ok -> pending entries transition
     kvp_update_t p0_flush;
-    EXPECT_SUB_RESPOND(&sub0, 'k');
+    EXPECT_SUB_RESPOND(&sub0, "k");
     EXPECT_TIMEOUT_TIMER_STOP();
     EXPECT_SENDER_TIMER_STOP(0);
     EXPECT_SENDER_SEND_PKT(0, &p0_flush);
@@ -778,7 +780,7 @@ static derr_t test_kvpsend(void){
 
 found_deadline:
     now += 17;
-    EXPECT_SUB_RESPOND(&sub0, 'k');
+    EXPECT_SUB_RESPOND(&sub0, "k");
     EXPECT_TIMEOUT_TIMER_STOP();
     EXPECT_SENDER_SEND_PKT(0, &p_resend);
     EVENT_GO(&e, sender_timer_cb(&T.k, &T.k.senders[0], now), cu);
@@ -801,7 +803,7 @@ found_deadline:
     SEND_CB_GO(&e, 1, now, cu);
     now++;
 
-    EXPECT_SUB_RESPOND(&sub0, 'k');
+    EXPECT_SUB_RESPOND(&sub0, "k");
     EXPECT_TIMEOUT_TIMER_STOP();
     EXPECT_SENDER_TIMER_STOP(1);
     EXPECT_SENDER_TIMER_START(1, p1_ins4_send_time + 12 * SECOND);
@@ -809,7 +811,7 @@ found_deadline:
     now++;
 
     // [F] sub appears, gets immediate ok
-    EXPECT_SUB_RESPOND(&sub0, 'k');
+    EXPECT_SUB_RESPOND(&sub0, "k");
     ADD_SUB(&sub0, "id-4", "ch-4", now);
 
     // [Q] sub to delete entry
@@ -883,7 +885,7 @@ found_deadline:
     ACK_GO(&e, 1, p1_del4, now, cu);
     now++;
 
-    EXPECT_SUB_RESPOND(&sub0, 'k');
+    EXPECT_SUB_RESPOND(&sub0, "k");
     EXPECT_TIMEOUT_TIMER_STOP();
     EXPECT_SENDER_TIMER_STOP(1);
     EXPECT_SENDER_TIMER_START(1, p1_ins4b_send_time + 12 * SECOND);
@@ -990,7 +992,7 @@ found_deadline:
 
 found_timeout:
     now += 37;
-    EXPECT_SUB_RESPOND(&sub0, 't');
+    EXPECT_SUB_RESPOND(&sub0, "t");
     EVENT_GO(&e, timeout_timer_cb(&T.k, now), cu);
     now++;
 
