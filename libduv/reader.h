@@ -8,6 +8,7 @@ struct stream_reader_t {
     rstream_i *rstream;
     dstr_t *out;
     derr_t e;
+    bool started : 1;
     bool done : 1;
     bool canceled : 1;
     stream_reader_cb cb;

@@ -53,6 +53,7 @@ void stream_read_all(
         .data = r->data,
         .rstream = rstream,
         .out = out,
+        .started = true,
         .cb = cb,
         .await_cb = rstream->await(rstream, await_cb),
     };
@@ -68,6 +69,7 @@ void stream_read_all(
 }
 
 void stream_reader_cancel(stream_reader_t *r){
+    if(!r->started) return;
     r->canceled = true;
     if(r->done) return;
     r->rstream->cancel(r->rstream);
