@@ -96,8 +96,9 @@ typedef void (*acme_get_authz_cb)(
     dstr_t domain,
     dstr_t status,
     dstr_t expires,
-    dstr_t challenge, // only the dns challenge is returned
-    dstr_t token      // only the dns challenge is returned
+    dstr_t challenge,   // only the dns challenge is returned
+    dstr_t token,       // only the dns challenge is returned
+    time_t retry_after  // might be zero
 );
 
 void acme_get_authz(
@@ -107,11 +108,22 @@ void acme_get_authz(
     void *cb_data
 );
 
+// will automatically await a challenge result
 typedef void (*acme_challenge_cb)(void*, derr_t);
 
 void acme_challenge(
     const acme_account_t acct,
+    const dstr_t authz,
     const dstr_t challenge,
+    acme_challenge_cb cb,
+    void *cb_data
+);
+
+// finish challenging, when you wake up to an authz with status=processing
+void acme_challenge_finish(
+    const acme_account_t acct,
+    const dstr_t authz,
+    time_t retry_after,
     acme_challenge_cb cb,
     void *cb_data
 );

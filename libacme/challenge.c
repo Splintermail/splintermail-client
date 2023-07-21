@@ -10,6 +10,9 @@
 typedef struct {
     duv_http_t *http;
     acme_t **acme;
+    acme_account_t *acct;
+    dstr_t authz;
+    dstr_t challenge;
     bool success;
     derr_t e;
 } globals_t;
@@ -31,10 +34,59 @@ done:
     TRACE_PROP_VAR(&g->e, &e);
 }
 
+static void _get_authz_cb(
+    void *data,
+    derr_t err,
+    dstr_t domain,
+    dstr_t status,
+    dstr_t expires,
+    dstr_t challenge,   // only the dns challenge is returned
+    dstr_t token,       // only the dns challenge is returned
+    time_t retry_after  // might be zero
+){
+    derr_t e = E_OK;
+
+    globals_t *g = data;
+
+    bool done = dstr_eq(status, DSTR_LIT("valid"));
+    bool in_prog = dstr_eq(status, DSTR_LIT("processing"));
+
+    dstr_free(&domain);
+    dstr_free(&expires);
+    dstr_free(&status);
+    g->challenge = STEAL(dstr_t, &challenge);
+    dstr_free(&token);
+
+    PROP_VAR_GO(&e, &err, fail);
+
+    if(done){
+        // quit early
+        fprintf(stdout, "ok\n");
+        g->success = true;
+        acme_close(*g->acme, NULL);
+        duv_http_close(g->http, NULL);
+    }else if(in_prog){
+        // continue a previous challenge
+        acme_challenge_finish(
+            *g->acct, g->authz, retry_after, _challenge_cb, g
+        );
+    }else{
+        // need to post our challenge first
+        acme_challenge(*g->acct, g->authz, g->challenge, _challenge_cb, g);
+    }
+
+    return;
+
+fail:
+    acme_close(*g->acme, NULL);
+    duv_http_close(g->http, NULL);
+    TRACE_PROP_VAR(&g->e, &e);
+}
+
 static derr_t _challenge(
     dstr_t directory,
     char *acct_file,
-    const dstr_t challenge,
+    const dstr_t authz,
     SSL_CTX *ctx
 ){
     derr_t e = E_OK;
@@ -44,7 +96,7 @@ static derr_t _challenge(
     duv_http_t http = {0};
     acme_t *acme = NULL;
     acme_account_t acct = {0};
-    globals_t g = { &http, &acme };
+    globals_t g = { &http, &acme, &acct, authz };
 
     PROP(&e, duv_loop_init(&loop) );
 
@@ -56,7 +108,7 @@ static derr_t _challenge(
 
     PROP_GO(&e, acme_account_from_file(&acct, acct_file, acme), fail);
 
-    acme_challenge(acct, challenge, _challenge_cb, &g);
+    acme_get_authz(acct, authz, _get_authz_cb, &g);
 
     derr_t e2 = duv_run(&loop);
     TRACE_PROP_VAR(&e, &e2);
@@ -74,6 +126,7 @@ fail:
     duv_scheduler_close(&scheduler);
     uv_loop_close(&loop);
     DROP_CMD( duv_run(&loop) );
+    dstr_free(&g.challenge);
     return e;
 }
 
@@ -81,7 +134,7 @@ static void print_help(void){
     fprintf(stdout,
         "challenge: respond to an ACME challenge\n"
         "\n"
-        "usage: challenge [OPTIONS] ACCOUNT.JSON CHALLENGE\n"
+        "usage: challenge [OPTIONS] ACCOUNT.JSON AUTHZ\n"
         "\n"
         "where OPTIONS may contain:\n"
         "\n"
@@ -130,7 +183,7 @@ int main(int argc, char **argv){
     }
 
     char *acct = argv[1];
-    dstr_t challenge = dstr_from_cstr(argv[2]);
+    dstr_t authz = dstr_from_cstr(argv[2]);
 
     dstr_t directory = DSTR_LIT(LETSENCRYPT);
     if(o_pebble.found) directory = DSTR_LIT("https://localhost:14000/dir");
@@ -146,7 +199,7 @@ int main(int argc, char **argv){
 
     if(o_pebble.found) PROP_GO(&e, trust_pebble(ssl_ctx.ctx), fail);
 
-    PROP_GO(&e, _challenge(directory, acct, challenge, ssl_ctx.ctx), fail);
+    PROP_GO(&e, _challenge(directory, acct, authz, ssl_ctx.ctx), fail);
 
 fail:
     (void)main;

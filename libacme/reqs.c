@@ -81,16 +81,20 @@ typedef struct {
     dstr_t expires;
     dstr_t challenge;
     dstr_t token;
+    time_t retry_after;
 } acme_get_authz_state_t;
 
 typedef struct {
     // inputs
     acme_account_t acct;
+    dstr_t authz;
     dstr_t challenge;
     acme_challenge_cb cb;
     void *cb_data;
     // state
-    bool sent;
+    bool challenged;
+    bool success;
+    time_t retry_after;
 } acme_challenge_state_t;
 
 typedef struct {
@@ -124,6 +128,8 @@ struct acme_t {
     url_t directory_url;
     // nonce gets modified throughout acme_t lifetime
     dstr_t nonce;
+    // retry_after is automatically collected on each request, or zero
+    time_t retry_after;
     // urls
     url_t new_nonce_url;
     url_t new_account_url;
@@ -349,13 +355,21 @@ static void ignore_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
     (void)hdr;
 }
 
-static void nonce_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
+static void base_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
     acme_t *acme = CONTAINER_OF(req, acme_t, req);
 
     if(is_error(acme->e)) return;
 
+    if(dstr_ieq(hdr.key, DSTR_LIT("Retry-After"))){
+        PROP_GO(&acme->e,
+            parse_retry_after(hdr.value, &acme->retry_after),
+        done);
+        return;
+    }
+
     if(dstr_ieq(hdr.key, DSTR_LIT("Replay-Nonce"))){
         PROP_GO(&acme->e, dstr_copy(&hdr.value, &acme->nonce), done);
+        return;
     }
 
 done:
@@ -430,6 +444,10 @@ static derr_t acme_post(
 
     acme->rbuf.len = 0;
     stream_read_all(&acme->reader, r, &acme->rbuf, reader_cb);
+
+    // zeroize standard headers
+    acme->nonce.len = 0;
+    acme->retry_after = 0;
 
     return e;
 }
@@ -540,11 +558,15 @@ static void new_nonce(acme_t *acme){
         NULL,
         NULL,
         (dstr_t){0},
-        nonce_hdr_cb
+        base_hdr_cb
     );
 
     acme->rbuf.len = 0;
     stream_read_all(&acme->reader, r, &acme->rbuf, new_nonce_reader_cb);
+
+    // zeroize standard headers
+    acme->nonce.len = 0;
+    acme->retry_after = 0;
 }
 
 static bool need_nonce(acme_t *acme){
@@ -646,8 +668,7 @@ static void new_account_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
         return;
     }
 
-    // also grab nonce
-    nonce_hdr_cb(req, hdr);
+    base_hdr_cb(req, hdr);
 
 done:
     return;
@@ -875,8 +896,7 @@ static void new_order_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
         return;
     }
 
-    // also grab nonce
-    nonce_hdr_cb(req, hdr);
+    base_hdr_cb(req, hdr);
 
 done:
     return;
@@ -1019,29 +1039,11 @@ static void get_order_reader_cb(stream_reader_t *reader, derr_t err){
     PROP_GO(&e, dstr_copy(&order.domain, &state->domain), done);
     PROP_GO(&e, dstr_copy(&order.status, &state->status), done);
     PROP_GO(&e, dstr_copy(&order.certificate, &state->certurl), done);
+    state->retry_after = acme->retry_after;
 
 done:
     json_free(&json);
     acme_advance_state(acme, e);
-}
-
-static void get_order_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
-    acme_t *acme = CONTAINER_OF(req, acme_t, req);
-    acme_get_order_state_t *state = &acme->state.get_order;
-
-    if(is_error(acme->e)) return;
-    if(dstr_ieq(hdr.key, DSTR_LIT("Retry-After"))){
-        PROP_GO(&acme->e,
-            parse_retry_after(hdr.value, &state->retry_after),
-        done);
-        return;
-    }
-
-    // also grab nonce
-    nonce_hdr_cb(req, hdr);
-
-done:
-    return;
 }
 
 static derr_t post_as_get(acme_t *acme, acme_account_t acct, dstr_t url){
@@ -1094,7 +1096,7 @@ static void get_order_advance_state(acme_t *acme, derr_t err){
                 acme,
                 &state->order,
                 &content_type,
-                get_order_hdr_cb,
+                base_hdr_cb,
                 get_order_reader_cb
             ),
         done);
@@ -1266,7 +1268,7 @@ static void list_orders_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
     }
 
     // also grab nonce
-    nonce_hdr_cb(req, hdr);
+    base_hdr_cb(req, hdr);
 
 done:
     return;
@@ -1442,6 +1444,8 @@ static void get_authz_reader_cb(stream_reader_t *reader, derr_t err){
         ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
     }
 
+    state->retry_after = acme->retry_after;
+
 done:
     json_free(&json);
     acme_advance_state(acme, e);
@@ -1455,6 +1459,7 @@ static void get_authz_advance_state(acme_t *acme, derr_t err){
     dstr_t expires = {0};
     dstr_t challenge = {0};
     dstr_t token = {0};
+    time_t retry_after = 0;
 
     // check for errors
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
@@ -1471,7 +1476,7 @@ static void get_authz_advance_state(acme_t *acme, derr_t err){
                 acme,
                 &state->authz,
                 &content_type,
-                nonce_hdr_cb,
+                base_hdr_cb,
                 get_authz_reader_cb
             ),
         done);
@@ -1487,13 +1492,14 @@ done:
         expires = STEAL(dstr_t, &state->expires);
         challenge = STEAL(dstr_t, &state->challenge);
         token = STEAL(dstr_t, &state->token);
+        retry_after = state->retry_after;
     }
     acme_get_authz_cb cb = state->cb;
     void *cb_data = state->cb_data;
     acme->free_state(acme);
     acme->advance_state = NULL;
     acme->free_state = NULL;
-    cb(cb_data, e, domain, status, expires, challenge, token);
+    cb(cb_data, e, domain, status, expires, challenge, token, retry_after);
 }
 
 static void get_authz_free_state(acme_t *acme){
@@ -1544,7 +1550,7 @@ static void challenge_reader_cb(stream_reader_t *reader, derr_t err){
         expect_status(acme, 200, "responding to challenge", &badnonce),
     done);
     if(badnonce){
-        state->sent = false;
+        state->challenged = false;
         goto done;
     }
 
@@ -1576,6 +1582,60 @@ static derr_t challenge_body(acme_t *acme, acme_account_t acct, dstr_t url){
     return e;
 }
 
+static void poll_authz_reader_cb(stream_reader_t *reader, derr_t err){
+    acme_t *acme = CONTAINER_OF(reader, acme_t, reader);
+    acme_challenge_state_t *state = &acme->state.challenge;
+    json_t json;
+    json_prep(&json);
+
+    derr_t e = E_OK;
+
+    // check for errors
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
+    PROP_VAR_GO(&e, &acme->e, done);
+
+    // check status
+    bool badnonce;
+    PROP_GO(&e,
+        expect_status(acme, 200, "getting authorization", &badnonce),
+    done);
+    if(badnonce){
+        goto done;
+    }
+
+    // parse body
+    PROP_GO(&e, json_parse(acme->rbuf, &json), done);
+
+    // read body (just status)
+    dstr_t status;
+    jspec_t *jspec = JOBJ(true, JKEY("status", JDREF(&status)) );
+
+    bool ok;
+    DSTR_VAR(errbuf, 512);
+    PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf), done);
+    if(!ok){
+        ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
+    }
+
+    if(dstr_eq(status, DSTR_LIT("processing"))){
+        // still waiting; continue
+    }else if(dstr_eq(status, DSTR_LIT("valid"))){
+        // success!
+        state->success = true;
+    }else if(dstr_eq(status, DSTR_LIT("invalid"))){
+        // failure (status=invalid), or unexpected (status=pending)
+        ORIG_GO(&e,
+            E_RESPONSE, "authorization in invalid state (%x)", done, FD(status)
+        );
+    }
+
+    state->retry_after = acme->retry_after;
+
+done:
+    json_free(&json);
+    acme_advance_state(acme, e);
+}
+
 static void challenge_advance_state(acme_t *acme, derr_t err){
     derr_t e = E_OK;
     acme_challenge_state_t *state = &acme->state.challenge;
@@ -1587,7 +1647,7 @@ static void challenge_advance_state(acme_t *acme, derr_t err){
     if(need_directory(acme)) return;
     if(need_nonce(acme)) return;
 
-    if(!state->sent){
+    if(!state->challenged){
         PROP_GO(&e, challenge_body(acme, state->acct, state->challenge), done);
 
         PROP_GO(&e,
@@ -1595,14 +1655,37 @@ static void challenge_advance_state(acme_t *acme, derr_t err){
                 acme,
                 &state->challenge,
                 &content_type,
-                nonce_hdr_cb,
+                base_hdr_cb,
                 challenge_reader_cb
             ),
         done);
 
-        state->sent = true;
+        state->challenged = true;
         return;
     }
+
+    // are we done yet?
+    if(state->success){
+        goto done;
+    }
+
+    // do we need to back off?
+    if(need_wait(acme, &state->retry_after)) return;
+
+    // poll order for status=valid
+    PROP_GO(&e, post_as_get(acme, state->acct, state->authz), done);
+
+    PROP_GO(&e,
+        acme_post(
+            acme,
+            &state->authz,
+            &content_type,
+            base_hdr_cb,
+            poll_authz_reader_cb
+        ),
+    done);
+
+    return;
 
 done:
     (void)acme;
@@ -1621,6 +1704,7 @@ static void challenge_free_state(acme_t *acme){
 
 void acme_challenge(
     const acme_account_t acct,
+    const dstr_t authz,
     const dstr_t challenge,
     acme_challenge_cb cb,
     void *cb_data
@@ -1629,9 +1713,34 @@ void acme_challenge(
     acme_challenge_state_t *state = &acme->state.challenge;
     *state = (acme_challenge_state_t){
         .acct = acct,
+        .authz = authz,
         .challenge = challenge,
         .cb = cb,
         .cb_data = cb_data,
+    };
+    acme->advance_state = challenge_advance_state;
+    acme->free_state = challenge_free_state;
+
+    schedule(acme);
+}
+
+void acme_challenge_finish(
+    const acme_account_t acct,
+    const dstr_t authz,
+    time_t retry_after,
+    acme_challenge_cb cb,
+    void *cb_data
+){
+    acme_t *acme = acct.acme;
+    acme_challenge_state_t *state = &acme->state.challenge;
+    *state = (acme_challenge_state_t){
+        .acct = acct,
+        .authz = authz,
+        .cb = cb,
+        .cb_data = cb_data,
+        // configure state to skip the challenge call
+        .challenged = true,
+        .retry_after = retry_after,
     };
     acme->advance_state = challenge_advance_state;
     acme->free_state = challenge_free_state;
@@ -1699,25 +1808,6 @@ static void finalize_reader_cb(stream_reader_t *reader, derr_t err){
 done:
     json_free(&json);
     acme_advance_state(acme, e);
-}
-
-static void finalize_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
-    acme_t *acme = CONTAINER_OF(req, acme_t, req);
-    acme_finalize_state_t *state = &acme->state.finalize;
-
-    if(is_error(acme->e)) return;
-    if(dstr_ieq(hdr.key, DSTR_LIT("Retry-After"))){
-        PROP_GO(&acme->e,
-            parse_retry_after(hdr.value, &state->retry_after),
-        done);
-        return;
-    }
-
-    // also grab nonce
-    nonce_hdr_cb(req, hdr);
-
-done:
-    return;
 }
 
 // output is an allocated string
@@ -1938,7 +2028,7 @@ static void finalize_advance_state(acme_t *acme, derr_t err){
                 acme,
                 &state->finalize,
                 &content_type,
-                finalize_hdr_cb,
+                base_hdr_cb,
                 finalize_reader_cb
             ),
         done);
@@ -1960,7 +2050,7 @@ static void finalize_advance_state(acme_t *acme, derr_t err){
                 acme,
                 &state->certurl,
                 &cert_hdrs,
-                nonce_hdr_cb,
+                base_hdr_cb,
                 cert_reader_cb
             ),
         done);
@@ -1979,7 +2069,7 @@ static void finalize_advance_state(acme_t *acme, derr_t err){
             acme,
             &state->order,
             &content_type,
-            finalize_hdr_cb,
+            base_hdr_cb,
             poll_order_reader_cb
         ),
     done);

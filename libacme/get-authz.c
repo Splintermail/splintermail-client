@@ -21,7 +21,8 @@ static void _get_authz_cb(
     dstr_t status,
     dstr_t expires,
     dstr_t challenge,
-    dstr_t token
+    dstr_t token,
+    time_t retry_after
 ){
     derr_t e = E_OK;
 
@@ -38,6 +39,7 @@ static void _get_authz_cb(
         DKEY("token", DD(token)),
     );
     PROP_GO(&e, jdump(obj, WF(stdout), 2), done);
+    (void)retry_after;
 
     g->success = true;
 
