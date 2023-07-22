@@ -144,6 +144,10 @@ derr_t duv_run(uv_loop_t *loop){
     UV_CALL(uv_run, loop, UV_RUN_DEFAULT);
 }
 
+derr_t duv_step(uv_loop_t *loop){
+    UV_CALL(uv_run, loop, UV_RUN_ONCE);
+}
+
 derr_t duv_queue_work(
     uv_loop_t *loop,
     uv_work_t *req,

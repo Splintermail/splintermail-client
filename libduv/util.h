@@ -107,6 +107,7 @@ void async_handle_close_cb(uv_handle_t *handle);
 // derr_t-compatible wrappers
 derr_t duv_loop_init(uv_loop_t *loop);
 derr_t duv_run(uv_loop_t *loop);
+derr_t duv_step(uv_loop_t *loop);
 derr_t duv_queue_work(
     uv_loop_t *loop,
     uv_work_t *req,

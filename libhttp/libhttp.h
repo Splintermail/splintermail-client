@@ -12,5 +12,6 @@
 #include "limit.h"
 #include "chunked.h"
 #include "duv_http.h"
+#include "sync.h"
 
 #endif // LIBHTTP_H

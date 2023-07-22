@@ -409,14 +409,14 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Content-Length: 11\r\n"
                 "\r\n"
                 "hello world"
             ),
             .exp_status = 200,
             .exp_hdrs = EXP_HDRS(
-                PAIR("Server", "yo mamma"),
+                PAIR("Server", "yo mama"),
                 PAIR("Content-Length", "11"),
             ),
             .exp_body = DSTR_LIT("hello world"),
@@ -433,7 +433,7 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 201 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Content-Length: 11\r\n"
                 "Connection: close\r\n"
                 "\r\n"
@@ -441,7 +441,7 @@ static derr_t test_duv_http(void){
             ),
             .exp_status = 201,
             .exp_hdrs = EXP_HDRS(
-                PAIR("Server", "yo mamma"),
+                PAIR("Server", "yo mama"),
                 PAIR("Content-Length", "11"),
                 PAIR("Connection", "close"),
             ),
@@ -460,7 +460,7 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 202 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Transfer-Encoding: chunked\r\n"
                 "\r\n"
                 "6\r\n"
@@ -472,7 +472,7 @@ static derr_t test_duv_http(void){
             ),
             .exp_status = 202,
             .exp_hdrs = EXP_HDRS(
-                PAIR("Server", "yo mamma"),
+                PAIR("Server", "yo mama"),
                 PAIR("Transfer-Encoding", "chunked"),
             ),
             .exp_body = DSTR_LIT("hello world"),
@@ -489,7 +489,7 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Transfer-Encoding: chunked\r\n"
                 "Connection: close\r\n"
                 "\r\n"
@@ -502,7 +502,7 @@ static derr_t test_duv_http(void){
             ),
             .exp_status = 200,
             .exp_hdrs = EXP_HDRS(
-                PAIR("Server", "yo mamma"),
+                PAIR("Server", "yo mama"),
                 PAIR("Transfer-Encoding", "chunked"),
                 PAIR("Connection", "close"),
             ),
@@ -521,13 +521,13 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "\r\n"
                 "hello world"
             ),
             .exp_status = 200,
             .exp_hdrs = EXP_HDRS(
-                PAIR("Server", "yo mamma"),
+                PAIR("Server", "yo mama"),
             ),
             .exp_body = DSTR_LIT("hello world"),
             .close_behavior = SERVER_CLOSES,
@@ -544,13 +544,13 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 204 No Content\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Content-Length: 99\r\n" // phony value must be ignored
                 "\r\n"
             ),
             .exp_status = 204,
             .exp_hdrs = EXP_HDRS(
-                PAIR("Server", "yo mamma"),
+                PAIR("Server", "yo mama"),
                 PAIR("Content-Length", "99"),
             ),
             .exp_body = DSTR_LIT(""),
@@ -568,14 +568,14 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Content-Length: 11\r\n"
                 "\r\n"
                 "hello world"
             ),
             .exp_status = 200,
             .exp_hdrs = EXP_HDRS(
-                PAIR("Server", "yo mamma"),
+                PAIR("Server", "yo mama"),
                 PAIR("Content-Length", "11"),
             ),
             .exp_body = DSTR_LIT("hello world"),
@@ -591,7 +591,7 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Content-Length: 11\r\n"
                 "Content-Length: 11\r\n"
                 "\r\n"
@@ -599,7 +599,7 @@ static derr_t test_duv_http(void){
             ),
             .exp_status = 200,
             .exp_hdrs = EXP_HDRS(
-                PAIR("Server", "yo mamma"),
+                PAIR("Server", "yo mama"),
                 PAIR("Content-Length", "11"),
             ),
             .exp_body = DSTR_LIT(""),
@@ -617,7 +617,7 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Transfer-Encoding: chunked\r\n"
                 "\r\n"
                 "6\r\n"
@@ -630,7 +630,7 @@ static derr_t test_duv_http(void){
             ),
             .exp_status = 200,
             .exp_hdrs = EXP_HDRS(
-                PAIR("Server", "yo mamma"),
+                PAIR("Server", "yo mama"),
                 PAIR("Transfer-Encoding", "chunked"),
                 PAIR("Stuff", "yup"),
             ),
@@ -668,7 +668,7 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Transfer-Encoding: chunked\r\n"
                 "\r\n"
                 "6\r\n"
@@ -695,7 +695,7 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Transfer-Encoding: chunked\r\n"
                 "\r\n"
                 "6\r\n"
@@ -723,7 +723,7 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Transfer-Encoding: chunked\r\n"
             ),
             .close_behavior = SERVER_CLOSES, // to cause the eof
@@ -741,7 +741,7 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Content-Length: 11\r\n"
                 "Content-Length: 12\r\n"
                 "\r\n"
@@ -761,7 +761,7 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Transfer-Encoding: chunked\r\n"
                 "Content-Length: 11\r\n"
                 "\r\n"
@@ -783,7 +783,7 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Content-Length: 11\r\n"
                 "Transfer-Encoding: chunked\r\n"
                 "\r\n"
@@ -805,7 +805,7 @@ static derr_t test_duv_http(void){
             ),
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "Transfer-Encoding: gzip\r\n"
                 "\r\n"
             ),
@@ -827,7 +827,7 @@ static derr_t test_duv_http(void){
             #define x8192(x) x4096(x) x4096(x)
             .response = DSTR_LIT(
                 "HTTP/1.1 200 OK\r\n"
-                "Server: yo mamma\r\n"
+                "Server: yo mama\r\n"
                 "LongHeader: " x8192("x") "\r\n"
                 "Transfer-Encoding: gzip\r\n"
                 "\r\n"

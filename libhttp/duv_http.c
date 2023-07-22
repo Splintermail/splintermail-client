@@ -490,7 +490,7 @@ static void req_hdr_cb(
     }
 
     // pass the hdr to the user too
-    req->hdr_cb(req, hdr);
+    if(req->hdr_cb) req->hdr_cb(req, hdr);
 
 done:
     return;
