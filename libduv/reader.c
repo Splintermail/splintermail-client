@@ -68,9 +68,11 @@ void stream_read_all(
     do_read(r);
 }
 
-void stream_reader_cancel(stream_reader_t *r){
-    if(!r->started) return;
+// always succeeds; returns true if an err=E_CANCELED will be coming
+bool stream_reader_cancel(stream_reader_t *r){
+    if(!r->started) return false;
     r->canceled = true;
-    if(r->done) return;
+    if(r->done) return false;
     r->rstream->cancel(r->rstream);
+    return true;
 }

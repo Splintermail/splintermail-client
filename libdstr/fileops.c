@@ -1259,8 +1259,12 @@ derr_t dfopen(const char *path, const char *mode, FILE **out){
 
     *out = compat_fopen(path, mode);
     if(!*out){
-        TRACE(&e, "fopen(%x): %x\n", FS(path), FE(errno));
-        ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
+        ORIG(&e,
+            errno == ENOMEM ? E_NOMEM : E_OPEN,
+            "unable to fopen(%x): %x",
+            FS(path),
+            FE(errno)
+        );
     }
 
     return e;
@@ -1291,8 +1295,7 @@ derr_t dopen(const char *path, int flags, int mode, int *fd){
         if(errno == ENOMEM){
             ORIG(&e, E_NOMEM, "no memory for open");
         }
-        TRACE(&e, "open(%x): %x\n", FS(path), FE(errno));
-        ORIG(&e, E_OPEN, "unable to open file");
+        ORIG(&e, E_OPEN, "unable to open(%x): %x", FS(path), FE(errno));
     }
 
     return e;

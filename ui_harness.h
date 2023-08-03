@@ -9,6 +9,8 @@ typedef struct {
     derr_t (*for_each_file_in_dir)(
         const string_builder_t *path, for_each_file_hook_t hook, void *userdata
     );
+    derr_t (*ssl_library_init)(void);
+    void (*ssl_library_close)(void);
 } ui_harness_t;
 
 extern ui_harness_t harness;

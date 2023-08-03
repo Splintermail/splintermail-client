@@ -90,7 +90,9 @@ static void advance_state(duv_connect_t *c){
             // end of the line
             TRACE_ORIG(&c->e,
                 derr_type_from_uv_status(c->gai.status),
-                "uv_getaddrinfo callback: %x",
+                "uv_getaddrinfo_cb(%x:%x): %x",
+                FS(c->node),
+                FS(c->service),
                 FS(uv_strerror(c->gai.status))
             );
             finish(c, c->e);

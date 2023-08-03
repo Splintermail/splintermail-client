@@ -45,30 +45,26 @@ extern char** users;
 
 // api_client.h
 extern api_token_t* token_to_read;
-extern bool find_token;
 extern derr_t read_token_error;
+extern bool read_token_notok;
 
 struct register_token_args_t {
-    const char* host;
-    unsigned int port;
-    const dstr_t* user;
-    const dstr_t* pass;
-    const char* creds_path;
+    char *baseurl;
+    char *user;
+    char *pass;
+    char *creds_path;
     derr_t to_return;
 };
 extern struct register_token_args_t* register_token_args;
 extern bool register_token_called;
 
 struct api_password_args_t {
-    const char* host;
-    unsigned int port;
-    dstr_t* command;
-    dstr_t* arg;
-    char* user;
-    char* pass;
-    int code;
-    const char* reason;
-    // const char* recv; // not actually read in ui.c, just memory for *json
+    char *baseurl;
+    char *path;
+    char *arg;
+    char *user;
+    char *pass;
+    // return json, will be parsed
     char* json;
     derr_t to_return;
 };
@@ -76,14 +72,11 @@ extern struct api_password_args_t* api_password_args;
 extern bool api_password_called;
 
 struct api_token_args_t {
-    const char* host;
-    unsigned int port;
-    dstr_t* command;
-    dstr_t* arg;
+    char *baseurl;
+    char *path;
+    char *arg;
     api_token_t token;
-    int code;
-    const char* reason;
-    // const char* recv; // not actually read in ui.c, just memory for *json
+    // return json, will be parsed
     char* json;
     derr_t to_return;
 };

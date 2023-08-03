@@ -22,7 +22,8 @@ void stream_read_all(
     stream_reader_t *r, rstream_i *rstream, dstr_t *out, stream_reader_cb cb
 );
 
-void stream_reader_cancel(stream_reader_t *r);
+// always succeeds; returns true if an err=E_CANCELED will be coming
+bool stream_reader_cancel(stream_reader_t *r);
 
 // global limit, useful for tests
 extern size_t _stream_reader_read_max_size;

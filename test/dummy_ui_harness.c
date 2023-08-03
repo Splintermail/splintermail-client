@@ -208,6 +208,16 @@ static derr_t fake_for_each_file_in_dir(
     ORIG(&e, E_INTERNAL, "unexpected call to for_each_file_in_dir");
 }
 
+// networking.h
+static derr_t fake_ssl_library_init(void){
+    derr_t e = E_OK;
+    return e;
+}
+
+static void fake_ssl_library_close(void){
+    return;
+}
+
 // intercept all calls
 ui_harness_t harness = {
     .dir_r_access_path = fake_dir_r_access_path,
@@ -218,29 +228,23 @@ ui_harness_t harness = {
     .file_rw_access_path = fake_file_rw_access_path,
     .exists_path = fake_exists_path,
     .for_each_file_in_dir = fake_for_each_file_in_dir,
+    .ssl_library_init = fake_ssl_library_init,
+    .ssl_library_close = fake_ssl_library_close,
 };
 
-// networking.h
-derr_t ssl_library_init(void){
-    derr_t e = E_OK;
-    return e;
-}
-
-void ssl_library_close(void){
-    return;
-}
-
 // api_client.h
+REGISTER_ERROR_TYPE(E_TOKEN, "TOKEN", "invalid api token");
+REGISTER_ERROR_TYPE(E_PASSWORD, "PASSWORD", "incorrect password");
+
 api_token_t* token_to_read;
-bool find_token;
 derr_t read_token_error = {0};
-derr_t api_token_read_path(const string_builder_t *sb, api_token_t *token){
+bool read_token_notok = false;
+derr_t api_token_read_increment_write_path(
+    const string_builder_t *sb, api_token_t *token, bool *ok
+){
     (void)sb;
     derr_t e = E_OK;
-    if(find_token == false){
-        // returning any error causes the credentials to be ignored
-        return (derr_t){.type = E_INTERNAL};
-    }
+    *ok = !read_token_notok;
     if(read_token_error.type != E_NONE){
         return read_token_error;
     }
@@ -248,27 +252,24 @@ derr_t api_token_read_path(const string_builder_t *sb, api_token_t *token){
         UH_OH("unexpected call to api_token_read\n");
         ORIG(&e, E_INTERNAL, "unexpected call to api_token_read");
     }
-    token->key = token_to_read->key;
-    DSTR_WRAP_ARRAY(token->secret, token->secret_buffer);
-    dstr_copy(&token_to_read->secret, &token->secret);
-    token->nonce = token_to_read->nonce;
+    *token = (api_token_t){
+        .key = token_to_read->key,
+        .secret = token_to_read->secret,
+        .nonce = token_to_read->nonce,
+    };
     return e;
 }
-// never write anything
-derr_t api_token_write_path(const string_builder_t *sb, api_token_t* token){
-    (void)sb;
-    (void)token;
-    derr_t e = E_OK;
-    return e;
+void api_token_free0(api_token_t *token){
+    *token = (api_token_t){0};
 }
 
 struct register_token_args_t* register_token_args;
 bool register_token_called;
-derr_t register_api_token(
-    const char* host,
-    unsigned int port,
-    const dstr_t* user,
-    const dstr_t* pass,
+derr_t register_api_token_sync(
+    http_sync_t *sync,
+    const dstr_t baseurl,
+    const dstr_t user,
+    const dstr_t pass,
     const char* creds_path
 ){
     derr_t e = E_OK;
@@ -276,26 +277,25 @@ derr_t register_api_token(
         UH_OH("register_api_token called but nothing is prepared\n");
         ORIG(&e, E_INTERNAL, "bad register_api_token");
     }
+    (void)sync;
     struct register_token_args_t* RTA = register_token_args;
-    if(RTA->host && strcmp(RTA->host, host) != 0)
-        UH_OH("RTA host exp '%x' but got '%x'\n", FS(RTA->host), FS(host));
-    if(RTA->port && RTA->port != port)
-        UH_OH("RTA port exp '%x' but got '%x'\n", FU(RTA->port), FU(port));
-    if(RTA->user && dstr_cmp(RTA->user, user) != 0)
-        UH_OH("RTA user exp '%x' but got '%x'\n", FD(*RTA->user), FD(*user));
-    if(RTA->pass && dstr_cmp(RTA->pass, pass) != 0)
-        UH_OH("RTA pass exp '%x' but got '%x'\n", FD(*RTA->pass), FD(*pass));
+    if(!dstr_eq(baseurl, dstr_from_cstr(RTA->baseurl)))
+        UH_OH("RTA baseurl exp '%x' but got '%x'\n", FS(RTA->baseurl), FD(baseurl));
+    if(!dstr_eq(user, dstr_from_cstr(RTA->user)))
+        UH_OH("RTA user exp '%x' but got '%x'\n", FS(RTA->user), FD(user));
+    if(!dstr_eq(pass, dstr_from_cstr(RTA->pass)))
+        UH_OH("RTA pass exp '%x' but got '%x'\n", FS(RTA->pass), FD(pass));
     if(RTA->creds_path && strcmp(RTA->creds_path, creds_path) != 0)
         UH_OH("RTA creds_path exp '%x' but got '%x'\n", FS(RTA->creds_path), FS(creds_path));
     register_token_called = true;
     return RTA->to_return;
 }
 
-derr_t register_api_token_path(
-    const char* host,
-    unsigned int port,
-    const dstr_t* user,
-    const dstr_t* pass,
+derr_t register_api_token_path_sync(
+    http_sync_t *sync,
+    const dstr_t baseurl,
+    const dstr_t user,
+    const dstr_t pass,
     const string_builder_t *sb
 ){
     derr_t e = E_OK;
@@ -304,97 +304,86 @@ derr_t register_api_token_path(
     dstr_t* path;
     PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
-    PROP_GO(&e, register_api_token(host, port, user, pass, path->data), cu);
+    PROP_GO(&e,
+        register_api_token_sync(sync, baseurl, user, pass, path->data),
+    cu);
 
 cu:
     dstr_free(&heap);
     return e;
-
 }
 
 struct api_password_args_t* api_password_args;
 bool api_password_called;
-derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
-                         dstr_t* arg, const dstr_t* username,
-                         const dstr_t* password, int* code, dstr_t* reason,
-                         dstr_t* recv, json_t *json){
+derr_t api_pass_sync(
+    http_sync_t *sync,
+    const dstr_t baseurl,
+    const dstr_t path,
+    const dstr_t arg,
+    const dstr_t user,
+    const dstr_t pass,
+    json_t *json
+){
     derr_t e = E_OK;
     if(api_password_args == NULL){
         UH_OH("api_password_call called but nothing is prepared\n");
         ORIG(&e, E_INTERNAL, "bad api_password_call");
     }
-    (void)recv;
+    (void)sync;
     struct api_password_args_t* APA = api_password_args;
-    if(APA->host && strcmp(APA->host, host) != 0)
-        UH_OH("APA host exp '%x' but got '%x'\n", FS(APA->host), FS(host));
-    if(APA->port && APA->port != port)
-        UH_OH("APA port exp '%x' but got '%x'\n", FU(APA->port), FU(port));
-    if(APA->command && dstr_cmp(APA->command, command) != 0)
-        UH_OH("APA command exp '%x' but got '%x'\n", FD(*APA->command), FD(*command));
-    if(APA->arg && dstr_cmp(APA->arg, arg) != 0){
-        UH_OH("APA arg exp '%x' but got '%x'\n", FD(*APA->arg), FD(*arg));
-    }else if(arg)
-        UH_OH("APA expected null arg but got '%x'\n", FD(*arg));
-    if(APA->user){
-        dstr_t duser;
-        DSTR_WRAP(duser, APA->user, strlen(APA->user), true);
-        if(dstr_cmp(&duser, username) != 0)
-            UH_OH("APA username exp '%x' but got '%x'\n", FS(APA->user), FD(*username));
-    }
-    if(APA->pass){
-        dstr_t dpass;
-        DSTR_WRAP(dpass, APA->pass, strlen(APA->pass), true);
-        if(dstr_cmp(&dpass, password) != 0)
-            UH_OH("APA password exp '%x' but got '%x'\n", FS(APA->pass), FD(*password));
-    }
-    // load up the inputs from the arg struct
-    *code = APA->code;
-    PROP(&e, FMT(reason, "%x", FS(APA->reason)) );
-    // wrap the json string in text and parse it
-    dstr_t text;
-    DSTR_WRAP(text, APA->json, strlen(APA->json), true);
+    if(!dstr_eq(baseurl, dstr_from_cstr(APA->baseurl)))
+        UH_OH("APA baseurl exp '%x' but got '%x'\n", FS(APA->baseurl), FD(baseurl));
+    if(APA->path && !dstr_eq(path, dstr_from_cstr(APA->path)))
+        UH_OH("APA command exp '%x' but got '%x'\n", FS(APA->path), FD(path));
+    char *exp_arg = APA->arg ? APA->arg : "";
+    if(!dstr_eq(arg, dstr_from_cstr(exp_arg)))
+        UH_OH("APA arg exp '%x' but got '%x'\n", FS(APA->arg), FD(arg));
+    if(!dstr_eq(user, dstr_from_cstr(APA->user)))
+        UH_OH("APA user exp '%x' but got '%x'\n", FS(APA->user), FD(user));
+    if(!dstr_eq(pass, dstr_from_cstr(APA->pass)))
+        UH_OH("APA pass exp '%x' but got '%x'\n", FS(APA->pass), FD(pass));
+    // return the specified response
+    dstr_t text = dstr_from_cstr(APA->json);
     PROP(&e, json_parse(text, json) );
     api_password_called = true;
-    return e;
+    return APA->to_return;
 }
 
 struct api_token_args_t* api_token_args;
 bool api_token_called;
-derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
-                      dstr_t* arg, api_token_t* token, int* code,
-                      dstr_t* reason, dstr_t* recv, json_t *json){
+derr_t api_token_sync(
+    http_sync_t *sync,
+    const dstr_t baseurl,
+    const dstr_t path,
+    const dstr_t arg,
+    api_token_t token,
+    json_t *json
+){
     derr_t e = E_OK;
     if(api_token_args == NULL){
         UH_OH("api_token_call called but nothing is prepared\n");
         ORIG(&e, E_INTERNAL, "bad api_token call");
     }
-    (void)recv;
+    (void)sync;
     struct api_token_args_t* ATA = api_token_args;
-    if(ATA->host && strcmp(ATA->host, host) != 0)
-        UH_OH("ATA host exp '%x' but got '%x'\n", FS(ATA->host), FS(host));
-    if(ATA->port && ATA->port != port)
-        UH_OH("ATA port exp '%x' but got '%x'\n", FU(ATA->port), FU(port));
-    if(ATA->command && dstr_cmp(ATA->command, command) != 0)
-        UH_OH("ATA command exp '%x' but got '%x'\n", FD(*ATA->command), FD(*command));
-    if(ATA->arg && dstr_cmp(ATA->arg, arg) != 0){
-        UH_OH("ATA arg exp '%x' but got '%x'\n", FD(*ATA->arg), FD(*arg));
-    }else if(arg)
-        UH_OH("ATA expected null arg but got '%x'\n", FD(*arg));
-    if(ATA->token.key != token->key)
-        UH_OH("ATA tkn->key exp '%x' but got '%x'\n", FU(ATA->token.key), FU(token->key));
-    if(dstr_cmp(&ATA->token.secret, &token->secret) != 0)
-        UH_OH("ATA tkn->secret exp '%x' but got '%x'\n", FD(ATA->token.secret), FD(token->secret));
-    if(ATA->token.nonce != token->nonce)
-        UH_OH("ATA tkn->nonce exp '%x' but got '%x'\n", FU(ATA->token.nonce), FU(token->nonce));
-    // load up the inputs from the arg struct
-    *code = ATA->code;
-    PROP(&e, FMT(reason, "%x", FS(ATA->reason)) );
-    // wrap the json string in text and parse it
-    dstr_t text;
-    DSTR_WRAP(text, ATA->json, strlen(ATA->json), true);
+    if(!dstr_eq(baseurl, dstr_from_cstr(ATA->baseurl)))
+        UH_OH("ATA baseurl exp '%x' but got '%x'\n", FS(ATA->baseurl), FD(baseurl));
+    if(ATA->path && !dstr_eq(path, dstr_from_cstr(ATA->path)))
+        UH_OH("ATA command exp '%x' but got '%x'\n", FS(ATA->path), FD(path));
+    char *exp_arg = ATA->arg ? ATA->arg : "";
+    if(!dstr_eq(arg, dstr_from_cstr(exp_arg)))
+        UH_OH("ATA arg exp '%x' but got '%x'\n", FS(ATA->arg), FD(arg));
+    if(ATA->token.key != token.key)
+        UH_OH("ATA tkn->key exp '%x' but got '%x'\n", FU(ATA->token.key), FU(token.key));
+    if(dstr_cmp(&ATA->token.secret, &token.secret) != 0)
+        UH_OH("ATA tkn->secret exp '%x' but got '%x'\n", FD(ATA->token.secret), FD(token.secret));
+    if(ATA->token.nonce != token.nonce)
+        UH_OH("ATA tkn->nonce exp '%x' but got '%x'\n", FU(ATA->token.nonce), FU(token.nonce));
+    // return the specified response
+    dstr_t text = dstr_from_cstr(ATA->json);
     PROP(&e, json_parse(text, json) );
     api_token_called = true;
-    return e;
+    return ATA->to_return;
 }
 
 

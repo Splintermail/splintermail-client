@@ -475,24 +475,28 @@ static derr_t api_command_main(
     const opt_spec_t o_user,
     int newargc,
     char **argv,
-    const char *rhost,
-    unsigned int api_port,
+    const dstr_t baseurl,
     int *retval
 ){
     dstr_t user = {0};
-    dstr_t argument_var = {0};
+    dstr_t apipath = {0};
     dstr_t password = {0};
     dstr_t new_password = {0};
     dstr_t confirm_password = {0};
     dstr_t recv = {0};
     json_t json = {0};
+    api_token_t token = {0};
 
     string_builder_t mem = {0};
     string_builder_t account_path = {0};
     string_builder_t user_path = {0};
     string_builder_t creds_path = {0};
 
+    http_sync_t sync = {0};
+
     derr_t e = E_OK;
+
+    PROP_GO(&e, http_sync_init(&sync, NULL), cu);
 
     // --account_dir option
     bool account_dir_access = false;
@@ -578,7 +582,6 @@ static derr_t api_command_main(
     }
 
     // try to load the user's api_token
-    api_token_t token = {0}; // MSVC wrongly complains about uninit'd variable
     bool creds_found = false;  // have good creds?
     if(user_dir_access){
         // complete the creds_path
@@ -590,26 +593,20 @@ static derr_t api_command_main(
             // check if we have RW access to it
             PROP_GO(&e, harness.file_rw_access_path(&creds_path, &ok), cu);
             if(ok){
-                /* no need to set can_register = true because we aren't
-                   auto-deleting (or overwriting) bad files here. */
-                // can_register = true;
-                // now see if we have a good token on file
-                derr_t e2 = api_token_read_path(&creds_path, &token);
-                CATCH(e2, E_PARAM, E_INTERNAL){
-                    DROP_VAR(&e2);
-                    // broken token, warn user
+                // read/increment/write token
+                PROP_GO(&e,
+                    api_token_read_increment_write_path(
+                        &creds_path, &token, &ok
+                    ),
+                cu);
+                if(!ok){
+                    // broken token file now deleted, tell user
                     FFMT_QUIET(stderr,
-                        "api token at \"%x\" appears invalid; ignoring it.\n",
+                        "deleted corrupted api token (%x), please retry\n",
                         FSB(creds_path)
                     );
-                }else CATCH(e2, E_ANY){
-                    DROP_VAR(&e2);
-                    // NOMEM is about the only plausible error we could get here
-                    FFMT_QUIET(stderr,
-                        "unexpected error reading api token at \"%x\"; "
-                        "disabling API token access.\n",
-                        FSB(creds_path)
-                    );
+                    *retval = 17;
+                    goto cu;
                 }else{
                     creds_found = true;
                 }
@@ -620,8 +617,6 @@ static derr_t api_command_main(
                     "API token access disabled\n",
                     FSB(creds_path)
                 );
-                /* no need to set can_register = false here, because it's
-                   impossible to arrive here with can_register == true */
             }
         }else{
             can_register = true;
@@ -629,15 +624,11 @@ static derr_t api_command_main(
     }
 
     // get the api command
-    dstr_t command;
-    DSTR_WRAP(command, argv[1], strlen(argv[1]), true);
+    dstr_t command = dstr_from_cstr(argv[1]);
     // get the argument if it exists
-    dstr_t* argument = NULL;
+    dstr_t apiarg = {0};
     if(newargc > 2){
-        dstr_t argv2;
-        DSTR_WRAP(argv2, argv[2], strlen(argv[2]), true);
-        PROP_GO(&e, json_encode(argv2, WD(&argument_var)), cu);
-        argument = &argument_var;
+        apiarg = dstr_from_cstr(argv[2]);
     }
 
     // list of commands requiring special handling
@@ -679,9 +670,7 @@ static derr_t api_command_main(
             goto cu;
         }
         // set the argument for the API call
-        argument_var.len = 0;
-        PROP_GO(&e, json_encode(new_password, WD(&argument_var)), cu);
-        argument = &argument_var;
+        apiarg = new_password;
     }else if(need_password){
         PROP_GO(&e,
             user_prompt("Splintermail.com Account Password:", &password, true),
@@ -696,12 +685,13 @@ static derr_t api_command_main(
         cu);
         if(do_reg){
             // do the registration
-            derr_t e2 = register_api_token_path(
-                rhost, api_port, &user, &password, &creds_path
+            derr_t e2 = register_api_token_path_sync(
+                &sync, baseurl, user, password, &creds_path
             );
             CATCH(e2, E_ANY){
-                DROP_VAR(&e2);
                 LOG_ERROR("failed to register API token with server\n");
+                LOG_DEBUG("%x", FD(e2.msg));
+                DROP_VAR(&e2);
                 *retval = 7;
                 goto cu;
             }
@@ -737,31 +727,29 @@ static derr_t api_command_main(
 
 
     // now we can actually do the API request
-    int code;
-    DSTR_VAR(reason, 1024);
     // allow overflow (fixedsize=false)
     JSON_PREP_PREALLOCATED(json, 4096, 256, false);
 
+    PROP_GO(&e, FMT(&apipath, "/api/%x", FD(command)), cu);
+
     if(need_password){
         PROP_GO(&e,
-            api_password_call(
-                rhost, api_port, &command, argument, &user, &password, &code,
-                &reason, &recv, &json
+            api_pass_sync(
+                &sync, baseurl, apipath, apiarg, user, password, &json
             ),
         cu);
     }else{
-        // update nonce
-        token.nonce++;
-        PROP_GO(&e, api_token_write_path(&creds_path, &token), cu);
-        PROP_GO(&e, api_token_call(rhost, api_port, &command, argument, &token,
-                                &code, &reason, &recv, &json), cu);
-        // check for rejection of API token
-        if(code == 401 || code == 403){
+        derr_t e2 = api_token_sync(
+            &sync, baseurl, apipath, apiarg, token, &json
+        );
+        CATCH(e2, E_TOKEN){
             FFMT_QUIET(stderr,
                 "API Token rejected, deleting token.  Run this "
                 "command again to generate a new token.\n"
             );
-            derr_t e2 = dunlink_path(&creds_path);
+            LOG_DEBUG("%x", FD(e2.msg));
+            DROP_VAR(&e2);
+            e2 = dunlink_path(&creds_path);
             CATCH(e2, E_ANY){
                 TRACE(&e2, "error removing token\n");
                 FFMT_QUIET(stderr,
@@ -771,16 +759,7 @@ static derr_t api_command_main(
             }
             *retval = 9;
             goto cu;
-        }
-    }
-
-
-    if(code < 200 || code > 299){
-        FFMT_QUIET(stderr,
-            "api request rejected: %x %x\n", FI(code), FD(reason)
-        );
-        *retval = 10;
-        goto cu;
+        }else PROP_VAR_GO(&e, &e2, cu);
     }
 
     dstr_t status;
@@ -821,12 +800,14 @@ static derr_t api_command_main(
 
 cu:
     dstr_free(&user);
-    dstr_free(&argument_var);
+    dstr_free(&apipath);
     dstr_free(&password);
     dstr_free(&new_password);
     dstr_free(&confirm_password);
     dstr_free(&recv);
     json_free(&json);
+    api_token_free0(&token);
+    http_sync_free(&sync);
     return e;
 }
 
@@ -981,7 +962,7 @@ int do_main(int argc, char* argv[], bool windows_service){
 #endif
 
     // setup the ssl library (application-wide step)
-    PROP_GO(&e, ssl_library_init(), fail);
+    PROP_GO(&e, harness.ssl_library_init(), fail);
 
     // set up the pre-parse, with fields not allowed in the config file
     opt_spec_t o_help       = {'h',  "help",       false};
@@ -1194,17 +1175,18 @@ int do_main(int argc, char* argv[], bool windows_service){
 
 #ifdef BUILD_DEBUG
     // debug options
-    DSTR_VAR(r_host_d, 256);
-    if(o_r_host.found){
-        PROP_GO(&e, FMT(&r_host_d, "%x", FD(o_r_host.val)), cu);
-    }else{
-        PROP_GO(&e, FMT(&r_host_d, "splintermail.com"), cu);
-    }
-    const char* rhost = r_host_d.data;
-
     unsigned int api_port = 443;
     if(o_r_api_port.found){
         PROP_GO(&e, dstr_tou(&o_r_api_port.val, &api_port, 10), cu);
+    }
+
+    DSTR_VAR(baseurl, 256);
+    if(o_r_host.found){
+        PROP_GO(&e,
+            FMT(&baseurl, "https://%x:%x", FD(o_r_host.val), FU(api_port)),
+        cu);
+    }else{
+        PROP_GO(&e, FMT(&baseurl, "https://splintermail.com"), cu);
     }
 
     unsigned int imap_port = 993;
@@ -1212,8 +1194,7 @@ int do_main(int argc, char* argv[], bool windows_service){
         PROP_GO(&e, dstr_tou(&o_r_imap_port.val, &imap_port, 10), cu);
     }
 #else
-    const char* rhost = "splintermail.com";
-    unsigned int api_port = 443;
+    DSTR_STATIC(baseurl, "https://splintermail.com");
     unsigned int imap_port = 993;
 #endif // BUILD_DEBUG
 
@@ -1339,24 +1320,23 @@ int do_main(int argc, char* argv[], bool windows_service){
 
     //////////////// now handle the api client options
 
-
     PROP_GO(&e,
         api_command_main(
-            o_account_dir, o_user, newargc, argv, rhost, api_port, &retval
+            o_account_dir, o_user, newargc, argv, baseurl, &retval
         ),
     cu);
 
     //////////////// now clean up
 
 cu:
-    ssl_library_close();
+    harness.ssl_library_close();
 fail:
 
-    // if we have an uncaught error return 127
+    // if we have an uncaught error return 125
     if(is_error(e)){
         DUMP(e);
         DROP_VAR(&e);
-        retval = 127;
+        retval = 125;
     }
 
     // free memory after DUMP, since logfile_path will be read during DUMP

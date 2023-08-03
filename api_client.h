@@ -2,50 +2,78 @@
 #define API_CLIENT_C
 
 #include "libdstr/libdstr.h"
+#include "libweb/libweb.h"
+#include "libhttp/libhttp.h"
 
-typedef struct{
+extern derr_type_t E_TOKEN;     // invalid token
+extern derr_type_t E_PASSWORD;  // invalid password
+
+typedef struct {
     unsigned int key;
-    char secret_buffer[256];
     dstr_t secret;
     unsigned long nonce;
 } api_token_t;
 
-/* it's called "init" not "new" because it allocates nothing, it just wraps
-   fixed-size char arrays in dstr_t's */
-void api_token_init(api_token_t* token);
+typedef void (*api_client_cb)(void *data, derr_t err, json_t *json);
 
-derr_t api_token_read(const char* path, api_token_t* token);
-/* throws: E_PARAM (bad file contents)
-           E_FS  (file does not exist or we have no access)
-           E_NOMEM (on fopen)
-           E_OS (reading the opened file)
-           E_INTERNAL */
+typedef struct {
+    duv_http_t *http;
+    schedulable_t schedulable;
+    dstr_t baseurl;
+    // state
+    json_t *json;
+    api_client_cb cb;
+    void *cb_data;
+    derr_t e;
+    http_pairs_t h1;
+    http_pairs_t h2;
+    dstr_t d1; // for h1
+    dstr_t d2; // for h2
+    bool using_password;
+    duv_http_req_t req;
+    stream_reader_t reader;
+    dstr_t url;
+    dstr_t reqbody;
+    dstr_t respbody;
+} api_client_t;
 
-derr_t api_token_read_path(const string_builder_t *sb, api_token_t* token);
+// zeroizes and frees secret
+void api_token_free0(api_token_t *token);
 
-derr_t api_token_write(const char* path, api_token_t* token);
-/* throws: E_NOMEM (on fopen)
-           E_FS
-           E_OS (writing the opened file)
-           E_INTERNAL */
+// note that api_token should be zeroized or freed before calling this
+derr_t api_token_read(const char *path, api_token_t *token);
+derr_t api_token_read_path(const string_builder_t *sb, api_token_t *token);
 
-derr_t api_token_write_path(const string_builder_t *sb, api_token_t* token);
+derr_t api_token_write(api_token_t token, const char *path);
+derr_t api_token_write_path(api_token_t token, const string_builder_t *sb);
 
-derr_t register_api_token(
-    const char* host,
-    unsigned int port,
-    const dstr_t* user,
-    const dstr_t* pass,
-    const char* creds_path
+/* helper to consistently solving tricky error handling:
+   - read api token.  If it's unreadable, delete it and return ok=false.
+     If it fails for other reasons, just raise that error.
+   - increment nonce
+   - write api token back to file.  If it fails, throw an error but leave the
+     file alone.
+
+   Note that api_token should be zeroized or freed before calling this. */
+derr_t api_token_read_increment_write(
+    const char *path, api_token_t *token, bool *ok
+);
+derr_t api_token_read_increment_write_path(
+    const string_builder_t *sb, api_token_t *token, bool *ok
 );
 
-derr_t register_api_token_path(
-    const char* host,
-    unsigned int port,
-    const dstr_t* user,
-    const dstr_t* pass,
-    const string_builder_t *sb
-);
+/* JAPI is used like JOBJ, but it auto-dereferences the outer layer of json:
+   {"status": "...", "content": ...} */
+// (also JAPI hard-codes allow_extras=true
+derr_t jspec_api_read(jspec_t *jspec, jctx_t *ctx);
+#define JAPI(...) \
+    &((jspec_object_t){ \
+        .jspec = { .read = jspec_api_read }, \
+        .keys = &(_jkey_t[]){(_jkey_t){0}, __VA_ARGS__}[1], \
+        .nkeys = sizeof((_jkey_t[]){(_jkey_t){0}, __VA_ARGS__}) \
+                    / sizeof(_jkey_t) - 1, \
+        .allow_extras = true, \
+    }.jspec)
 
 
 derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
@@ -73,5 +101,75 @@ derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
            E_CONN (failed or broken connection with host)
            E_SSL (server SSL certificate invalid)
            E_RESPONSE (bad response from server) */
+
+// copies baseurl
+derr_t api_client_init(
+    api_client_t *apic, duv_http_t *http, const dstr_t baseurl
+);
+// must have no request in flight
+void api_client_free(api_client_t *apic);
+
+// always succeeds; returns true if an err=E_CANCELED will be coming
+bool api_client_cancel(api_client_t *apic);
+
+// password-authenticated, event-based API call
+void apic_pass(
+    api_client_t *apic,
+    dstr_t path,
+    dstr_t arg,
+    dstr_t user,
+    dstr_t pass,
+    json_t *json,
+    api_client_cb cb,
+    void *cb_data
+);
+
+// token-authenticated, event-based API call
+void apic_token(
+    api_client_t *apic,
+    dstr_t path,
+    dstr_t arg,
+    api_token_t token,
+    json_t *json,
+    api_client_cb cb,
+    void *cb_data
+);
+
+// password-authenticated, synchronous API call
+derr_t api_pass_sync(
+    http_sync_t *sync,
+    const dstr_t baseurl,
+    const dstr_t path,
+    const dstr_t arg,
+    const dstr_t user,
+    const dstr_t pass,
+    json_t *json
+);
+
+// token-authenticated, synchronous API call
+derr_t api_token_sync(
+    http_sync_t *sync,
+    const dstr_t baseurl,
+    const dstr_t path,
+    const dstr_t arg,
+    api_token_t token,
+    json_t *json
+);
+
+derr_t register_api_token_sync(
+    http_sync_t *sync,
+    const dstr_t baseurl,
+    const dstr_t user,
+    const dstr_t pass,
+    const char* creds_path
+);
+
+derr_t register_api_token_path_sync(
+    http_sync_t *sync,
+    const dstr_t baseurl,
+    const dstr_t user,
+    const dstr_t pass,
+    const string_builder_t *sb
+);
 
 #endif // API_CLIENT_C

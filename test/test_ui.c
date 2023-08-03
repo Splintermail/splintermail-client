@@ -66,8 +66,8 @@ struct test_case_t {
     bool call_citm_loop;
     citm_args_t citm_args;
     char** users;
-    bool find_token;
     derr_t read_token_error;
+    bool read_token_notok;
     api_token_t token_to_read;
     bool call_register_token;
     struct register_token_args_t register_token_args;
@@ -98,8 +98,8 @@ static derr_t run_test_case(struct test_case_t test){
     register_token_args = &test.register_token_args;
     api_password_args = &test.api_password_args;
     api_token_args = &test.api_token_args;
-    find_token = test.find_token;
     read_token_error = test.read_token_error;
+    read_token_notok = test.read_token_notok;
     token_to_read = &test.token_to_read;
     users = test.users;
     creatables = test.creatables;
@@ -293,7 +293,7 @@ static derr_t run_all_cases(void){
 
     // test CITM args
     {
-        struct test_case_t test_case = {
+        struct test_case_t test_case, base_case = {
             .call_citm_loop = true,
             .citm_args = {
                 .nlspecs = 1,
@@ -307,18 +307,19 @@ static derr_t run_all_cases(void){
             },
         };
 
+        test_case = base_case;
         test_case.test_name = "citm basic test";
         test_case.argv = (char*[]){SM, "citm", NULL};
         PROP(&e, run_test_case(test_case) );
 
+        test_case = base_case;
         test_case.test_name = "citm uncaught error";
-        test_case.expect_return = 127;
+        test_case.expect_return = 125;
         test_case.citm_args.to_return = (derr_t){.type=E_INTERNAL};
         test_case.argv = (char*[]){SM, "citm", NULL};
         PROP(&e, run_test_case(test_case) );
-        test_case.expect_return = 0;
-        test_case.citm_args.to_return = E_OK;
 
+        test_case = base_case;
         test_case.test_name = "citm one listener";
         test_case.citm_args.lspecs[0] = "insecure://yo:5";
         test_case.citm_args.key = NULL;
@@ -327,9 +328,8 @@ static derr_t run_all_cases(void){
             SM, "citm", "--listen", "insecure://yo:5", NULL
         };
         PROP(&e, run_test_case(test_case) );
-        test_case.citm_args.key = "splintermail/citm-127.0.0.1-key.pem";
-        test_case.citm_args.cert = "splintermail/citm-127.0.0.1-cert.pem";
 
+        test_case = base_case;
         test_case.test_name = "citm multiple listeners";
         test_case.citm_args.lspecs[0] = "tls://yo:5";
         test_case.citm_args.lspecs[1] = "starttls://yoyo:6";
@@ -344,9 +344,8 @@ static derr_t run_all_cases(void){
             NULL
         };
         PROP(&e, run_test_case(test_case) );
-        test_case.citm_args.lspecs[0] = "tls://127.0.0.1:1993";
-        test_case.citm_args.nlspecs = 1;
 
+        test_case = base_case;
         test_case.test_name = "citm splintermail-dir";
         test_case.citm_args.key = "some_dir/citm-127.0.0.1-key.pem";
         test_case.citm_args.cert = "some_dir/citm-127.0.0.1-cert.pem";
@@ -355,21 +354,18 @@ static derr_t run_all_cases(void){
             SM, "citm", "--splintermail-dir", "some_dir", NULL
         };
         PROP(&e, run_test_case(test_case) );
-        test_case.citm_args.maildir_root = "";
-        test_case.citm_args.key = "splintermail/citm-127.0.0.1-key.pem";
-        test_case.citm_args.cert = "splintermail/citm-127.0.0.1-cert.pem";
 
+        test_case = base_case;
         test_case.test_name = "citm cert";
         test_case.citm_args.cert = "some_file";
         test_case.argv = (char*[]){SM, "citm", "--cert", "some_file", NULL};
         PROP(&e, run_test_case(test_case) );
-        test_case.citm_args.cert = "splintermail/citm-127.0.0.1-cert.pem";
 
+        test_case = base_case;
         test_case.test_name = "citm key";
         test_case.citm_args.key = "some_file";
         test_case.argv = (char*[]){SM, "citm", "--key", "some_file", NULL};
         PROP(&e, run_test_case(test_case) );
-        test_case.citm_args.key = "splintermail/citm-127.0.0.1-key.pem";
     }
 
 /*
@@ -379,8 +375,9 @@ static derr_t run_all_cases(void){
             creds found             -
                 with access
                     good creds      no      yes             B
-                    err creds       no      no              C
-                no access           no      no              D (same as C)
+                    bad creds       no      no              C (delete creds and exit)
+                    err creds       no      no              F (just exit)
+                no access           no      no              D
             creds not found         yes     no              E
 
     * there is no good way with the fake filesystem setup I have to test
@@ -403,20 +400,16 @@ static derr_t run_all_cases(void){
     // These all fall under Case "B"
     {
         // define our token
-        struct test_case_t test_case = {
+        struct test_case_t test_case, base_case = {
             .call_api_token = true,
-            .find_token = true,
             .token_to_read = {.key = 12345,
                               .secret = DSTR_LIT("ABCDEF"),
                               .nonce = 0},
             .api_token_args = (struct api_token_args_t){
-                .host = "splintermail.com",
-                .port = 443,
+                .baseurl = "https://splintermail.com",
                 .token = {.key = 12345,
                           .secret = DSTR_LIT("ABCDEF"),
-                          .nonce = 1},
-                .code = 200,
-                .reason = "OK",
+                          .nonce = 0},
                 .json = "{\"status\":\"success\", \"contents\":\"ok\"}",
                 .to_return = E_OK,
             },
@@ -424,21 +417,24 @@ static derr_t run_all_cases(void){
             .expect_out = "\"ok\"\n",
         };
 
+        test_case = base_case;
         test_case.test_name = "basic token test";
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
         PROP(&e, run_test_case(test_case) );
 
+        test_case = base_case;
         test_case.test_name = "delete useless token test";
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
-        test_case.api_token_args.code = 403;
+        test_case.api_token_args.to_return = (derr_t){E_TOKEN};
         test_case.expect_return = 9;
         test_case.expect_out = NULL;
         PROP(&e, run_test_case(test_case) );
 
+        test_case = base_case;
         test_case.test_name = "misc failure test";
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
-        test_case.api_token_args.code = 500;
-        test_case.expect_return = 10;
+        test_case.api_token_args.to_return = (derr_t){E_RESPONSE};
+        test_case.expect_return = 125;
         test_case.expect_out = NULL;
         PROP(&e, run_test_case(test_case) );
     }
@@ -446,18 +442,14 @@ static derr_t run_all_cases(void){
     // test API COMMAND args, api_password_call(), no register
     {
         // define our token
-        struct test_case_t test_case = {
-            .call_api_password = true,
+        struct test_case_t test_case, base_case = {
             .token_to_read = {.key = 12345,
                               .secret = DSTR_LIT("ABCDEF"),
                               .nonce = 0},
             .api_password_args = (struct api_password_args_t){
-                .host = "splintermail.com",
-                .port = 443,
+                .baseurl = "https://splintermail.com",
                 .user = "user@fqdn",
                 .pass = "pass",
-                .code = 200,
-                .reason = "OK",
                 .json = "{\"status\":\"success\", \"contents\":\"ok\"}",
                 .to_return = E_OK,
             },
@@ -465,34 +457,50 @@ static derr_t run_all_cases(void){
         };
 
         // case "A"
+        test_case = base_case;
         test_case.test_name = "bad permissions access_dir";
+        test_case.call_api_password = true;
         test_case.users = NULL;
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "-a", "fake_file", "--user", "user@fqdn", "list_aliases", NULL};
         PROP(&e, run_test_case(test_case) );
 
         // case "A", different variety
+        test_case = base_case;
         test_case.test_name = "bad permissions user_dir";
+        test_case.call_api_password = true;
         test_case.users = (char*[]){"no.perms.user@fqdn", NULL};
         test_case.api_password_args.user = "no.perms.user@fqdn";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
         PROP(&e, run_test_case(test_case) );
 
-        // case "C" -> noreg ("W")
+        // case "C"
+        test_case = base_case;
         test_case.test_name = "bad creds";
         test_case.users = (char*[]){"user@fqdn", NULL};
-        test_case.api_password_args.user = "user@fqdn";
-        test_case.find_token = true;
+        test_case.read_token_notok = true;
+        test_case.api_password_args.user = NULL;
+        test_case.argv = (char*[]){SM, "list_aliases", NULL};
+        test_case.expect_return = 17;
+        test_case.expect_out = NULL;
+        PROP(&e, run_test_case(test_case) );
+
+        // case "F"
+        test_case = base_case;
+        test_case.test_name = "err creds";
+        test_case.users = (char*[]){"user@fqdn", NULL};
         test_case.read_token_error = (derr_t){E_PARAM};
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
+        test_case.expect_return = 125;
+        test_case.expect_out = NULL;
         PROP(&e, run_test_case(test_case) );
-        test_case.find_token = false;
-        test_case.read_token_error = E_OK;
 
         // case "D"
+        test_case = base_case;
         test_case.test_name = "no access to creds";
+        test_case.call_api_password = true;
         test_case.users = (char*[]){"no.creds.access.user@fqdn", NULL};
         test_case.api_password_args.user = "no.creds.access.user@fqdn";
         test_case.passwords = (char*[]){"pass", NULL};
@@ -500,17 +508,20 @@ static derr_t run_all_cases(void){
         PROP(&e, run_test_case(test_case) );
 
         // case "E" -> noreg ("W")
+        test_case = base_case;
         test_case.test_name = "no creds yet, noreg found";
+        test_case.call_api_password = true;
         test_case.creatables = (char*[]){"noreg.user@fqdn/api_token.json", NULL};
         test_case.users = (char*[]){"noreg.user@fqdn", NULL};
         test_case.api_password_args.user = "noreg.user@fqdn";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
         PROP(&e, run_test_case(test_case) );
-        test_case.creatables = NULL;
 
         // case "X" (via "E", "Z")
+        test_case = base_case;
         test_case.test_name = "i-dont-wanna register";
+        test_case.call_api_password = true;
         test_case.creatables = (char*[]){"regme.user@fqdn/api_token.json",
                                          "regme.user@fqdn/noregister",
                                          NULL};
@@ -520,7 +531,6 @@ static derr_t run_all_cases(void){
         test_case.strings = (char*[]){"q", "r", "s", "n", NULL};
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
         PROP(&e, run_test_case(test_case) );
-        test_case.creatables = NULL;
 
     }
 
@@ -537,21 +547,17 @@ static derr_t run_all_cases(void){
             .strings = (char*[]){"y", NULL},
             .call_api_password = true,
             .api_password_args = (struct api_password_args_t){
-                .host = "splintermail.com",
-                .port = 443,
+                .baseurl = "https://splintermail.com",
                 .user = "regme.user@fqdn",
                 .pass = "pass",
-                .code = 200,
-                .reason = "OK",
                 .json = "{\"status\":\"success\", \"contents\":\"ok\"}",
                 .to_return = E_OK,
             },
             .call_register_token = true,
             .register_token_args = (struct register_token_args_t){
-                .host = "splintermail.com",
-                .port = 443,
-                .user = NULL,
-                .pass = NULL,
+                .baseurl = "https://splintermail.com",
+                .user = "regme.user@fqdn",
+                .pass = "pass",
                 .creds_path = NULL,
                 .to_return = E_OK,
             },
@@ -564,8 +570,7 @@ static derr_t run_all_cases(void){
     // Situations where we even if we have a token (Case "B") we need_password
     {
         // define our token
-        struct test_case_t test_case = {
-            .find_token = true,
+        struct test_case_t test_case, base_case = {
             .token_to_read = {.key = 12345,
                               .secret = DSTR_LIT("ABCDEF"),
                               .nonce = 0},
@@ -573,12 +578,9 @@ static derr_t run_all_cases(void){
             .call_api_password = true,
             // don't care about the args, those are tested elsewhere
             .api_password_args = (struct api_password_args_t){
-                .host = "splintermail.com",
-                .port = 443,
+                .baseurl = "https://splintermail.com",
                 .user = "user@fqdn",
                 .pass = "pass",
-                .code = 200,
-                .reason = "OK",
                 .json = "{\"status\":\"success\", \"contents\":\"ok\"}",
                 .to_return = E_OK,
             },
@@ -586,34 +588,40 @@ static derr_t run_all_cases(void){
             .expect_out = "\"ok\"\n",
         };
 
+        test_case = base_case;
         test_case.test_name = "add device test";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "add_device", NULL};
         PROP(&e, run_test_case(test_case) );
 
+        test_case = base_case;
         test_case.test_name = "add token test";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "add_token", NULL};
         PROP(&e, run_test_case(test_case) );
 
+        test_case = base_case;
         test_case.test_name = "delete all mail test";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.strings = (char*[]){"I really want to do this", NULL};
         test_case.argv = (char*[]){SM, "delete_all_mail", NULL};
         PROP(&e, run_test_case(test_case) );
 
+        test_case = base_case;
         test_case.test_name = "delete all aliases test";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.strings = (char*[]){"I really want to do this", NULL};
         test_case.argv = (char*[]){SM, "delete_all_aliases", NULL};
         PROP(&e, run_test_case(test_case) );
 
+        test_case = base_case;
         test_case.test_name = "delete account test";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.strings = (char*[]){"I really want to do this", NULL};
         test_case.argv = (char*[]){SM, "delete_account", NULL};
         PROP(&e, run_test_case(test_case) );
 
+        test_case = base_case;
         test_case.test_name = "failed confirmation test";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.strings = (char*[]){"i really want to do this", NULL};
