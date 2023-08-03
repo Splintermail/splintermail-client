@@ -163,11 +163,6 @@ derr_type_t _fmt_unlocked(
         etype = arg->fmt(arg, iface);
         if(etype) return etype;
     }
-    // always null terminate
-    if(w.null_terminate){
-        etype = w.null_terminate(iface);
-        if(etype) return etype;
-    }
 
     return E_NONE;
 }
@@ -185,6 +180,12 @@ derr_type_t _fmt_quiet(
     }
 
     etype = _fmt_unlocked(iface, fstr, args, nargs);
+
+    // always null terminate
+    if(w.null_terminate){
+        derr_type_t etype2 = w.null_terminate(iface);
+        if(!etype) etype = etype2;
+    }
 
     if(w.unlock){
         derr_type_t etype2 = w.unlock(iface);

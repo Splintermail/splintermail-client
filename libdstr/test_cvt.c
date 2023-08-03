@@ -3,7 +3,6 @@
 #include "test/test_utils.h"
 
 
-
 static derr_t test_dstr_to(void){
     derr_t e = E_OK;
 

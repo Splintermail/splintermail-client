@@ -271,7 +271,7 @@ derr_type_t jdump_quiet(jdump_i *j, writer_i *out, int indent){
     }
     derr_type_t etype2 = E_NONE;
     if(w.unlock){
-        etype2 = w.lock(out);
+        etype2 = w.unlock(out);
     }
     return etype ? etype : etype2;
 }

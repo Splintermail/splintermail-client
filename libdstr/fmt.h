@@ -52,7 +52,7 @@ derr_t _fmt(
     writer_i *iface, const char *fstr, const fmt_i **args, size_t nargs
 );
 
-/* since WFMT_UNLOCKED is mostly useful to implement other fmt_i's, it takes
+/* since FMT_UNLOCKED is mostly useful to implement other fmt_i's, it takes
    a bare writer_i* */
 #define FMT_UNLOCKED(out, fstr, ...) \
     _fmt_unlocked(out, \
@@ -84,6 +84,20 @@ derr_t _fmt(
 
 #define FFMT_QUIET(out, fstr, ...) \
     _fmt_quiet(WF(out), \
+        fstr, \
+        &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i*) - 1 \
+    )
+
+#define WFMT(out, fstr, ...) \
+    _fmt(out, \
+        fstr, \
+        &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
+        sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i*) - 1 \
+    )
+
+#define WFMT_QUIET(out, fstr, ...) \
+    _fmt_quiet(out, \
         fstr, \
         &(const fmt_i*[]){NULL, __VA_ARGS__}[1], \
         sizeof((const fmt_i*[]){NULL, __VA_ARGS__})/sizeof(fmt_i*) - 1 \

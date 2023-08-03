@@ -963,16 +963,35 @@ static derr_type_t _writer_json_putc(writer_i *iface, char c){
 
 static derr_type_t _writer_json_lock(writer_i *iface){
     _writer_json_t *uw = CONTAINER_OF(iface, _writer_json_t, iface);
+    writer_i *out = uw->out;
+    // passthru
+    if(out->w->lock){
+        derr_type_t etype = out->w->lock(out);
+        if(etype) return etype;
+    }
     // opening quote
-    return uw->out->w->putc(uw->out, '"');
+    return out->w->putc(out, '"');
 }
 
 static derr_type_t _writer_json_unlock(writer_i *iface){
     _writer_json_t *uw = CONTAINER_OF(iface, _writer_json_t, iface);
+    writer_i *out = uw->out;
     // check for incomplete utf8 sequences
     if(uw->tail) return E_PARAM;
     // closing quote
-    return uw->out->w->putc(uw->out, '"');
+    derr_type_t etype = out->w->putc(out, '"');
+    if(etype) return etype;
+    // passthru
+    if(!out->w->unlock) return E_NONE;
+    return out->w->unlock(out);
+}
+
+static derr_type_t _writer_json_null_terminate(writer_i *iface){
+    _writer_json_t *uw = CONTAINER_OF(iface, _writer_json_t, iface);
+    writer_i *out = uw->out;
+    // passthru
+    if(!out->w->null_terminate) return E_NONE;
+    return out->w->null_terminate(out);
 }
 
 writer_t _writer_json = {
@@ -980,6 +999,7 @@ writer_t _writer_json = {
     .putc = _writer_json_putc,
     .lock = _writer_json_lock,
     .unlock = _writer_json_unlock,
+    .null_terminate = _writer_json_null_terminate,
 };
 
 derr_t json_walk(

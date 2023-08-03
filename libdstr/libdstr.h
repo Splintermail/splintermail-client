@@ -12,6 +12,7 @@
 #include "cvt.h"
 #include "fmt.h"
 #include "sb.h"
+#include "b64.h"
 
 #include "win_compat.h"
 
