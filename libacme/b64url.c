@@ -1,179 +1,80 @@
 #include "libacme/libacme.h"
 
-static char b64ify(unsigned char u){
-    switch(u){
-        case  0: return 'A';
-        case  1: return 'B';
-        case  2: return 'C';
-        case  3: return 'D';
-        case  4: return 'E';
-        case  5: return 'F';
-        case  6: return 'G';
-        case  7: return 'H';
-        case  8: return 'I';
-        case  9: return 'J';
-        case 10: return 'K';
-        case 11: return 'L';
-        case 12: return 'M';
-        case 13: return 'N';
-        case 14: return 'O';
-        case 15: return 'P';
-        case 16: return 'Q';
-        case 17: return 'R';
-        case 18: return 'S';
-        case 19: return 'T';
-        case 20: return 'U';
-        case 21: return 'V';
-        case 22: return 'W';
-        case 23: return 'X';
-        case 24: return 'Y';
-        case 25: return 'Z';
-        case 26: return 'a';
-        case 27: return 'b';
-        case 28: return 'c';
-        case 29: return 'd';
-        case 30: return 'e';
-        case 31: return 'f';
-        case 32: return 'g';
-        case 33: return 'h';
-        case 34: return 'i';
-        case 35: return 'j';
-        case 36: return 'k';
-        case 37: return 'l';
-        case 38: return 'm';
-        case 39: return 'n';
-        case 40: return 'o';
-        case 41: return 'p';
-        case 42: return 'q';
-        case 43: return 'r';
-        case 44: return 's';
-        case 45: return 't';
-        case 46: return 'u';
-        case 47: return 'v';
-        case 48: return 'w';
-        case 49: return 'x';
-        case 50: return 'y';
-        case 51: return 'z';
-        case 52: return '0';
-        case 53: return '1';
-        case 54: return '2';
-        case 55: return '3';
-        case 56: return '4';
-        case 57: return '5';
-        case 58: return '6';
-        case 59: return '7';
-        case 60: return '8';
-        case 61: return '9';
-        case 62: return '-';
-        default: return '_';
-    }
-}
+static const char b64urllut[64] = {
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '_',
+};
 
-static unsigned char unb64ify(char c){
-    switch(c){
-        case 'A': return  0;
-        case 'B': return  1;
-        case 'C': return  2;
-        case 'D': return  3;
-        case 'E': return  4;
-        case 'F': return  5;
-        case 'G': return  6;
-        case 'H': return  7;
-        case 'I': return  8;
-        case 'J': return  9;
-        case 'K': return 10;
-        case 'L': return 11;
-        case 'M': return 12;
-        case 'N': return 13;
-        case 'O': return 14;
-        case 'P': return 15;
-        case 'Q': return 16;
-        case 'R': return 17;
-        case 'S': return 18;
-        case 'T': return 19;
-        case 'U': return 20;
-        case 'V': return 21;
-        case 'W': return 22;
-        case 'X': return 23;
-        case 'Y': return 24;
-        case 'Z': return 25;
-        case 'a': return 26;
-        case 'b': return 27;
-        case 'c': return 28;
-        case 'd': return 29;
-        case 'e': return 30;
-        case 'f': return 31;
-        case 'g': return 32;
-        case 'h': return 33;
-        case 'i': return 34;
-        case 'j': return 35;
-        case 'k': return 36;
-        case 'l': return 37;
-        case 'm': return 38;
-        case 'n': return 39;
-        case 'o': return 40;
-        case 'p': return 41;
-        case 'q': return 42;
-        case 'r': return 43;
-        case 's': return 44;
-        case 't': return 45;
-        case 'u': return 46;
-        case 'v': return 47;
-        case 'w': return 48;
-        case 'x': return 49;
-        case 'y': return 50;
-        case 'z': return 51;
-        case '0': return 52;
-        case '1': return 53;
-        case '2': return 54;
-        case '3': return 55;
-        case '4': return 56;
-        case '5': return 57;
-        case '6': return 58;
-        case '7': return 59;
-        case '8': return 60;
-        case '9': return 61;
-        case '-': return 62;
-        case '_': return 63;
-        default : return 255;
-    }
-}
+static unsigned char unb64urllut[256] = {
+    // 0 - 44
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    62, // 45: '-'
+    255, 255, // 46, 47
+    // 48 - 57: '0' - '9'
+    52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
+    // 58 - 64
+    255, 255, 255, 255, 255, 255, 255,
+    // 65 - 90: 'A' - 'Z'
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+    14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    // 91 - 94
+    255, 255, 255, 255,
+    63, // 95 '_'
+    255, // 96
+    // 97 - 122: 'a' - 'z'
+    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
+    39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+    // 123 - 256
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+};
 
 static derr_type_t do_bin2b64url(const dstr_t bin, writer_i *out){
     derr_type_t etype = E_NONE;
 
     writer_t w = *out->w;
 
-    // track which position we're looking at
     unsigned char u = 0;
     for(size_t i = 0; i < bin.len; i++){
         unsigned char c = ((unsigned char*)bin.data)[i];
         switch(i%3){
             case 0:
                 u = (unsigned char)((c >> 2) & 0x3f);
-                etype = w.putc(out, b64ify(u));
+                etype = w.putc(out, b64urllut[u]);
                 if(etype) return etype;
                 u = (unsigned char)((c & 0x03) << 4);
                 break;
             case 1:
                 u |= (unsigned char)((c >> 4) & 0x0f);
-                etype = w.putc(out, b64ify(u));
+                etype = w.putc(out, b64urllut[u]);
                 if(etype) return etype;
                 u = (unsigned char)((c & 0x0f) << 2);
                 break;
             case 2:
                 u |= (c >> 6) & 0x03;
-                etype = w.putc(out, b64ify(u));
+                etype = w.putc(out, b64urllut[u]);
                 if(etype) return etype;
                 u = c & 0x3f;
-                etype = w.putc(out, b64ify(u));
+                etype = w.putc(out, b64urllut[u]);
                 if(etype) return etype;
                 u = 0;
                 break;
         }
     }
     if(bin.len%3 != 0){
-        etype = w.putc(out, b64ify(u));
+        etype = w.putc(out, b64urllut[u]);
         if(etype) return etype;
     }
 
@@ -227,10 +128,10 @@ derr_type_t b64url2bin_quiet(const dstr_t b64, dstr_t *bin){
 
     // track which position we're looking at
     unsigned char l = 0; // "l"eftovers
+    unsigned char *udata = (unsigned char*)b64.data;
     char *view = (char*)&l;
     for(size_t i = 0; i < b64.len; i++){
-        char c = b64.data[i];
-        unsigned char u = unb64ify(c);
+        unsigned char u = unb64urllut[udata[i]];
         if(u == 255) return E_PARAM;
         switch(i%4){
             case 0:
