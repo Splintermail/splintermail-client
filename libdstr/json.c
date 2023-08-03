@@ -765,10 +765,14 @@ void json_prep_preallocated(
 }
 
 void json_free(json_t *json){
-    // remove anything preallocated first
-    link_remove(&json->preallocated_text.link);
-    link_remove(&json->preallocated_nodes.link);
-    // free anything else
+    // were preallocated blocks used?
+    bool was_preallocated = json->preallocated_text.link.next;
+    // remove any preallocated blocks
+    if(was_preallocated){
+        link_remove(&json->preallocated_text.link);
+        link_remove(&json->preallocated_nodes.link);
+    }
+    // free allocated else
     link_t *link;
     while((link = link_list_pop_first(&json->text_blocks))){
         json_text_block_t *block = CONTAINER_OF(link, json_text_block_t, link);
@@ -778,7 +782,19 @@ void json_free(json_t *json){
         json_node_block_t *block = CONTAINER_OF(link, json_node_block_t, link);
         json_node_block_free(&block);
     }
-    json->root = (json_ptr_t){0};
+    // reinitialize
+    json->root = (json_ptr_t){ .error = true };
+    if(was_preallocated){
+        json_prep_preallocated(
+            json,
+            json->preallocated_text.text,
+            json->preallocated_nodes.nodes,
+            json->preallocated_nodes.cap,
+            json->fixedsize
+        );
+    }else{
+        json_prep(json);
+    }
 }
 
 json_parser_t json_parser(json_t *json){
