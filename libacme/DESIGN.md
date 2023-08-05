@@ -105,7 +105,7 @@ update, that would average less than 12 long-polling connections at a time.
 
 ## ACME Step-by-step
 
-0. if certificate exists and doesn't need updating, sleep until it does.
+0. if certificate exists and doesn't need updating, got to step 15.
 
 1. if an account is is on file, load it and skip to 4.
 
@@ -140,4 +140,6 @@ update, that would average less than 12 long-polling connections at a time.
 
 15. delete challenge with rest api
 
-16. return to step 0.
+16. wait for certificate to need updating.
+
+17. return to step 0.
