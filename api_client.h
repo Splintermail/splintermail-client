@@ -14,6 +14,12 @@ typedef struct {
     uint64_t nonce;
 } api_token_t;
 
+typedef struct {
+    api_token_t token;
+    dstr_t subdomain;
+    dstr_t email;
+} installation_t;
+
 typedef void (*api_client_cb)(void *data, derr_t err, json_t *json);
 
 typedef struct {
@@ -54,12 +60,32 @@ derr_t api_token_write_path(api_token_t token, const string_builder_t *sb);
    - write api token back to file.  If it fails, throw an error but leave the
      file alone.
 
-   Note that api_token should be zeroized or freed before calling this. */
+   Note that token must be zeroized or freed before calling this. */
 derr_t api_token_read_increment_write(
     const char *path, api_token_t *token, bool *ok
 );
 derr_t api_token_read_increment_write_path(
     const string_builder_t *sb, api_token_t *token, bool *ok
+);
+
+// similar, but for just the nonce
+// if the file doesn't exist, that is considered equivalent to a nonce of 0
+// (*nonce is just an output parameter, its original value is ignored)
+derr_t nonce_read_increment_write(const char *path, uint64_t *nonce);
+derr_t nonce_read_increment_write_path(string_builder_t *sb, uint64_t *nonce);
+
+// zeroizes and frees secret
+void installation_free0(installation_t *inst);
+
+// note that inst must be zeroized or freed before calling this
+derr_t installation_read(const char *path, installation_t *inst);
+derr_t installation_read_path(
+    const string_builder_t *sb, installation_t *inst
+);
+
+derr_t installation_write(installation_t token, const char *path);
+derr_t installation_write_path(
+    installation_t inst, const string_builder_t *sb
 );
 
 typedef struct {

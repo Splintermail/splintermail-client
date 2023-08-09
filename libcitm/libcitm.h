@@ -5,6 +5,8 @@
 #include "libduvtls/libduvtls.h"
 #include "libimap/libimap.h"
 #include "libimaildir/libimaildir.h"
+#include "libacme/libacme.h"
+#include "api_client.h"
 
 #include "libcitm/citm.h"
 #include "libcitm/imap.h"
@@ -18,4 +20,7 @@
 #include "libcitm/user.h"
 #include "libcitm/sc.h"
 #include "libcitm/fpr_watcher.h"
+#include "libcitm/stub.h"
+#include "libcitm/acme_manager.h"
+#include "libcitm/uv_acme_manager.h"
 #include "libcitm/uv.h"

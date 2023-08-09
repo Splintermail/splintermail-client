@@ -217,16 +217,6 @@ void citm_free(citm_t *citm){
     *citm = (citm_t){0};
 }
 
-#define FOR_EACH_LINK(list) \
-    for( \
-        link = (list).next ? (list).next : &(list); \
-        link != &(list); \
-        link = link->next \
-    )
-
-#define FOR_EACH_ELEM(h) \
-    for(elem = hashmap_iter(&trav, &h); elem; elem = hashmap_next(&trav))
-
 void citm_cancel(citm_t *citm){
     link_t *link;
     hash_elem_t *elem;

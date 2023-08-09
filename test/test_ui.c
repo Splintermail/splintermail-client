@@ -297,12 +297,11 @@ static derr_t run_all_cases(void){
             .call_citm_loop = true,
             .citm_args = {
                 .nlspecs = 1,
-                .lspecs = {"tls://127.0.0.1:1993"},
-                .key = "splintermail/citm-127.0.0.1-key.pem",
-                .cert = "splintermail/citm-127.0.0.1-cert.pem",
+                .lspecs = {"starttls://127.0.0.1:1993"},
+                .key = NULL,
+                .cert = NULL,
                 .remote = "tls://splintermail.com:993",
-                .maildir_root = "splintermail/citm",
-                .indicate_ready = false,
+                .sm_dir = "splintermail",
                 .to_return = E_OK,
             },
         };
@@ -347,24 +346,35 @@ static derr_t run_all_cases(void){
 
         test_case = base_case;
         test_case.test_name = "citm splintermail-dir";
-        test_case.citm_args.key = "some_dir/citm-127.0.0.1-key.pem";
-        test_case.citm_args.cert = "some_dir/citm-127.0.0.1-cert.pem";
-        test_case.citm_args.maildir_root = "some_dir/citm";
+        test_case.citm_args.sm_dir = "other";
         test_case.argv = (char*[]){
-            SM, "citm", "--splintermail-dir", "some_dir", NULL
+            SM, "citm", "--splintermail-dir", "other", NULL
         };
         PROP(&e, run_test_case(test_case) );
 
         test_case = base_case;
         test_case.test_name = "citm cert";
-        test_case.citm_args.cert = "some_file";
-        test_case.argv = (char*[]){SM, "citm", "--cert", "some_file", NULL};
+        test_case.citm_args.cert = "some_cert";
+        test_case.expect_return = 18;
+        test_case.call_citm_loop = false;
+        test_case.argv = (char*[]){SM, "citm", "--cert", "some_cert", NULL};
         PROP(&e, run_test_case(test_case) );
 
         test_case = base_case;
         test_case.test_name = "citm key";
-        test_case.citm_args.key = "some_file";
-        test_case.argv = (char*[]){SM, "citm", "--key", "some_file", NULL};
+        test_case.citm_args.key = "some_key";
+        test_case.expect_return = 18;
+        test_case.call_citm_loop = false;
+        test_case.argv = (char*[]){SM, "citm", "--key", "some_key", NULL};
+        PROP(&e, run_test_case(test_case) );
+
+        test_case = base_case;
+        test_case.test_name = "citm cert and key";
+        test_case.citm_args.key = "some_key";
+        test_case.citm_args.cert = "some_cert";
+        test_case.argv = (char*[]){
+            SM, "citm", "--key", "some_key", "--cert", "some_cert", NULL
+        };
         PROP(&e, run_test_case(test_case) );
     }
 

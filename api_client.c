@@ -9,14 +9,6 @@
 REGISTER_ERROR_TYPE(E_TOKEN, "TOKEN", "invalid api token");
 REGISTER_ERROR_TYPE(E_PASSWORD, "PASSWORD", "incorrect password");
 
-static derr_t api_token_init(api_token_t *token){
-    // wrap the buffer with the dstr
-    derr_t e = E_OK;
-    *token = (api_token_t){0};
-    PROP(&e, dstr_new(&token->secret, 256) );
-    return e;
-}
-
 void api_token_free0(api_token_t *token){
     dstr_free0(&token->secret);
     *token = (api_token_t){0};
@@ -31,17 +23,13 @@ derr_t api_token_read(const char *path, api_token_t *token){
     json_node_t jnodes[32];
     size_t njnodes = sizeof(jnodes) / sizeof(*jnodes);
 
-    PROP(&e, api_token_init(token) );
-
     // read the file into memory
     e2 = dstr_read_file(path, &creds);
     // if we got a fixedsize error it is not a valid file
     CATCH(&e2, E_FIXEDSIZE){
         LOG_WARN("api credential file seems too long, ignoring\n");
-        RETHROW_GO(&e, &e2, E_PARAM, fail);
-    }else CATCH(&e2, E_OPEN){
-        RETHROW_GO(&e, &e2, E_FS, fail);
-    }else PROP_VAR_GO(&e, &e2, fail);
+        RETHROW_GO(&e, &e2, E_PARAM, cu);
+    }else PROP_VAR_GO(&e, &e2, cu);
 
     // try to parse the file contents as json
     // should just be token, secret, and nonce
@@ -52,8 +40,8 @@ derr_t api_token_read(const char *path, api_token_t *token){
     // if we got a fixedsize error it is not a valid file
     CATCH(&e2, E_FIXEDSIZE){
         LOG_WARN("api creds contain way too much json\n");
-        RETHROW_GO(&e, &e2, E_PARAM, fail);
-    }else PROP_VAR_GO(&e, &e2, fail);
+        RETHROW_GO(&e, &e2, E_PARAM, cu);
+    }else PROP_VAR_GO(&e, &e2, cu);
 
     // now we can dereference things
     jspec_t *jspec = JOBJ(false,
@@ -61,14 +49,13 @@ derr_t api_token_read(const char *path, api_token_t *token){
         JKEY("secret", JDCPY(&token->secret)),
         JKEY("token", JU(&token->key)),
     );
-    PROP_GO(&e, jspec_read(jspec, json.root), fail);
+    PROP_GO(&e, jspec_read(jspec, json.root), cu);
 
-    return e;
-
-fail:
+cu:
     dstr_zeroize(&creds);
     dstr_zeroize(&jmem);
     api_token_free0(token);
+
     return e;
 }
 
@@ -114,9 +101,7 @@ derr_t api_token_write(api_token_t token, const char* path){
     PROP_GO(&e, jdump(obj, WF(f), 2), cu);
 
     // check error when closing writable file descriptor
-    derr_t e2 = dfclose(f);
-    f = NULL;
-    PROP_VAR_GO(&e, &e2, cu);
+    PROP_GO(&e, dfclose2(&f), cu);
 
     // rename temp file into place
     PROP_GO(&e, drename_atomic(temp, path), cu);
@@ -179,6 +164,190 @@ derr_t api_token_read_increment_write_path(
     PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e, api_token_read_increment_write(path->data, token, ok), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+derr_t nonce_read_increment_write(const char *path, uint64_t *nonce){
+    derr_t e = E_OK;
+
+    *nonce = 0;
+
+    // read file for initial value, if it exists
+    bool ok;
+    PROP(&e, dexists(path, &ok) );
+    if(ok){
+        DSTR_VAR(buf, 32);
+        PROP(&e, dstr_read_file(path, &buf) );
+        dstr_t stripped = dstr_strip_chars(buf, ' ', '\t', '\r', '\n');
+        PROP(&e, dstr_tou64(&stripped, nonce, 10) );
+    }
+
+    // increment
+    (*nonce)++;
+
+    // write updated file
+    FILE *f = NULL;
+    DSTR_VAR(tempstack, 256);
+    dstr_t tempheap = {0};
+
+    // get a temp file path
+    const char *temp;
+    derr_type_t etype = FMT_QUIET(&tempstack, "%x.tmp", FS(path));
+    if(etype == E_NONE){
+        temp = tempstack.data;
+    }else{
+        PROP_GO(&e, FMT(&tempheap, "%x.tmp", FS(path)), cu);
+        temp = tempheap.data;
+    }
+
+    // write the temp file
+    PROP_GO(&e, dfopen(temp, "w", &f), cu);
+    PROP_GO(&e, FFMT(f, "%x\n", FU(*nonce)), cu);
+    PROP_GO(&e, dfclose2(&f), cu);
+
+    // rename temp file into place
+    PROP_GO(&e, drename_atomic(temp, path), cu);
+
+cu:
+    if(f) fclose(f);
+    dstr_free(&tempheap);
+    return e;
+}
+derr_t nonce_read_increment_write_path(string_builder_t *sb, uint64_t *nonce){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
+
+    PROP_GO(&e, nonce_read_increment_write(path->data, nonce), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+// zeroizes and frees secret
+void installation_free0(installation_t *inst){
+    api_token_free0(&inst->token);
+    dstr_free(&inst->subdomain);
+    dstr_free(&inst->email);
+    *inst = (installation_t){0};
+}
+
+// note that api_token should be zeroized or freed before calling this
+derr_t installation_read(const char *path, installation_t *inst){
+    derr_t e = E_OK;
+    derr_t e2;
+
+    DSTR_VAR(creds, 1024);
+    DSTR_VAR(jmem, 1024);
+    json_node_t jnodes[32];
+    size_t njnodes = sizeof(jnodes) / sizeof(*jnodes);
+
+    // read the file into memory
+    e2 = dstr_read_file(path, &creds);
+    // if we got a fixedsize error it is not a valid file
+    CATCH(&e2, E_FIXEDSIZE){
+        LOG_WARN("installation file seems too long, ignoring\n");
+        RETHROW_GO(&e, &e2, E_PARAM, cu);
+    }else PROP_VAR_GO(&e, &e2, cu);
+
+    // parse json
+    json_t json;
+    json_prep_preallocated(&json, &jmem, jnodes, njnodes, true);
+    e2 = json_parse(creds, &json);
+    // if we got a fixedsize error it is not a valid file
+    CATCH(&e2, E_FIXEDSIZE){
+        LOG_WARN("installation file contains way too much json\n");
+        RETHROW_GO(&e, &e2, E_PARAM, cu);
+    }else PROP_VAR_GO(&e, &e2, cu);
+
+    // read the json
+    jspec_t *jspec = JOBJ(false,
+        JKEY("email", JDCPY(&inst->email)),
+        JKEY("secret", JDCPY(&inst->token.secret)),
+        JKEY("subdomain", JDCPY(&inst->subdomain)),
+        JKEY("token", JU(&inst->token.key)),
+    );
+    PROP_GO(&e, jspec_read(jspec, json.root), cu);
+
+cu:
+    dstr_zeroize(&creds);
+    dstr_zeroize(&jmem);
+    if(is_error(e)) installation_free0(inst);
+
+    return e;
+}
+
+derr_t installation_read_path(
+    const string_builder_t *sb, installation_t *inst
+){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
+
+    PROP_GO(&e, installation_read(path->data, inst), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+derr_t installation_write(installation_t inst, const char *path){
+    derr_t e = E_OK;
+    FILE *f = NULL;
+    DSTR_VAR(tempstack, 256);
+    dstr_t tempheap = {0};
+
+    // build a tempfile path
+    const char *temp;
+    derr_type_t etype = FMT_QUIET(&tempstack, "%x.tmp", FS(path));
+    if(etype == E_NONE){
+        temp = tempstack.data;
+    }else{
+        PROP_GO(&e, FMT(&tempheap, "%x.tmp", FS(path)), cu);
+        temp = tempheap.data;
+    }
+
+    // open the tempfile for writing
+    PROP_GO(&e, dfopen(temp, "w", &f), cu);
+
+    // write the file
+    jdump_i *obj = DOBJ(
+        DKEY("email", DD(inst.email)),
+        DKEY("subdomain", DD(inst.subdomain)),
+        DKEY("secret", DD(inst.token.secret)),
+        DKEY("token", DU(inst.token.key)),
+    );
+    PROP_GO(&e, jdump(obj, WF(f), 2), cu);
+
+    // check error when closing writable file descriptor
+    PROP_GO(&e, dfclose2(&f), cu);
+
+    // rename temp file into place
+    PROP_GO(&e, drename_atomic(temp, path), cu);
+
+cu:
+    if(f) fclose(f);
+    dstr_free(&tempheap);
+    return e;
+}
+derr_t installation_write_path(
+    installation_t inst, const string_builder_t *sb
+){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
+
+    PROP_GO(&e, installation_write(inst, path->data), cu);
 
 cu:
     dstr_free(&heap);
@@ -693,7 +862,6 @@ derr_t register_api_token_sync(
     cu);
 
     // read the secret and token from contents
-    PROP_GO(&e, api_token_init(&token), cu);
     jspec_t *jspec = JAPI(
         JOBJ(true,
             JKEY("secret", JDCPY(&token.secret)),

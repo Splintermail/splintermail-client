@@ -13,11 +13,14 @@ sm_lib(
     xkey.c
     responses.c
     citm.c
+    stub.c
+    acme_manager.c
+    uv_acme_manager.c
     uv.c
-    DEPS dstr crypto web duv duvtls imap imaildir
+    DEPS dstr crypto web duv duvtls imap imaildir acme api_client
 )
 
-sm_exe(citm main.c DEPS libcitm)
+sm_exe(citm main.c DEPS libcitm certs)
 
 sm_lib(fake_citm.c DEPS libcitm TEST)
 
@@ -27,3 +30,5 @@ sm_test(test_io_pair.c DEPS fakestream fake_citm)
 sm_test(test_anon.c DEPS fakestream fake_citm)
 sm_test(test_preuser.c DEPS fakestream fake_citm)
 sm_test(test_keydir.c DEPS fakestream fake_citm test_utils)
+sm_test(test_acme_manager.c DEPS libcitm test_utils)
+sm_test(test_cert_swap.c DEPS libcitm test_utils certs)

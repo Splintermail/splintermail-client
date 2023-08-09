@@ -827,7 +827,9 @@ static derr_t listener_cb(void *data, dstr_t val){
     listener_list_t *l = data;
 
     if(l->len >= l->cap){
-        fprintf(stderr, "too many --listener flags, limit 8\n");
+        FFMT_QUIET(stderr,
+            "too many --listener flags, limit %x\n", FU(l->cap)
+        );
         l->invalid = true;
         return e;
     }
@@ -949,7 +951,6 @@ int do_main(int argc, char* argv[], bool windows_service){
     dstr_t local_svc = {0};
     dstr_t cert = {0};
     dstr_t key = {0};
-    dstr_t remote_svc = {0};
     dstr_t sm_dir = {0};
 
     derr_t e = E_OK;
@@ -1025,12 +1026,6 @@ int do_main(int argc, char* argv[], bool windows_service){
     // options specific to the api_client
     opt_spec_t o_user       = {'u',  "user",       true};
     opt_spec_t o_account_dir= {'a',  "account-dir",true};
-#ifdef BUILD_DEBUG
-    // debug-only options
-    opt_spec_t o_r_host     = {'\0', "remote-host",     true};
-    opt_spec_t o_r_imap_port= {'\0', "remote-imap-port", true};
-    opt_spec_t o_r_api_port = {'\0', "remote-api-port", true};
-#endif // BUILD_DEBUG
 
     opt_spec_t* spec[] = {
     //  option               citm   api_client
@@ -1043,11 +1038,6 @@ int do_main(int argc, char* argv[], bool windows_service){
         &o_key,           // y      n
         &o_user,          // n      y
         &o_account_dir,   // n      y
-#ifdef BUILD_DEBUG
-        &o_r_host,        // y      y
-        &o_r_imap_port,   // y      y
-        &o_r_api_port,    // n      y
-#endif // BUILD_DEBUG
     };
     size_t speclen = sizeof(spec) / sizeof(*spec);
     int newargc;
@@ -1122,10 +1112,12 @@ int do_main(int argc, char* argv[], bool windows_service){
     if((newargc > 1 && strcmp("citm", argv[1]) == 0)){
         opt_spec_t *ok_opts[] = {
             &o_debug,
-            #ifdef BUILD_DEBUG
-            &o_r_host, &o_r_imap_port,
-            #endif
-            &o_sm_dir, &o_logfile, &o_no_logfile, &o_listen, &o_cert, &o_key,
+            &o_sm_dir,
+            &o_logfile,
+            &o_no_logfile,
+            &o_listen,
+            &o_cert,
+            &o_key,
         };
         bool failed = limit_options(
             "splintermail citm", spec, speclen, counts, ok_opts
@@ -1135,13 +1127,7 @@ int do_main(int argc, char* argv[], bool windows_service){
             goto cu;
         }
     }else{
-        opt_spec_t *ok_opts[] = {
-            &o_debug,
-            #ifdef BUILD_DEBUG
-            &o_r_api_port,
-            #endif
-            &o_user, &o_account_dir
-        };
+        opt_spec_t *ok_opts[] = { &o_debug, &o_user, &o_account_dir };
         bool failed = limit_options(
             "splintermail api commands", spec, speclen, counts, ok_opts
         );
@@ -1173,30 +1159,7 @@ int do_main(int argc, char* argv[], bool windows_service){
     }
     string_builder_t sm_dir_path = SBD(sm_dir);
 
-#ifdef BUILD_DEBUG
-    // debug options
-    unsigned int api_port = 443;
-    if(o_r_api_port.found){
-        PROP_GO(&e, dstr_tou(&o_r_api_port.val, &api_port, 10), cu);
-    }
-
-    DSTR_VAR(baseurl, 256);
-    if(o_r_host.found){
-        PROP_GO(&e,
-            FMT(&baseurl, "https://%x:%x", FD(o_r_host.val), FU(api_port)),
-        cu);
-    }else{
-        PROP_GO(&e, FMT(&baseurl, "https://splintermail.com"), cu);
-    }
-
-    unsigned int imap_port = 993;
-    if(o_r_imap_port.found){
-        PROP_GO(&e, dstr_tou(&o_r_imap_port.val, &imap_port, 10), cu);
-    }
-#else
     DSTR_STATIC(baseurl, "https://splintermail.com");
-    unsigned int imap_port = 993;
-#endif // BUILD_DEBUG
 
     //////////////// handle the citm-specific options
 
@@ -1215,7 +1178,7 @@ int do_main(int argc, char* argv[], bool windows_service){
         }
 
         if(listeners.len == 0){
-            DSTR_STATIC(default_listen, "tls://127.0.0.1:1993");
+            DSTR_STATIC(default_listen, "starttls://127.0.0.1:1993");
             listeners.specs[0] = must_parse_addrspec(&default_listen);
             listeners.len = 1;
             listeners.key_required = true;
@@ -1224,63 +1187,15 @@ int do_main(int argc, char* argv[], bool windows_service){
         DSTR_STATIC(default_remote, "tls://splintermail.com:993");
         addrspec_t remote = must_parse_addrspec(&default_remote);
 
-        // get certificate path
-        if(!listeners.key_required){
-            // noop if we don't need a server key/cert
-        }else if(o_cert.found){
-            PROP_GO(&e, FMT(&cert, "%x", FD(o_cert.val)), cu);
-        }else{
-            // look for the default certificate
-            bool ok;
-            string_builder_t path = sb_append(
-                &sm_dir_path, SBS("citm-127.0.0.1-cert.pem")
-            );
-            PROP_GO(&e, harness.exists_path(&path, &ok), cu);
-            if(!ok){
-                // detect the pre-citm certificate, if present
-                path = sb_append(&sm_dir_path, SBS("ditm-127.0.0.1-cert.pem"));
-                PROP_GO(&e, harness.exists_path(&path, &ok), cu);
-            }
-            if(!ok){
-                FFMT_QUIET(stderr,
-                    "did not find certificate file in %x, "
-                    "please re-install splintermail or provide a "
-                    "certificate explictly via --cert\n",
-                    FD(sm_dir)
-                );
-                retval = 12;
-                goto cu;
-            }
-            PROP_GO(&e, FMT(&cert, "%x", FSB(path)), cu);
+        // figure cert and key paths
+        if((bool)o_cert.found != (bool)o_key.found){
+            fprintf(stderr, "you must specify --key and --cert together\n");
+            retval = 18;
+            goto cu;
         }
-
-        // get key path
-        if(!listeners.key_required){
-            // noop if we don't need a server key/cert
-        }else if(o_key.found){
+        if(listeners.key_required && o_cert.found){
+            PROP_GO(&e, FMT(&cert, "%x", FD(o_cert.val)), cu);
             PROP_GO(&e, FMT(&key, "%x", FD(o_key.val)), cu);
-        }else{
-            // look for the default key
-            bool ok;
-            string_builder_t path = sb_append(
-                &sm_dir_path, SBS("citm-127.0.0.1-key.pem")
-            );
-            PROP_GO(&e, harness.exists_path(&path, &ok), cu);
-            if(!ok){
-                // detect the pre-citm key, if present
-                path = sb_append(&sm_dir_path, SBS("ditm-127.0.0.1-key.pem"));
-                PROP_GO(&e, harness.exists_path(&path, &ok), cu);
-            }
-            if(!ok){
-                FFMT_QUIET(stderr,
-                    "did not find key file in %x, please re-install "
-                    "splintermail or provide a key explictly via --key\n",
-                    FD(sm_dir)
-                );
-                retval = 13;
-                goto cu;
-            }
-            PROP_GO(&e, FMT(&key, "%x", FSB(path)), cu);
         }
 
         // migrate pre-citm device keys for use with citm
@@ -1289,10 +1204,6 @@ int do_main(int argc, char* argv[], bool windows_service){
                 &sm_dir_path, migrate_ditm_keys_hook, NULL
             ),
         cu);
-
-        PROP_GO(&e, FMT(&remote_svc, "%x", FU(imap_port)), cu);
-
-        string_builder_t citm_path = sb_append(&sm_dir_path, SBS("citm"));
 
 #ifdef _WIN32
         if(windows_service == true){
@@ -1307,9 +1218,14 @@ int do_main(int argc, char* argv[], bool windows_service){
                 remote,
                 key.data,
                 cert.data,
-                citm_path,
-                // indicate when the listener is ready
-                false
+                DSTR_LIT(LETSENCRYPT),  // acme_dirurl
+                NULL,  // acme_verify_name
+                baseurl,  // sm_baseurl
+                NULL,  // client_ctx
+                sm_dir_path,
+                NULL, // indicate_ready
+                NULL, // user_async_hook
+                NULL
             ),
         cu);
 
@@ -1346,7 +1262,6 @@ fail:
     dstr_free(&local_svc);
     dstr_free(&cert);
     dstr_free(&key);
-    dstr_free(&remote_svc);
     dstr_free(&sm_dir);
 
     return retval;

@@ -25,6 +25,10 @@ static void failed_listen_close_cb(uv_handle_t *handle){
     free(uc);
 }
 
+static void _stub_cb(void *data){
+    (void)data;
+}
+
 static void on_listener(uv_stream_t *listener, int status){
     derr_t e = E_OK;
 
@@ -59,6 +63,16 @@ static void on_listener(uv_stream_t *listener, int status){
     // this is guaranteed not to fail
     PROP_GO(&e, duv_tcp_accept(&l->tcp, &uc->tcp), fail_tcp);
 
+    // detect TLS connections which arrive before a certificate is configured
+    if(l->security == IMAP_SEC_TLS && !l->ctx){
+        LOG_ERROR(
+            "rejecting incoming TLS connection since we have no certificate\n"
+        );
+        uc->tcp.data = uc;
+        duv_tcp_close(&uc->tcp, failed_listen_close_cb);
+        return;
+    }
+
     if(uc->conn.ctx){
         // keep this SSL_CTX alive as long as this connection lives
         SSL_CTX_up_ref(uc->conn.ctx);
@@ -68,6 +82,15 @@ static void on_listener(uv_stream_t *listener, int status){
     uc->conn.stream = duv_passthru_init_tcp(
         &uc->passthru, l->scheduler, &uc->tcp
     );
+
+    /* detect STARTTLS stub connections, where we can at least tell the client
+       why we can't let them connect */
+    if(l->security == IMAP_SEC_STARTTLS && !l->ctx){
+        stub_new(
+            &l->scheduler->iface, &uc->conn, _stub_cb, uv_citm, &uv_citm->stubs
+        );
+        return;
+    }
 
     // hand the connection to the citm application
     citm_on_imap_connection(&uv_citm->citm, &uc->conn);
@@ -266,12 +289,26 @@ fail:
     return e;
 }
 
+static derr_t lspec_wants_tls(addrspec_t spec, bool *out){
+    derr_t e = E_OK;
+    *out = false;
+
+    dstr_t scheme = dstr_from_off(spec.scheme);
+    dstr_t specstr = dstr_from_off(dstr_off_extend(spec.scheme, spec.port));
+    imap_security_e security;
+
+    bool ok = imap_scheme_parse(scheme, &security);
+    if(!ok) ORIG(&e, E_PARAM, "invalid scheme: %x", FD(specstr));
+
+    *out = security != IMAP_SEC_INSECURE;
+
+    return e;
+}
+
 static derr_t citm_listener_init(
     citm_listener_t *listener,
     addrspec_t spec,
     uv_citm_t *uv_citm,
-    bool key,
-    bool cert,
     SSL_CTX *ctx
 ){
     derr_t e = E_OK;
@@ -281,23 +318,6 @@ static derr_t citm_listener_init(
 
     bool ok = imap_scheme_parse(scheme, &listener->security);
     if(!ok) ORIG(&e, E_PARAM, "invalid scheme: %x", FD(specstr));
-
-    if(listener->security != IMAP_SEC_INSECURE){
-        // make sure we have a key and a cert
-        if(!key){
-            TRACE(&e,
-                "--listen %x with scheme %x requires a --key\n",
-                FD(specstr), FD(scheme)
-            );
-        }
-        if(!cert){
-            TRACE(&e,
-                "--listen %x with scheme %x requires a --cert\n",
-                FD(specstr), FD(scheme)
-            );
-        }
-        if(!key || !cert) ORIG(&e, E_PARAM, "invalid configuration");
-    }
 
     compat_socket_t fd = INVALID_SOCKET;
     bool tcp_configured = false;
@@ -310,7 +330,7 @@ static derr_t citm_listener_init(
     // connect the fd to the tcp
     PROP_GO(&e, duv_tcp_open(&listener->tcp, fd), fail);
     fd = INVALID_SOCKET;
-    if(listener->security != IMAP_SEC_INSECURE){
+    if(ctx && listener->security != IMAP_SEC_INSECURE){
         // listener holds a reference to the ssl_ctx
         listener->ctx = ctx;
         SSL_CTX_up_ref(ctx);
@@ -370,19 +390,36 @@ static void walk_cb(uv_handle_t *handle, void *arg){
 }
 
 static void onthread_cancel(uv_citm_t *uv_citm){
+    // cancel stubs
+    link_t *link;
+    FOR_EACH_LINK(uv_citm->stubs) stub_cancel(link);
+    // cancel all of citm
     citm_cancel(&uv_citm->citm);
     // close all of the listeners
     for(size_t i = 0; i < uv_citm->nlisteners; i++){
         citm_listener_free(&uv_citm->listeners[i]);
     }
+    uv_citm->nlisteners = 0;
+    if(uv_citm->uvam) uv_acme_manager_close(uv_citm->uvam);
     // close the asyncs too
-    duv_async_close(&uv_citm->async_cancel, noop_close_cb);
-    uv_citm->async_cancel.data = NULL;
+    if(uv_citm->async_cancel.data){
+        duv_async_close(&uv_citm->async_cancel, noop_close_cb);
+        uv_citm->async_cancel.data = NULL;
+    }
+    if(uv_citm->async_user.data){
+        duv_async_close(&uv_citm->async_user, noop_close_cb);
+        uv_citm->async_user.data = NULL;
+    }
 }
 
 static void async_cancel(uv_async_t *async){
     uv_citm_t *uv_citm = async->data;
     onthread_cancel(uv_citm);
+}
+
+static void async_user(uv_async_t *async){
+    uv_citm_t *uv_citm = async->data;
+    uv_citm->user_async_hook(uv_citm->user_data, uv_citm);
 }
 
 static uv_citm_t *global_uv_citm = NULL;
@@ -427,28 +464,69 @@ void citm_stop_service(void){
     _stop_citm();
 }
 
+
+// this function made linkable, only for testing
+void uv_citm_update_cb(void *data, SSL_CTX *ctx);
+void uv_citm_update_cb(void *data, SSL_CTX *ctx){
+    uv_citm_t *uv_citm = data;
+
+    // swap out all the listener SSL_CTX's
+    for(size_t i = 0; i < uv_citm->nlisteners; i++){
+        citm_listener_t *l = &uv_citm->listeners[i];
+        if(l->security == IMAP_SEC_INSECURE) continue;
+        SSL_CTX_free(l->ctx);
+        l->ctx = ctx;
+        // upref for this listener
+        if(ctx){
+            SSL_CTX_up_ref(ctx);
+        }
+    }
+    // downref for this call
+    SSL_CTX_free(ctx);
+}
+
+static void am_done_cb(void *data, derr_t err){
+    uv_citm_t *uv_citm = data;
+    if(err.type == E_CANCELED) DROP_VAR(&err);
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&uv_citm->e, &err);
+    onthread_cancel(uv_citm);
+}
+
 derr_t uv_citm(
     const addrspec_t *lspecs,
     size_t nlspecs,
     const addrspec_t remote,
-    const char *key,
-    const char *cert,
-    string_builder_t maildir_root,
-    bool indicate_ready
+    const char *key,   // explicit --key (disables acme)
+    const char *cert,  // explicit --cert (disables acme)
+    dstr_t acme_dirurl,
+    char *acme_verify_name,  // may be "pebble" in some test scenarios
+    dstr_t sm_baseurl,
+    SSL_CTX *client_ctx,
+    string_builder_t sm_dir,
+    // function pointers, mainly for instrumenting tests:
+    void (*indicate_ready)(void*, uv_citm_t*),
+    void (*user_async_hook)(void*, uv_citm_t*),
+    void *user_data
 ){
     derr_t e = E_OK;
+
+    // was client_ctx provided by caller?
+    if(client_ctx) SSL_CTX_up_ref(client_ctx);
 
     bool loop_configured = false;
     bool scheduler_configured = false;
     int fd = -1;
     SSL_CTX *server_ctx = NULL;
-    SSL_CTX *client_ctx = NULL;
     uv_citm_t uv_citm = {0};
+    uv_acme_manager_t uvam = {0};
 
-    if(key && cert){
-        ssl_context_t ctx;
-        PROP_GO(&e, ssl_context_new_server(&ctx, cert, key), cu);
-        server_ctx = ctx.ctx;
+    // use acme if TLS is needed and cert/key are not provided
+    bool use_acme = false;
+    if(!cert || !key){
+        for(size_t i = 0; i < nlspecs; i++){
+            PROP_GO(&e, lspec_wants_tls(lspecs[i], &use_acme), cu);
+            if(use_acme) break;
+        }
     }
 
     imap_security_e client_sec;
@@ -464,7 +542,8 @@ derr_t uv_citm(
         }
     }
 
-    if(client_sec != IMAP_SEC_INSECURE){
+    // create a default client_ctx?
+    if(!client_ctx && (client_sec != IMAP_SEC_INSECURE || use_acme)){
         ssl_context_t ctx;
         PROP_GO(&e, ssl_context_new_client(&ctx), cu);
         client_ctx = ctx.ctx;
@@ -476,6 +555,8 @@ derr_t uv_citm(
         .remote_verify_name = dstr_from_off(remote.host),
         .client_sec = client_sec,
         .client_ctx = client_ctx,
+        .user_async_hook = user_async_hook,
+        .user_data = user_data,
     };
 
     PROP_GO(&e, duv_loop_init(&uv_citm.loop), cu);
@@ -488,6 +569,11 @@ derr_t uv_citm(
     uv_citm.async_cancel.data = &uv_citm;
 
     PROP_GO(&e,
+        duv_async_init(&uv_citm.loop, &uv_citm.async_user, async_user),
+    cu);
+    uv_citm.async_user.data = &uv_citm;
+
+    PROP_GO(&e,
         duv_scheduler_init(&uv_citm.scheduler, &uv_citm.loop),
     cu);
     scheduler_configured = true;
@@ -497,9 +583,34 @@ derr_t uv_citm(
             &uv_citm.citm,
             &uv_citm.iface,
             &uv_citm.scheduler.iface,
-            maildir_root
+            sb_append(&sm_dir, SBS("citm"))
         ),
     cu);
+
+    if(use_acme){
+        // startup the acme engine, which may load an existing cert
+        PROP_GO(&e,
+            uv_acme_manager_init(&uvam,
+                &uv_citm.loop,
+                &uv_citm.scheduler,
+                sb_append(&sm_dir, SBS("acme")),
+                acme_dirurl,
+                acme_verify_name,
+                sm_baseurl,
+                client_ctx,
+                uv_citm_update_cb,
+                am_done_cb,
+                &uv_citm,
+                &server_ctx
+            ),
+        cu);
+        uv_citm.uvam = &uvam;
+    }else if(key && cert){
+        // read static certs
+        ssl_context_t ctx;
+        PROP_GO(&e, ssl_context_new_server(&ctx, cert, key), cu);
+        server_ctx = ctx.ctx;
+    }
 
     // initialize all the listeners
     for(size_t i = 0; i < nlspecs; i++){
@@ -508,8 +619,6 @@ derr_t uv_citm(
                 &uv_citm.listeners[i],
                 lspecs[i],
                 &uv_citm,
-                !!key,
-                !!cert,
                 server_ctx
             ),
         cu);
@@ -538,7 +647,7 @@ derr_t uv_citm(
     // initialization success!
 
     if(indicate_ready){
-        LOG_INFO("all listeners ready\n");
+        indicate_ready(user_data, &uv_citm);
     }else{
         // always indicate on DEBUG-level logs
         LOG_DEBUG("all listeners ready\n");
@@ -547,6 +656,8 @@ derr_t uv_citm(
     PROP_GO(&e, duv_run(&uv_citm.loop), cu);
 
 cu:
+    uv_acme_manager_close(&uvam);
+
     // cleanup all the listeners
     for(size_t i = 0; i < uv_citm.nlisteners; i++){
         citm_listener_free(&uv_citm.listeners[i]);
@@ -576,4 +687,11 @@ cu:
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&e, &uv_citm.e);
 
     return e;
+}
+
+void uv_citm_async_user(uv_citm_t *uv_citm){
+    int uvret = uv_async_send(&uv_citm->async_user);
+    if(uvret < 0){
+        LOG_FATAL("failed to run user hook: uv_async_send: %x\n", FUV(uvret));
+    }
 }

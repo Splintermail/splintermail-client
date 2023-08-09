@@ -53,6 +53,8 @@ struct citm_io_i {
    citm_t ownership tree:
 
        citm_t
+         - stubs[]
+            - conn
          - io_pairs[]
             - conn_dn
             - connect_i
@@ -108,5 +110,15 @@ void citm_free(citm_t *citm);
 void citm_cancel(citm_t *citm);
 
 void citm_on_imap_connection(citm_t *citm, citm_conn_t *conn);
+
+#define FOR_EACH_LINK(list) \
+    for( \
+        link = (list).next ? (list).next : &(list); \
+        link != &(list); \
+        link = link->next \
+    )
+
+#define FOR_EACH_ELEM(h) \
+    for(elem = hashmap_iter(&trav, &h); elem; elem = hashmap_next(&trav))
 
 #define DERR(x) DD(is_error(x) ? *error_to_dstr((x).type) : DSTR_LIT("(none)"))

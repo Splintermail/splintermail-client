@@ -2945,11 +2945,11 @@ def wait_round_trips_for_msg(rw, n, required_msg):
 
 # Prepare a subdirectory
 @contextlib.contextmanager
-def temp_maildir_root():
+def temp_sm_dir():
     tempdir = tempfile.mkdtemp(prefix="e2e_citm-")
     try:
         # prepopulate mykey.pem to shave about a second of startup time
-        keys = os.path.join(tempdir, USER, "keys")
+        keys = os.path.join(tempdir, "citm", USER, "keys")
         os.makedirs(keys, exist_ok=True)
         with open(os.path.join(keys, "mykey.pem"), "w") as f:
             f.write(MYKEY)
@@ -3056,9 +3056,10 @@ if __name__ == "__main__":
         dovecot_ctx_mgr = dovecot_setup()
 
     with dovecot_ctx_mgr as remote:
-        with temp_maildir_root() as maildir_root:
+        with temp_sm_dir() as sm_dir:
             for test in tests:
                 # clean up the mail before each test, but leave the keys alone
+                maildir_root = os.path.join(sm_dir, "citm")
                 userpath = os.path.join(maildir_root, USER)
                 mailpath = os.path.join(userpath, "mail")
                 shutil.rmtree(mailpath, ignore_errors=True)
@@ -3071,8 +3072,8 @@ if __name__ == "__main__":
                     "insecure://127.0.0.1:2993",
                     "--remote",
                     remote,
-                    "--maildirs",
-                    maildir_root,
+                    "--splintermail-dir",
+                    sm_dir,
                 ]
                 try:
                     test(cmd, maildir_root, remote)

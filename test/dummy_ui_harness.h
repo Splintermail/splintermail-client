@@ -30,8 +30,7 @@ typedef struct {
     const char *key;
     const char *cert;
     char *remote;
-    const char *maildir_root;
-    bool indicate_ready;
+    const char *sm_dir;
     derr_t to_return;
 } citm_args_t;
 extern citm_args_t* citm_args;

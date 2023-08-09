@@ -1,10 +1,12 @@
 // main.c is mostly for testing; user-facing entrypoint is splintermail.c/ui.c
 #include "libcitm.h"
 
+#include "test/certs.h"
+
 // defaults
 DSTR_STATIC(d_listen, "insecure://[::1]:1993");
 DSTR_STATIC(d_remote, "tls://splintermail.com:993");
-DSTR_STATIC(d_maildirs, "/tmp/maildir_root");
+DSTR_STATIC(d_sm_dir, "/tmp/sm_dir");
 
 static void print_help(FILE *f){
     FFMT_QUIET(f,
@@ -12,14 +14,18 @@ static void print_help(FILE *f){
         "\n"
         "where OPTIONS are any of:\n"
         "  -h, --help\n"
-        "  -l, --listen=ARG    (default: %x)\n"
-        "  -r, --remote=ARG    (default: %x)\n"
-        "  -k, --key=ARG       (default: none)\n"
-        "  -c, --cert=ARG      (default: none)\n"
-        "  -m, --maildirs=ARG  (default: %x)\n",
+        "  -l, --listen ARG    (default: %x)\n"
+        "  -r, --remote ARG    (default: %x)\n"
+        "  -k, --key ARG       (default: none)\n"
+        "  -c, --cert ARG      (default: none)\n"
+        "  -d, --sm-dir ARG    (default: %x)\n"
+        "  -a, --acme ARG      (default: " LETSENCRYPT ")\n"
+        "      --ca ARG        (deault: none)\n"
+        "  -p, --pebble        trust pebble's certificate, and change\n"
+        "                      default --acme to localhost:14000\n",
         FD(d_listen),
         FD(d_remote),
-        FD(d_maildirs)
+        FD(d_sm_dir)
     );
 }
 
@@ -48,6 +54,12 @@ static derr_t listener_cb(void *data, dstr_t val){
     return e;
 }
 
+static void indicate_ready(void *data, uv_citm_t *uv_citm){
+    (void)data;
+    (void)uv_citm;
+    LOG_INFO("all listeners ready\n");
+}
+
 int main(int argc, char **argv){
     // ignore SIGPIPE, required to work with OpenSSL
     // see https://mta.openssl.org/pipermail/openssl-users/2017-May/005776.html
@@ -71,7 +83,10 @@ int main(int argc, char **argv){
     opt_spec_t o_remote   = {'r', "remote",  true};
     opt_spec_t o_key      = {'k', "key",     true};
     opt_spec_t o_cert     = {'c', "cert",    true};
-    opt_spec_t o_maildirs = {'m', "maildirs",true};
+    opt_spec_t o_sm_dir   = {'d', "splintermail-dir", true};
+    opt_spec_t o_acme     = {'a', "acme",    true};
+    opt_spec_t o_ca       = {'\0',"ca",      true};
+    opt_spec_t o_pebble   = {'p', "pebble",  false};
 
     opt_spec_t* spec[] = {
         &o_help,
@@ -79,7 +94,10 @@ int main(int argc, char **argv){
         &o_remote,
         &o_key,
         &o_cert,
-        &o_maildirs,
+        &o_sm_dir,
+        &o_acme,
+        &o_ca,
+        &o_pebble,
     };
     size_t speclen = sizeof(spec) / sizeof(*spec);
     int newargc;
@@ -98,11 +116,26 @@ int main(int argc, char **argv){
         return 0;
     }
 
+    dstr_t acme_dirurl = DSTR_LIT(LETSENCRYPT);
+    if(o_pebble.found) acme_dirurl = DSTR_LIT("https://localhost:14000/dir");
+    if(o_acme.found) acme_dirurl = o_acme.val;
+
+    const char *ca = o_ca.found ? o_ca.val.data : NULL;
+
     derr_t e = E_OK;
+
+    ssl_context_t ssl_ctx = {0};
 
     PROP_GO(&e, ssl_library_init(), done);
 
-    // resolve options
+    PROP_GO(&e, ssl_context_new_client_ex(&ssl_ctx, true, &ca, !!ca), cu);
+
+    char *acme_verify_name = NULL;
+    if(o_pebble.found){
+        PROP_GO(&e, trust_pebble(ssl_ctx.ctx), cu);
+        acme_verify_name = "pebble";
+    }
+
     if(listeners.len == 0){
         listeners.specs[0] = must_parse_addrspec(&d_listen);
         listeners.len = 1;
@@ -112,9 +145,8 @@ int main(int argc, char **argv){
     PROP_GO(&e, parse_addrspec(&remotestr, &remote), cu);
     const char *key = o_key.found ? o_key.val.data : NULL;
     const char *cert = o_cert.found ? o_cert.val.data : NULL;
-    dstr_t maildirs = o_maildirs.found ? o_maildirs.val : d_maildirs;
-
-    string_builder_t maildir_root = SBD(maildirs);
+    string_builder_t sm_dir = SBD(o_sm_dir.found ? o_sm_dir.val : d_sm_dir);
+    dstr_t sm_baseurl = DSTR_LIT("https://splintermail.com");
 
     PROP_GO(&e,
          uv_citm(
@@ -123,13 +155,19 @@ int main(int argc, char **argv){
             remote,
             key,
             cert,
-            maildir_root,
-            // indicate when the listener is ready
-            true
+            acme_dirurl,
+            acme_verify_name,
+            sm_baseurl,
+            ssl_ctx.ctx,
+            sm_dir,
+            indicate_ready,
+            NULL, // user_async_hook
+            NULL
         ),
     cu);
 
 cu:
+    ssl_context_free(&ssl_ctx);
     ssl_library_close();
 
 done:

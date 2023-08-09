@@ -35,10 +35,17 @@ derr_t uv_citm(
     const addrspec_t *lspecs,
     size_t nlspecs,
     const addrspec_t remote,
-    const char *key,
-    const char *cert,
-    string_builder_t maildir_root,
-    bool indicate_ready
+    const char *key,   // explicit --key (disables acme)
+    const char *cert,  // explicit --cert (disables acme)
+    dstr_t acme_dirurl,
+    char *acme_verify_name,  // may be "pebble" in some test scenarios
+    dstr_t sm_baseurl,
+    SSL_CTX *client_ctx,
+    string_builder_t sm_dir,
+    // function pointers, mainly for instrumenting tests:
+    void (*indicate_ready)(void*, uv_citm_t*),
+    void (*user_async_hook)(void*, uv_citm_t*),
+    void *user_data
 ){
     derr_t e = E_OK;
 
@@ -52,14 +59,27 @@ derr_t uv_citm(
     EXPECT_S(&e, "cert", strend(cert, citm_args->cert), citm_args->cert);
     EXPECT_ADDR(&e, "remote", remote, citm_args->remote);
     DSTR_VAR(buf, 128);
-    PROP(&e, FMT(&buf, "%x", FSB(maildir_root)) );
+    PROP(&e, FMT(&buf, "%x", FSB(sm_dir)) );
     EXPECT_S(&e,
-        "maildir_root",
-        strend(buf.data, citm_args->maildir_root),
-        citm_args->maildir_root
+        "sm_dir", strend(buf.data, citm_args->sm_dir), citm_args->sm_dir
     );
-    EXPECT_B(&e, "indicate_ready", indicate_ready, citm_args->indicate_ready);
     EXPECT_B(&e, "citm_called", citm_called, false);
+
+    // hardcoded args; never configured by the cli
+    if(indicate_ready != NULL){
+        ORIG(&e, E_VALUE, "expected indicate_ready == NULL");
+    }
+    if(user_async_hook != NULL){
+        ORIG(&e, E_VALUE, "expected user_async_hook == NULL");
+    }
+    EXPECT_NULL(&e, "user_data", user_data);
+    EXPECT_D(&e, "acme_dirurl", acme_dirurl, DSTR_LIT(LETSENCRYPT));
+    EXPECT_NULL(&e, "acme_verify_name", acme_verify_name);
+    EXPECT_D(&e,
+        "sm_baseurl", sm_baseurl, DSTR_LIT("https://splintermail.com")
+    );
+    EXPECT_NULL(&e, "client_ctx", client_ctx);
+
     citm_called = true;
 
     return citm_args->to_return;
