@@ -10,6 +10,53 @@ static http_pairs_t content_type = HTTP_PAIR_GLOBAL(
     "Content-Type", "application/jose+json", NULL
 );
 
+dstr_t acme_status_dstr(acme_status_e status){
+    switch(status){
+        case ACME_PENDING: return DSTR_LIT("pending");
+        case ACME_READY: return DSTR_LIT("ready");
+        case ACME_PROCESSING: return DSTR_LIT("processing");
+        case ACME_VALID: return DSTR_LIT("valid");
+        case ACME_INVALID: return DSTR_LIT("invalid");
+        case ACME_REVOKED: return DSTR_LIT("revoked");
+        case ACME_DEACTIVATED: return DSTR_LIT("deactivated");
+        case ACME_EXPIRED: return DSTR_LIT("expired");
+    }
+    return DSTR_LIT("UNKNOWN");
+}
+
+typedef struct {
+    jspec_t jspec;
+    acme_status_e *out;
+} jspec_astat_t;
+DEF_CONTAINER_OF(jspec_astat_t, jspec, jspec_t)
+
+static derr_t jspec_astat_read(jspec_t *jspec, jctx_t *ctx){
+    derr_t e = E_OK;
+    jspec_astat_t *j = CONTAINER_OF(jspec, jspec_astat_t, jspec);
+
+    if(!jctx_require_type(ctx, JSON_STRING)) return e;
+    dstr_t status = jctx_text(ctx);
+
+    #define CASE(NAME) if(dstr_ieq(status, DSTR_LIT(#NAME))){ \
+        *j->out = ACME_ ## NAME; \
+        return e; \
+    }
+    CASE(PENDING)
+    CASE(READY)
+    CASE(PROCESSING)
+    CASE(VALID)
+    CASE(INVALID)
+    CASE(REVOKED)
+    CASE(DEACTIVATED)
+    CASE(EXPIRED)
+    #undef CASE
+
+    jctx_error(ctx, "unrecognized status: \"%x\"\n", FD(status));
+    return e;
+}
+
+#define JASTAT(out) &((jspec_astat_t){ {jspec_astat_read}, out}.jspec)
+
 typedef struct {
     // inputs
     dstr_t contact_email;
@@ -46,7 +93,7 @@ typedef struct {
     bool sent;
     // outputs
     dstr_t domain;
-    dstr_t status;
+    acme_status_e status;
     dstr_t expires;
     dstr_t authorization;
     dstr_t finalize;
@@ -77,7 +124,7 @@ typedef struct {
     bool sent;
     // outputs
     dstr_t domain;
-    dstr_t status;
+    acme_status_e status;
     dstr_t expires;
     dstr_t challenge;
     dstr_t token;
@@ -109,6 +156,7 @@ typedef struct {
     // state
     bool finalized;
     dstr_t certurl;
+    bool dont_free_certurl; // if certurl came from caller
     time_t retry_after;
     // outputs
     dstr_t cert;
@@ -625,10 +673,10 @@ static void new_account_reader_cb(stream_reader_t *reader, derr_t err){
     PROP_GO(&e, json_parse(acme->rbuf, &json), done);
 
     // read body
-    dstr_t status;
+    acme_status_e status;
     jspec_t *jspec = JOBJ(true,
         JKEY("orders", JDCPY(&state->acct.orders)),
-        JKEY("status", JDREF(&status)),
+        JKEY("status", JASTAT(&status)),
     );
     bool ok;
     DSTR_VAR(errbuf, 512);
@@ -637,12 +685,12 @@ static void new_account_reader_cb(stream_reader_t *reader, derr_t err){
         ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
     }
 
-    if(!dstr_eq(status, DSTR_LIT("valid"))){
+    if(status != ACME_VALID){
         ORIG_GO(&e,
             E_RESPONSE,
             "new account .status != valid (status = %x)",
             done,
-            FD_DBG(status)
+            FD(acme_status_dstr(status))
         );
     }
 
@@ -780,7 +828,7 @@ void acme_new_account(
 
 // all fields are refs
 typedef struct {
-    dstr_t status;
+    acme_status_e status;
     dstr_t expires;  // optional unless status in [pending, valid]
     dstr_t domain; // a single dns identifier
     dstr_t error; // optional
@@ -812,7 +860,7 @@ static derr_t read_order(dstr_t rbuf, json_t *json, order_t *order){
                 JKEY("value", JDREF(&order->domain)),
             )
         )),
-        JKEY("status", JDREF(&order->status)),
+        JKEY("status", JASTAT(&order->status)),
     );
 
     bool ok;
@@ -851,12 +899,12 @@ static void new_order_reader_cb(stream_reader_t *reader, derr_t err){
     PROP_GO(&e, read_order(acme->rbuf, &json, &order), done);
 
     // status must be pending
-    if(!dstr_eq(order.status, DSTR_LIT("pending"))){
+    if(order.status != ACME_PENDING){
         ORIG_GO(&e,
             E_RESPONSE,
             "new order status = \"%x\", expected \"pending\"",
             done,
-            FD(order.status)
+            FD(acme_status_dstr(order.status))
         );
     }
 
@@ -1037,8 +1085,8 @@ static void get_order_reader_cb(stream_reader_t *reader, derr_t err){
     PROP_GO(&e, dstr_copy(&order.expires, &state->expires), done);
     PROP_GO(&e, dstr_copy(&order.finalize, &state->finalize), done);
     PROP_GO(&e, dstr_copy(&order.domain, &state->domain), done);
-    PROP_GO(&e, dstr_copy(&order.status, &state->status), done);
     PROP_GO(&e, dstr_copy(&order.certificate, &state->certurl), done);
+    state->status = order.status;
     state->retry_after = acme->retry_after;
 
 done:
@@ -1073,8 +1121,8 @@ static derr_t post_as_get(acme_t *acme, acme_account_t acct, dstr_t url){
 static void get_order_advance_state(acme_t *acme, derr_t err){
     derr_t e = E_OK;
     acme_get_order_state_t *state = &acme->state.get_order;
+    acme_status_e status = 0;
     dstr_t domain = {0};
-    dstr_t status = {0};
     dstr_t expires = {0};
     dstr_t authorization = {0};
     dstr_t finalize = {0};
@@ -1108,11 +1156,11 @@ static void get_order_advance_state(acme_t *acme, derr_t err){
 done:
     if(!is_error(e)){
         domain = STEAL(dstr_t, &state->domain);
-        status = STEAL(dstr_t, &state->status);
         expires = STEAL(dstr_t, &state->expires);
         authorization = STEAL(dstr_t, &state->authorization);
         finalize = STEAL(dstr_t, &state->finalize);
         certurl = STEAL(dstr_t, &state->certurl);
+        status = state->status;
         retry_after = state->retry_after;
     }
     acme_get_order_cb cb = state->cb;
@@ -1123,8 +1171,8 @@ done:
     cb(
         cb_data,
         e,
-        domain,
         status,
+        domain,
         expires,
         authorization,
         finalize,
@@ -1136,7 +1184,6 @@ done:
 static void get_order_free_state(acme_t *acme){
     acme_get_order_state_t *state = &acme->state.get_order;
     dstr_free(&state->domain);
-    dstr_free(&state->status);
     dstr_free(&state->expires);
     dstr_free(&state->authorization);
     dstr_free(&state->finalize);
@@ -1434,7 +1481,7 @@ static void get_authz_reader_cb(stream_reader_t *reader, derr_t err){
             JKEY("type", JXSN("dns", 3)),
             JKEY("value", JDCPY(&state->domain)),
         )),
-        JKEY("status", JDCPY(&state->status)),
+        JKEY("status", JASTAT(&state->status)),
     );
 
     bool ok;
@@ -1454,8 +1501,8 @@ done:
 static void get_authz_advance_state(acme_t *acme, derr_t err){
     derr_t e = E_OK;
     acme_get_authz_state_t *state = &acme->state.get_authz;
+    acme_status_e status = 0;
     dstr_t domain = {0};
-    dstr_t status = {0};
     dstr_t expires = {0};
     dstr_t challenge = {0};
     dstr_t token = {0};
@@ -1488,10 +1535,10 @@ static void get_authz_advance_state(acme_t *acme, derr_t err){
 done:
     if(!is_error(e)){
         domain = STEAL(dstr_t, &state->domain);
-        status = STEAL(dstr_t, &state->status);
         expires = STEAL(dstr_t, &state->expires);
         challenge = STEAL(dstr_t, &state->challenge);
         token = STEAL(dstr_t, &state->token);
+        status = state->status;
         retry_after = state->retry_after;
     }
     acme_get_authz_cb cb = state->cb;
@@ -1499,13 +1546,12 @@ done:
     acme->free_state(acme);
     acme->advance_state = NULL;
     acme->free_state = NULL;
-    cb(cb_data, e, domain, status, expires, challenge, token, retry_after);
+    cb(cb_data, e, status, domain, expires, challenge, token, retry_after);
 }
 
 static void get_authz_free_state(acme_t *acme){
     acme_get_authz_state_t *state = &acme->state.get_authz;
     dstr_free(&state->domain);
-    dstr_free(&state->status);
     dstr_free(&state->expires);
     dstr_free(&state->challenge);
     dstr_free(&state->token);
@@ -1750,6 +1796,54 @@ void acme_challenge_finish(
 
 //
 
+static derr_t finalize_order_status_check(
+    acme_finalize_state_t *state, order_t *order
+){
+    derr_t e = E_OK;
+
+    switch(order->status){
+        case ACME_VALID:
+            // success
+            if(!order->certificate.len){
+                ORIG(&e,
+                    E_RESPONSE,
+                    "successful order finalize did not return a cert url"
+                );
+            }
+            // keep the certurl
+            PROP(&e, dstr_copy(&order->certificate, &state->certurl) );
+            break;
+
+        case ACME_PROCESSING:
+            // cert not ready yet
+            // (noop)
+            break;
+
+        case ACME_INVALID:
+            // certificate failure of some sort
+            ORIG(&e,
+                E_RESPONSE,
+                "order finalization failed (error=\"\")",
+                FD(order->error)
+            );
+            break;
+
+        case ACME_PENDING:
+        case ACME_READY:
+        case ACME_REVOKED:
+        case ACME_DEACTIVATED:
+        case ACME_EXPIRED:
+        default:
+            // either "ready" or "pending", which make no sense here
+            ORIG(&e,
+                E_RESPONSE,
+                "invalid status on order finalize (%x)",
+                FD(acme_status_dstr(order->status))
+            );
+    }
+    return e;
+}
+
 static void finalize_reader_cb(stream_reader_t *reader, derr_t err){
     acme_t *acme = CONTAINER_OF(reader, acme_t, reader);
     acme_finalize_state_t *state = &acme->state.finalize;
@@ -1773,37 +1867,7 @@ static void finalize_reader_cb(stream_reader_t *reader, derr_t err){
     order_t order;
     PROP_GO(&e, read_order(acme->rbuf, &json, &order), done);
 
-    if(dstr_eq(order.status, DSTR_LIT("valid"))){
-        // success
-        if(!order.certificate.len){
-            ORIG_GO(&e,
-                E_RESPONSE,
-                "successful order finalize did not return a cert url",
-                done
-            );
-        }
-        // keep the certurl
-        PROP_GO(&e, dstr_copy(&order.certificate, &state->certurl), done);
-    }else if(dstr_eq(order.status, DSTR_LIT("processing"))){
-        // success but cert isn't ready yet
-        // (noop)
-    }else if(dstr_eq(order.status, DSTR_LIT("invalid"))){
-        // certificate failure of some sort
-        ORIG_GO(&e,
-            E_RESPONSE,
-            "order finalization failed (error=\"\")",
-            done,
-            FD(order.error)
-        );
-    }else{
-        // either "ready" or "pending", which make no sense here
-        ORIG_GO(&e,
-            E_RESPONSE,
-            "invalid status on order finalize (%x)",
-            done,
-            FD(order.status)
-        );
-    }
+    PROP_GO(&e, finalize_order_status_check(state, &order), done);
 
 done:
     json_free(&json);
@@ -1940,37 +2004,7 @@ static void poll_order_reader_cb(stream_reader_t *reader, derr_t err){
     order_t order;
     PROP_GO(&e, read_order(acme->rbuf, &json, &order), done);
 
-    if(dstr_eq(order.status, DSTR_LIT("valid"))){
-        // success
-        if(!order.certificate.len){
-            ORIG_GO(&e,
-                E_RESPONSE,
-                "successful order finalize did not return a cert url",
-                done
-            );
-        }
-        // keep the certurl
-        PROP_GO(&e, dstr_copy(&order.certificate, &state->certurl), done);
-    }else if(dstr_eq(order.status, DSTR_LIT("processing"))){
-        // no change
-        // (noop)
-    }else if(dstr_eq(order.status, DSTR_LIT("invalid"))){
-        // certificate failure of some sort
-        ORIG_GO(&e,
-            E_RESPONSE,
-            "order finalization failed (error=\"\")",
-            done,
-            FD(order.error)
-        );
-    }else{
-        // either "ready" or "pending", which make no sense here
-        ORIG_GO(&e,
-            E_RESPONSE,
-            "invalid status on order finalize (%x)",
-            done,
-            FD(order.status)
-        );
-    }
+    PROP_GO(&e, finalize_order_status_check(state, &order), done);
 
 done:
     json_free(&json);
@@ -2091,7 +2125,7 @@ static void finalize_free_state(acme_t *acme){
     acme_finalize_state_t *state = &acme->state.finalize;
     // drop our reference
     if(state->pkey) EVP_PKEY_free(state->pkey);
-    dstr_free(&state->certurl);
+    if(!state->dont_free_certurl) dstr_free(&state->certurl);
     dstr_free(&state->cert);
     *state = (acme_finalize_state_t){0};
 }
@@ -2125,7 +2159,7 @@ void acme_finalize(
     schedule(acme);
 }
 
-void acme_finalize_continue(
+void acme_finalize_from_processing(
     const acme_account_t acct,
     const dstr_t order,
     time_t retry_after,
@@ -2142,6 +2176,29 @@ void acme_finalize_continue(
         // configure state to skip the finalize call
         .finalized = true,
         .retry_after = retry_after,
+    };
+    acme->advance_state = finalize_advance_state;
+    acme->free_state = finalize_free_state;
+
+    schedule(acme);
+}
+
+void acme_finalize_from_valid(
+    const acme_account_t acct,
+    const dstr_t certurl,
+    acme_finalize_cb cb,
+    void *cb_data
+){
+    acme_t *acme = acct.acme;
+    acme_finalize_state_t *state = &acme->state.finalize;
+    *state = (acme_finalize_state_t){
+        .acct = acct,
+        .cb = cb,
+        .cb_data = cb_data,
+        // configure state to go straight to downloading the cert
+        .finalized = true,
+        .certurl = certurl,
+        .dont_free_certurl = true,
     };
     acme->advance_state = finalize_advance_state;
     acme->free_state = finalize_free_state;

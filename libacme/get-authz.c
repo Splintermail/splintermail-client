@@ -17,8 +17,8 @@ typedef struct {
 static void _get_authz_cb(
     void *data,
     derr_t err,
+    acme_status_e status,
     dstr_t domain,
-    dstr_t status,
     dstr_t expires,
     dstr_t challenge,
     dstr_t token,
@@ -33,7 +33,7 @@ static void _get_authz_cb(
     // dump key info and exit
     jdump_i *obj =  DOBJ(
         DKEY("domain", DD(domain)),
-        DKEY("status", DD(status)),
+        DKEY("status", DD(acme_status_dstr(status))),
         DKEY("expires", DD(expires)),
         DKEY("challenge", DD(challenge)),
         DKEY("token", DD(token)),
@@ -45,7 +45,6 @@ static void _get_authz_cb(
 
 done:
     dstr_free(&domain);
-    dstr_free(&status);
     dstr_free(&expires);
     dstr_free(&challenge);
     dstr_free(&token);

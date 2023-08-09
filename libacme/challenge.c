@@ -37,8 +37,8 @@ done:
 static void _get_authz_cb(
     void *data,
     derr_t err,
+    acme_status_e status,
     dstr_t domain,
-    dstr_t status,
     dstr_t expires,
     dstr_t challenge,   // only the dns challenge is returned
     dstr_t token,       // only the dns challenge is returned
@@ -48,24 +48,20 @@ static void _get_authz_cb(
 
     globals_t *g = data;
 
-    bool done = dstr_eq(status, DSTR_LIT("valid"));
-    bool in_prog = dstr_eq(status, DSTR_LIT("processing"));
-
     dstr_free(&domain);
     dstr_free(&expires);
-    dstr_free(&status);
     g->challenge = STEAL(dstr_t, &challenge);
     dstr_free(&token);
 
     PROP_VAR_GO(&e, &err, fail);
 
-    if(done){
+    if(status == ACME_VALID){
         // quit early
         fprintf(stdout, "ok\n");
         g->success = true;
         acme_close(*g->acme, NULL);
         duv_http_close(g->http, NULL);
-    }else if(in_prog){
+    }else if(status == ACME_PROCESSING){
         // continue a previous challenge
         acme_challenge_finish(
             *g->acct, g->authz, retry_after, _challenge_cb, g

@@ -29,6 +29,21 @@ derr_t acme_account_from_path(
 
 void acme_account_free(acme_account_t *acct);
 
+// all possible statuses in the protocol; not all objects can take all statuses
+typedef enum {
+    // order is based on overall "betterness", especially for order objects
+    ACME_INVALID = 0,
+    ACME_REVOKED,
+    ACME_DEACTIVATED,
+    ACME_EXPIRED,
+    ACME_PENDING,
+    ACME_READY,
+    ACME_PROCESSING,
+    ACME_VALID,
+} acme_status_e;
+
+dstr_t acme_status_dstr(acme_status_e status);
+
 typedef void (*acme_new_account_cb)(
     void*,
     derr_t,
@@ -64,8 +79,8 @@ typedef void (*acme_get_order_cb)(
     void*,
     derr_t,
     // allocated strings are returned
+    acme_status_e status,
     dstr_t domain,
-    dstr_t status,
     dstr_t expires,
     dstr_t authorization,
     dstr_t finalize,
@@ -93,8 +108,8 @@ typedef void (*acme_get_authz_cb)(
     void*,
     derr_t,
     // allocated strings are returned
+    acme_status_e status,
     dstr_t domain,
-    dstr_t status,
     dstr_t expires,
     dstr_t challenge,   // only the dns challenge is returned
     dstr_t token,       // only the dns challenge is returned
@@ -142,10 +157,18 @@ void acme_finalize(
 );
 
 // finish finalizing, when you wake up to an order with status=processing
-void acme_finalize_continue(
+void acme_finalize_from_processing(
     const acme_account_t acct,
     const dstr_t order,
     time_t retry_after,
+    acme_finalize_cb cb,
+    void *cb_data
+);
+
+// finish finalizing, when you wake up to an order with status=valid
+void acme_finalize_from_valid(
+    const acme_account_t acct,
+    const dstr_t certurl,
     acme_finalize_cb cb,
     void *cb_data
 );

@@ -115,8 +115,9 @@ update, that would average less than 12 long-polling connections at a time.
 
 4. create an account with the jwk, write it to file
 
-5. list orders.  If one is valid, take the cert and skip to 13.  If one is
-   processing, skip to 13.
+5. list orders.  If one is valid, take the cert and skip to 14.  If one is
+   processing, skip to 13.  If one is ready, skip to 12.  If one is pending,
+   skip to 7.
 
 6. Create a new order.
 

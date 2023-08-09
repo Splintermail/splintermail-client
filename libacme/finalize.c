@@ -17,6 +17,7 @@ typedef struct {
     acme_account_t acct;
     dstr_t finalize;
     dstr_t domain;
+    dstr_t certurl;
     bool success;
     derr_t e;
 } globals_t;
@@ -43,8 +44,8 @@ done:
 static void _get_order_cb(
     void *data,
     derr_t err,
+    acme_status_e status,
     dstr_t domain,
-    dstr_t status,
     dstr_t expires,
     dstr_t authorization,
     dstr_t finalize,
@@ -55,29 +56,28 @@ static void _get_order_cb(
 
     globals_t *g = data;
 
-    bool in_prog = dstr_eq(status, DSTR_LIT("processing"))
-                || dstr_eq(status, DSTR_LIT("valid"));
-
     // discard
-    dstr_free(&status);
     dstr_free(&expires);
     dstr_free(&authorization);
-    dstr_free(&certurl);
     // keep
     g->finalize = finalize;
     g->domain = domain;
+    g->certurl = certurl;
 
     PROP_VAR_GO(&e, &err, fail);
 
-    if(!in_prog){
+    if(status == ACME_VALID){
+        // finish a near-complete finalize
+        acme_finalize_from_valid(g->acct, g->certurl, _finalize_cb, g);
+    }else if(status == ACME_PROCESSING){
+        // finish an in-progress finalize
+        acme_finalize_from_processing(
+            g->acct, g->order, retry_after, _finalize_cb, g
+        );
+    }else{
         // get started finalizing
         acme_finalize(
             g->acct, g->order, g->finalize, g->domain, g->pkey, _finalize_cb, g
-        );
-    }else{
-        // finish an in-progress finalize
-        acme_finalize_continue(
-            g->acct, g->order, retry_after, _finalize_cb, g
         );
     }
 
@@ -135,6 +135,7 @@ fail:
     DROP_CMD( duv_run(&loop) );
     dstr_free(&g.finalize);
     dstr_free(&g.domain);
+    dstr_free(&g.certurl);
     return e;
 }
 
