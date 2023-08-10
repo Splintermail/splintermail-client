@@ -123,8 +123,9 @@ typedef struct {
     // state
     bool sent;
     // outputs
-    dstr_t domain;
     acme_status_e status;
+    acme_status_e challenge_status;
+    dstr_t domain;
     dstr_t expires;
     dstr_t challenge;
     dstr_t token;
@@ -1421,29 +1422,51 @@ void acme_list_orders(
 
 //
 
+typedef struct {
+    acme_status_e status;
+    dstr_t type;
+    dstr_t url;
+    dstr_t token;
+    dstr_t errtype;
+    dstr_t errdetail;
+    // we don't currently handle subproblems
+} challenge_t;
+
 static derr_t jlist_challenges(jctx_t *ctx, size_t index, void *data){
     derr_t e = E_OK;
     (void)index;
-    acme_get_authz_state_t *state = data;
 
-    dstr_t type, url, status, token;
-    bool have_token;
+    challenge_t challenge = {0};
+
+    bool have_token, have_error, have_errtype, have_errdetail;
     // challenge objects may have type-specific extensions
     jspec_t *spec = JOBJ(true,
-        JKEY("status", JDREF(&status)),
-        JKEYOPT("token", &have_token, JDREF(&token)),
-        JKEY("type", JDREF(&type)),
-        JKEY("url", JDREF(&url)),
+        JKEYOPT("error", &have_error, JOBJ(true,
+            JKEYOPT("type", &have_errtype, JDREF(&challenge.errtype)),
+            JKEYOPT("detail", &have_errdetail, JDREF(&challenge.errdetail)),
+        )),
+        JKEY("status", JASTAT(&challenge.status)),
+        JKEYOPT("token", &have_token, JDREF(&challenge.token)),
+        JKEY("type", JDREF(&challenge.type)),
+        JKEY("url", JDREF(&challenge.url)),
         // ignore "validated", it's not useful to us
     );
     PROP(&e, jctx_read(ctx, spec));
 
     // ignore non-"dns-01" challenges
-    if(!dstr_eq(type, DSTR_LIT("dns-01"))) return e;
+    if(!dstr_eq(challenge.type, DSTR_LIT("dns-01"))) return e;
 
     if(!have_token) ORIG(&e, E_RESPONSE, "type=dns-01 challenge has no token");
-    PROP(&e, dstr_copy(&url, &state->challenge) );
-    PROP(&e, dstr_copy(&token, &state->token) );
+
+    challenge_t *out = data;
+
+    // ignore subsequent challenges
+    if(out->url.len > 0){
+        LOG_ERROR("multiple dns-01 challenges, ignoring one...\n");
+        return e;
+    }
+
+    *out = challenge;
 
     return e;
 }
@@ -1474,8 +1497,9 @@ static void get_authz_reader_cb(stream_reader_t *reader, derr_t err){
     PROP_GO(&e, json_parse(acme->rbuf, &json), done);
 
     // read body
+    challenge_t challenge = {0};
     jspec_t *jspec = JOBJ(true,
-        JKEY("challenges", JLIST(jlist_challenges, state)),
+        JKEY("challenges", JLIST(jlist_challenges, &challenge)),
         JKEY("expires", JDCPY(&state->expires)),
         JKEY("identifier", JOBJ(true,
             JKEY("type", JXSN("dns", 3)),
@@ -1491,6 +1515,10 @@ static void get_authz_reader_cb(stream_reader_t *reader, derr_t err){
         ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
     }
 
+    PROP_GO(&e, dstr_copy(&challenge.url, &state->challenge), done);
+    PROP_GO(&e, dstr_copy(&challenge.token, &state->token), done);
+    state->challenge_status = challenge.status;
+
     state->retry_after = acme->retry_after;
 
 done:
@@ -1502,6 +1530,7 @@ static void get_authz_advance_state(acme_t *acme, derr_t err){
     derr_t e = E_OK;
     acme_get_authz_state_t *state = &acme->state.get_authz;
     acme_status_e status = 0;
+    acme_status_e challenge_status = 0;
     dstr_t domain = {0};
     dstr_t expires = {0};
     dstr_t challenge = {0};
@@ -1539,6 +1568,7 @@ done:
         challenge = STEAL(dstr_t, &state->challenge);
         token = STEAL(dstr_t, &state->token);
         status = state->status;
+        challenge_status = state->challenge_status;
         retry_after = state->retry_after;
     }
     acme_get_authz_cb cb = state->cb;
@@ -1546,7 +1576,17 @@ done:
     acme->free_state(acme);
     acme->advance_state = NULL;
     acme->free_state = NULL;
-    cb(cb_data, e, status, domain, expires, challenge, token, retry_after);
+    cb(
+        cb_data,
+        e,
+        status,
+        challenge_status,
+        domain,
+        expires,
+        challenge,
+        token,
+        retry_after
+    );
 }
 
 static void get_authz_free_state(acme_t *acme){
@@ -1652,9 +1692,13 @@ static void poll_authz_reader_cb(stream_reader_t *reader, derr_t err){
     // parse body
     PROP_GO(&e, json_parse(acme->rbuf, &json), done);
 
-    // read body (just status)
-    dstr_t status;
-    jspec_t *jspec = JOBJ(true, JKEY("status", JDREF(&status)) );
+    // read body, looking for the relevant challenge
+    acme_status_e authz_status;
+    challenge_t challenge = {0};
+    jspec_t *jspec = JOBJ(true,
+        JKEY("challenges", JLIST(jlist_challenges, &challenge)),
+        JKEY("status", JASTAT(&authz_status)),
+    );
 
     bool ok;
     DSTR_VAR(errbuf, 512);
@@ -1663,15 +1707,28 @@ static void poll_authz_reader_cb(stream_reader_t *reader, derr_t err){
         ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
     }
 
-    if(dstr_eq(status, DSTR_LIT("processing"))){
+    // look at challenge status
+    if(challenge.status == ACME_PROCESSING){
         // still waiting; continue
-    }else if(dstr_eq(status, DSTR_LIT("valid"))){
+    }else if(challenge.status == ACME_VALID){
         // success!
         state->success = true;
-    }else if(dstr_eq(status, DSTR_LIT("invalid"))){
-        // failure (status=invalid), or unexpected (status=pending)
+    }else if(challenge.status == ACME_INVALID){
+        // failure
         ORIG_GO(&e,
-            E_RESPONSE, "authorization in invalid state (%x)", done, FD(status)
+            E_RESPONSE,
+            "challenge failed: %x (%x)",
+            done,
+            FD(challenge.errdetail),
+            FD(challenge.errtype)
+        );
+    }else{
+        // unexpected
+        ORIG_GO(&e,
+            E_RESPONSE,
+            "challenge in invalid state (%x)",
+            done,
+            FD(acme_status_dstr(challenge.status))
         );
     }
 

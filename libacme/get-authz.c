@@ -18,6 +18,7 @@ static void _get_authz_cb(
     void *data,
     derr_t err,
     acme_status_e status,
+    acme_status_e challenge_status,
     dstr_t domain,
     dstr_t expires,
     dstr_t challenge,
@@ -37,6 +38,7 @@ static void _get_authz_cb(
         DKEY("expires", DD(expires)),
         DKEY("challenge", DD(challenge)),
         DKEY("token", DD(token)),
+        DKEY("challenge_status", DD(acme_status_dstr(challenge_status))),
     );
     PROP_GO(&e, jdump(obj, WF(stdout), 2), done);
     (void)retry_after;

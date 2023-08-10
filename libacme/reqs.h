@@ -107,8 +107,9 @@ void acme_list_orders(
 typedef void (*acme_get_authz_cb)(
     void*,
     derr_t,
-    // allocated strings are returned
     acme_status_e status,
+    acme_status_e challenge_status,
+    // allocated strings are returned
     dstr_t domain,
     dstr_t expires,
     dstr_t challenge,   // only the dns challenge is returned
