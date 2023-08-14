@@ -107,7 +107,7 @@ done:
     dstr_free(&expires);
     dstr_free(&authorization);
     dstr_free(&finalize);
-    acme_close(*g->acme, NULL);
+    acme_close(*g->acme, NULL, NULL);
     duv_http_close(g->http, NULL);
     TRACE_PROP_VAR(&g->e, &e);
 }
@@ -134,7 +134,7 @@ static derr_t new_order(
 
     PROP_GO(&e, duv_http_init(&http, &loop, &scheduler, ctx), fail);
 
-    PROP_GO(&e, acme_new(&acme, &http, directory, NULL), fail);
+    PROP_GO(&e, acme_new(&acme, &http, directory), fail);
 
     PROP_GO(&e, acme_account_from_file(&acct, acct_file, acme), fail);
 

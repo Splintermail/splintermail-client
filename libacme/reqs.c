@@ -168,7 +168,6 @@ typedef void (*acme_advance_state_f)(acme_t *acme, derr_t);
 typedef void (*acme_free_state_f)(acme_t *acme);
 
 struct acme_t {
-    void *data; // user-defined value
     // we'll borrow the scheduler from http
     schedulable_t schedulable;
     uv_timer_t timer;
@@ -212,6 +211,7 @@ struct acme_t {
     } state;
     bool closed;
     acme_close_cb close_cb;
+    void *close_cb_data;
 };
 DEF_CONTAINER_OF(acme_t, reader, stream_reader_t)
 DEF_CONTAINER_OF(acme_t, req, duv_http_req_t)
@@ -220,7 +220,7 @@ DEF_CONTAINER_OF(acme_t, schedulable, schedulable_t)
 static void timer_close_cb(uv_handle_t *handle){
     acme_t *acme = handle->data;
     // all done
-    if(acme->close_cb) acme->close_cb(acme);
+    if(acme->close_cb) acme->close_cb(acme->close_cb_data);
 }
 
 // a wrapper around the per-request advance states, which handles preemption
@@ -261,7 +261,7 @@ static void schedule(acme_t *acme){
     scheduler->schedule(scheduler, &acme->schedulable);
 }
 
-derr_t acme_new(acme_t **out, duv_http_t *http, dstr_t directory, void *data){
+derr_t acme_new(acme_t **out, duv_http_t *http, dstr_t directory){
     derr_t e = E_OK;
 
     *out = NULL;
@@ -269,7 +269,7 @@ derr_t acme_new(acme_t **out, duv_http_t *http, dstr_t directory, void *data){
     acme_t *acme = DMALLOC_STRUCT_PTR(&e, acme);
     CHECK(&e);
 
-    *acme = (acme_t){ .data = data, .http = http };
+    *acme = (acme_t){ .http = http };
 
     PROP_GO(&e, dstr_copy(&directory, &acme->directory), fail);
 
@@ -291,10 +291,11 @@ fail:
     return e;
 }
 
-void acme_close(acme_t *acme, acme_close_cb close_cb){
+void acme_close(acme_t *acme, acme_close_cb close_cb, void *cb_data){
     if(acme->closed) return;
     acme->closed = true;
     acme->close_cb = close_cb;
+    acme->close_cb_data = cb_data;
 
     /* Four waiting cases:
        - waiting on an http response: cancel it and expect an E_CANCELED cb
