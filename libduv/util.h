@@ -57,7 +57,7 @@ DUV_HANDLE_PUNS(DUV_HANDLE_DECL)
 #undef DUV_HANDLE_DECL
 
 //// close any uv_handle_t subclass:
-// uv_handle_t *duv_TYPE_close(uv_TYPE_t *handle);
+// void duv_TYPE_close(uv_TYPE_t *handle);
 #define DUV_HANDLE_CLOSE_DECL(type) \
     void duv_##type##_close(uv_##type##_t *handle, uv_close_cb close_cb);
 DUV_HANDLE_PUNS(DUV_HANDLE_CLOSE_DECL)
