@@ -175,6 +175,8 @@ derr_t dfputc(FILE *f, int c);
 // for when you were going to check the error on close
 derr_t dclose(int fd);
 derr_t dfclose(FILE *f);
+// like dfclose but it always sets f to NULL
+derr_t dfclose2(FILE **f);
 
 // read an entire file to memory
 derr_t dstr_read_file(const char* filename, dstr_t* buffer);

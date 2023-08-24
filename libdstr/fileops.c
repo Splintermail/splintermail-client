@@ -1413,6 +1413,23 @@ derr_t dfclose(FILE *f){
     return e;
 }
 
+derr_t dfclose2(FILE **f){
+    derr_t e = E_OK;
+
+    FILE *temp = *f;
+    *f = NULL;
+
+    if(!temp) return e;
+
+    int ret = fclose(temp);
+    if(ret){
+        TRACE(&e, "fclose: %x\n", FE(errno));
+        ORIG(&e, E_OS, "fclose failed");
+    }
+
+    return e;
+}
+
 derr_t dstr_read_file(const char* filename, dstr_t* buffer){
     derr_t e = E_OK;
 
