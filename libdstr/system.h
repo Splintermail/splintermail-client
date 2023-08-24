@@ -31,6 +31,9 @@ typedef struct {
     int sec;
 } dtm_t;
 
+dtm_t dtm_from_tm(struct tm tm);
+struct tm dtm_to_tm(dtm_t dtm);
+
 // read a local time stamp
 derr_type_t dmktime_local_quiet(dtm_t dtm, time_t *out);
 derr_t dmktime_local(dtm_t dtm, time_t *out);

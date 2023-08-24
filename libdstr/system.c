@@ -272,6 +272,28 @@ derr_t dlocaltime(time_t t, struct tm *tm){
 #endif
 }
 
+dtm_t dtm_from_tm(struct tm tm){
+    return (dtm_t){
+        .year = tm.tm_year + 1900,
+        .month = tm.tm_mon + 1,
+        .day = tm.tm_mday,
+        .hour = tm.tm_hour,
+        .min = tm.tm_min,
+        .sec = tm.tm_sec,
+    };
+}
+
+struct tm dtm_to_tm(dtm_t dtm){
+    return (struct tm){
+        .tm_year = dtm.year - 1900,
+        .tm_mon = dtm.month - 1,
+        .tm_mday = dtm.day,
+        .tm_hour = dtm.hour,
+        .tm_min = dtm.min,
+        .tm_sec = dtm.sec,
+    };
+}
+
 // read a local time stamp
 derr_type_t dmktime_local_quiet(dtm_t dtm, time_t *out){
     struct tm tm = {
