@@ -342,11 +342,11 @@ derr_t keypair_load_private(keypair_t **out, const char *keyfile){
     *out = NULL;
 
     DSTR_VAR(pem, 8192);
-    e = dstr_read_file(keyfile, &pem);
-    CATCH(e, E_FIXEDSIZE){
-        DROP_VAR(&e);
+    derr_t e2 = dstr_read_file(keyfile, &pem);
+    CATCH(e2, E_FIXEDSIZE){
+        DROP_VAR(&e2);
         ORIG(&e, E_PARAM, "keyfile (%x) too long", FS(keyfile));
-    }
+    }else PROP_VAR(&e, &e2);
 
     EVP_PKEY *pkey = NULL;
     PROP(&e, read_pem_encoded_privkey(pem, &pkey) );
@@ -364,13 +364,13 @@ derr_t keypair_load_public(keypair_t **out, const char *keyfile){
     EVP_PKEY *temp = NULL;
 
     DSTR_VAR(pem, 8192);
-    e = dstr_read_file(keyfile, &pem);
-    CATCH(e, E_FIXEDSIZE){
-        DROP_VAR(&e);
+    derr_t e2 = dstr_read_file(keyfile, &pem);
+    CATCH(e2, E_FIXEDSIZE){
+        DROP_VAR(&e2);
         ORIG_GO(&e, E_PARAM, "keyfile (%x) too long", cu, FS(keyfile));
-    }
+    }else PROP_VAR_GO(&e, &e2, cu);
 
-    derr_t e2 = read_pem_encoded_pubkey(pem, &pkey);
+    e2 = read_pem_encoded_pubkey(pem, &pkey);
     if(e2.type != E_PARAM){
         // check for non-E_PARAM errors
         PROP_VAR_GO(&e, &e2, cu);
