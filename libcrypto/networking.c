@@ -304,6 +304,28 @@ cleanup:
     return e;
 }
 
+derr_t ssl_context_new_server_path(
+    ssl_context_t* ctx, string_builder_t cert, string_builder_t key
+){
+    DSTR_VAR(stack_cert, 256);
+    dstr_t heap_cert = {0};
+    dstr_t* dcert = NULL;
+    DSTR_VAR(stack_key, 256);
+    dstr_t heap_key = {0};
+    dstr_t* dkey = NULL;
+
+    derr_t e = E_OK;
+
+    PROP_GO(&e, sb_expand(&cert, &stack_cert, &heap_cert, &dcert), cu);
+    PROP_GO(&e, sb_expand(&key, &stack_key, &heap_key, &dkey), cu);
+    PROP_GO(&e, ssl_context_new_server(ctx, dcert->data, dkey->data), cu);
+
+cu:
+    dstr_free(&heap_key);
+    dstr_free(&heap_cert);
+    return e;
+}
+
 void ssl_context_free(ssl_context_t* ctx){
     if(ctx->ctx){
         SSL_CTX_free(ctx->ctx);

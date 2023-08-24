@@ -43,6 +43,9 @@ derr_t ssl_context_new_client(ssl_context_t* ctx);
 derr_t ssl_context_new_server(
     ssl_context_t* ctx, const char* certfile, const char* keyfile
 );
+derr_t ssl_context_new_server_path(
+    ssl_context_t* ctx, string_builder_t cert, string_builder_t key
+);
 /* throws: E_NOMEM
            E_FS error accessing key/certificate files
            E_SSL error reading PEM files (technically could be an OS error),
