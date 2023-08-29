@@ -6,6 +6,9 @@ typedef struct acme_t acme_t;
 typedef void (*acme_close_cb)(void*);
 
 derr_t acme_new(acme_t **out, duv_http_t *http, dstr_t directory);
+derr_t acme_new_ex(
+    acme_t **out, duv_http_t *http, dstr_t directory, char *verify_name
+);
 // close_cb is allowed to be NULL
 void acme_close(acme_t *acme, acme_close_cb close_cb, void *cb_data);
 void acme_free(acme_t **acme);

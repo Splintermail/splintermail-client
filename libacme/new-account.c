@@ -44,6 +44,7 @@ static derr_t new_account(
     dstr_t contact_email,
     key_i **key,
     dstr_t directory,
+    char *verify_name,
     SSL_CTX *ctx
 ){
     derr_t e = E_OK;
@@ -60,7 +61,7 @@ static derr_t new_account(
 
     PROP_GO(&e, duv_http_init(&http, &loop, &scheduler, ctx), fail);
 
-    PROP_GO(&e, acme_new(&acme, &http, directory), fail);
+    PROP_GO(&e, acme_new_ex(&acme, &http, directory, verify_name), fail);
 
     // request a new account
     acme_new_account(acme, key, contact_email, _new_account_cb, &g);
@@ -152,12 +153,18 @@ int main(int argc, char **argv){
 
     PROP_GO(&e, ssl_context_new_client_ex(&ssl_ctx, true, &ca, !!ca), fail);
 
-    if(o_pebble.found) PROP_GO(&e, trust_pebble(ssl_ctx.ctx), fail);
+    char *verify_name = NULL;
+    if(o_pebble.found){
+        PROP_GO(&e, trust_pebble(ssl_ctx.ctx), fail);
+        verify_name = "pebble";
+    }
 
     // generate a new key
     PROP_GO(&e, gen_es256(&k), fail);
 
-    PROP_GO(&e, new_account(contact_email, &k, directory, ssl_ctx.ctx), fail);
+    PROP_GO(&e,
+        new_account(contact_email, &k, directory, verify_name, ssl_ctx.ctx),
+    fail);
 
 fail:
     (void)main;

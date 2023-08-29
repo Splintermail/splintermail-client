@@ -309,11 +309,15 @@ static void connect_cb(duv_connect_t *connector, derr_t e){
         m->ssl_ctx = ssl_ctx.ctx;
     }
     stream_i *tls_stream;
+    dstr_t verify_name = m->host;
+    if(req->verify_name){
+        verify_name = dstr_from_cstr(req->verify_name);
+    }
     PROP_GO(&req->e,
         duv_tls_wrap_client(
             &m->duv_tls,
             m->ssl_ctx,
-            m->host,
+            verify_name,
             req->scheduler,
             m->stream,
             &tls_stream
@@ -915,6 +919,22 @@ rstream_i *duv_http_req(
     // called once per header, note that headers may arrive after the body
     duv_http_hdr_cb hdr_cb
 ){
+    return duv_http_req_ex(
+        req, http, method, url, params, hdrs, body, hdr_cb, NULL
+    );
+}
+
+rstream_i *duv_http_req_ex(
+    duv_http_req_t *req,
+    duv_http_t *http,
+    http_method_e method,
+    url_t url,
+    http_pairs_t *params,
+    http_pairs_t *hdrs,
+    const dstr_t body,
+    duv_http_hdr_cb hdr_cb,
+    char *verify_name
+){
     *req = (duv_http_req_t){
         .iface = {
             // preserve data
@@ -929,6 +949,7 @@ rstream_i *duv_http_req(
         .method = method,
         .body = body,
         .hdr_cb = hdr_cb,
+        .verify_name = verify_name,
     };
 
     link_init(&req->link);

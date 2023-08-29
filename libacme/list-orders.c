@@ -51,6 +51,7 @@ done:
 
 static derr_t list_orders(
     dstr_t directory,
+    char *verify_name,
     char *acct_file,
     SSL_CTX *ctx
 ){
@@ -69,7 +70,7 @@ static derr_t list_orders(
 
     PROP_GO(&e, duv_http_init(&http, &loop, &scheduler, ctx), fail);
 
-    PROP_GO(&e, acme_new(&acme, &http, directory), fail);
+    PROP_GO(&e, acme_new_ex(&acme, &http, directory, verify_name), fail);
 
     PROP_GO(&e, acme_account_from_file(&acct, acct_file, acme), fail);
 
@@ -160,9 +161,15 @@ int main(int argc, char **argv){
 
     PROP_GO(&e, ssl_context_new_client_ex(&ssl_ctx, true, &ca, !!ca), fail);
 
-    if(o_pebble.found) PROP_GO(&e, trust_pebble(ssl_ctx.ctx), fail);
+    char *verify_name = NULL;
+    if(o_pebble.found){
+        PROP_GO(&e, trust_pebble(ssl_ctx.ctx), fail);
+        verify_name = "pebble";
+    }
 
-    PROP_GO(&e, list_orders(directory, acct, ssl_ctx.ctx), fail);
+    PROP_GO(&e,
+        list_orders(directory, verify_name, acct, ssl_ctx.ctx),
+    fail);
 
 fail:
     (void)main;

@@ -173,6 +173,7 @@ struct acme_t {
     uv_timer_t timer;
     duv_http_t *http;
     dstr_t directory;
+    char *verify_name;
     url_t directory_url;
     // nonce gets modified throughout acme_t lifetime
     dstr_t nonce;
@@ -262,6 +263,12 @@ static void schedule(acme_t *acme){
 }
 
 derr_t acme_new(acme_t **out, duv_http_t *http, dstr_t directory){
+    return acme_new_ex(out, http, directory, NULL);
+}
+
+derr_t acme_new_ex(
+    acme_t **out, duv_http_t *http, dstr_t directory, char *verify_name
+){
     derr_t e = E_OK;
 
     *out = NULL;
@@ -269,7 +276,7 @@ derr_t acme_new(acme_t **out, duv_http_t *http, dstr_t directory){
     acme_t *acme = DMALLOC_STRUCT_PTR(&e, acme);
     CHECK(&e);
 
-    *acme = (acme_t){ .http = http };
+    *acme = (acme_t){ .http = http, .verify_name = verify_name };
 
     PROP_GO(&e, dstr_copy(&directory, &acme->directory), fail);
 
@@ -481,7 +488,7 @@ static derr_t acme_post(
     url_t url_parsed;
     PROP(&e, parse_url(url, &url_parsed) );
 
-    rstream_i *r = duv_http_req(
+    rstream_i *r = duv_http_req_ex(
         &acme->req,
         acme->http,
         HTTP_METHOD_POST,
@@ -489,7 +496,8 @@ static derr_t acme_post(
         NULL,
         hdrs,
         acme->wbuf,
-        hdr_cb
+        hdr_cb,
+        acme->verify_name
     );
 
     acme->rbuf.len = 0;
@@ -556,7 +564,7 @@ done:
 
 // results in a call to acme_advance_state
 static void get_directory(acme_t *acme){
-    rstream_i *r = duv_http_req(
+    rstream_i *r = duv_http_req_ex(
         &acme->req,
         acme->http,
         HTTP_METHOD_GET,
@@ -564,7 +572,8 @@ static void get_directory(acme_t *acme){
         NULL,
         NULL,
         (dstr_t){0},
-        ignore_hdr_cb  // GETs don't result in a nonce hdr
+        ignore_hdr_cb,  // GETs don't result in a nonce hdr
+        acme->verify_name
     );
 
     acme->rbuf.len = 0;
@@ -600,7 +609,7 @@ done:
 
 // results in a call to acme_advance_state
 static void new_nonce(acme_t *acme){
-    rstream_i *r = duv_http_req(
+    rstream_i *r = duv_http_req_ex(
         &acme->req,
         acme->http,
         HTTP_METHOD_HEAD,
@@ -608,7 +617,8 @@ static void new_nonce(acme_t *acme){
         NULL,
         NULL,
         (dstr_t){0},
-        base_hdr_cb
+        base_hdr_cb,
+        acme->verify_name
     );
 
     acme->rbuf.len = 0;
