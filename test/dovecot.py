@@ -32,7 +32,7 @@ class Dovecot:
         assert basedir, "basedir is required"
         self.basedir = os.path.abspath(basedir)
         self.sql_sock = os.path.abspath(sql_sock)
-        self.bind_addr = bind_addr
+        self.bind_addr = bind_addr or "127.0.0.1"
         # pick a random port if not provided
         self.imaps_port = imaps_port or random.randint(6000, 2**16-1)
         # assume we are in the build directory if not provided
