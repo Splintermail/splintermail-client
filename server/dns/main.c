@@ -406,6 +406,9 @@ static void send_initial_resyncs(uv_timer_t *timer){
 
     derr_t e = E_OK;
 
+    printf("ready\n");
+    fflush(stdout);
+
     membuf_t *membuf = NULL;
 
     for(size_t i = 0; i < g->npeers; i++){

@@ -580,6 +580,8 @@ static void uv_initial_actions(uv_timer_t *timer){
 
     // don't care about failures from this call
     (void)sd_notify(0, "READY=1");
+    printf("ready\n");
+    fflush(stdout);
 
     return;
 
