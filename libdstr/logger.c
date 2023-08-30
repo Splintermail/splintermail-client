@@ -251,3 +251,32 @@ void pvt_merge_var(
     *var = E_OK;
 }
 
+// append code's trace to e and return true if code is an error.
+bool pvt_multiprop_var(
+    derr_t *out,
+    const char *file,
+    const char *func,
+    int line,
+    derr_t **errs,
+    size_t nerrs
+){
+    size_t i = 0;
+    // search for the first error (which may be out)
+    bool found_err = is_error(*out);
+    for(; i < nerrs && !found_err; i++){
+        derr_t *e = errs[i];
+        if(!is_error(*e)){
+            // drop the trace of anything that isn't an error
+            // (this is different than pvt_prop_var)
+            dstr_free(&e->msg);
+            continue;
+        }
+        found_err = true;
+        pvt_prop_var(out, e, file, func, line);
+    }
+    // clear secondary errors
+    for(; i < nerrs; i++){
+        DROP_VAR(errs[i]);
+    }
+    return found_err;
+}

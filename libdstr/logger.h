@@ -374,3 +374,75 @@ void pvt_merge_var(
 #define PASSED(e) do { \
     (e) = E_OK; \
 } while(0)
+
+/* MULTIPROP_VAR() and friends automate the process of "keep the first error,
+   drop secondary errors", for an arbitrary number of variables.  If the base
+   derr_t (the first one) is an error, all the __VAR_ARGS__ derr_t's are simply
+   dropped, with no effect on the trace.  Otherwise, if any of the __VAR_ARGS__
+   derr_t's are found to be errors, the first one is PROP_VAR'd and the
+   remaining ones are silently dropped.
+
+   This behavior is specifically focused on simplifying the error handling
+   during callbacks in the advance state pattern; the primary state most likely
+   has an output error which may already be set.  If it is, the callback error
+   should be dropped.  If it's not, the callback error should be captured.
+   Then after resolving which error to keep, action needs to be taken based on
+   the final error state.  Example:
+
+    static void thing_done_cb(void *data, derr_t err){
+        main_obj_t *main_obj = data;
+
+        MULTIPROP_VAR_GO(&main_obj->err, done, &err);
+
+        // take success-specific actions here
+
+    done:
+        schedule(main_obj);
+    }
+*/
+
+// append code's trace to e and return true if code is an error.
+bool pvt_multiprop_var(
+    derr_t *out,
+    const char *file,
+    const char *func,
+    int line,
+    derr_t **errs,
+    size_t nerrs
+);
+
+#define IF_MULTIPROP_VAR(e, ...) if( \
+    pvt_multiprop_var((e), \
+        FILE_LOC, \
+        (derr_t*[]){__VA_ARGS__}, \
+        sizeof((derr_t*[]){__VA_ARGS__}) / sizeof(derr_t*) \
+    ) \
+)
+
+#define TRACE_MULTIPROP_VAR(e, ...) do { \
+    pvt_multiprop_var((e), \
+        FILE_LOC, \
+        (derr_t*[]){__VA_ARGS__}, \
+        sizeof((derr_t*[]){__VA_ARGS__}) / sizeof(derr_t*) \
+    ); \
+} while(0)
+
+#define MULTIPROP_VAR(e, ...) do { \
+    if( \
+        pvt_multiprop_var((e), \
+            FILE_LOC, \
+            (derr_t*[]){__VA_ARGS__}, \
+            sizeof((derr_t*[]){__VA_ARGS__}) / sizeof(derr_t*) \
+        ) \
+    ) return *(e); \
+} while(0)
+
+#define MULTIPROP_VAR_GO(e, _label, ...) do { \
+    if( \
+        pvt_multiprop_var((e), \
+            FILE_LOC, \
+            (derr_t*[]){__VA_ARGS__}, \
+            sizeof((derr_t*[]){__VA_ARGS__}) / sizeof(derr_t*) \
+        ) \
+    ) goto _label; \
+} while(0)
