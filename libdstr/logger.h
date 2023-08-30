@@ -357,7 +357,6 @@ void pvt_merge_cmd(
 #define MERGE_CMD(e, cmd, message) \
     pvt_merge_cmd((e), (cmd), (message), FILE_LOC)
 
-
 void pvt_merge_var(
     derr_t *e,
     derr_t *var,
@@ -368,21 +367,6 @@ void pvt_merge_var(
 );
 #define MERGE_VAR(e, e2, message) \
     pvt_merge_var((e), (e2), (message), FILE_LOC)
-
-
-/* SPLIT effectively duplicates an error object.  It is used in multi-threaded
-   situations where a single error causes two different things to fail, such
-   as a session and the entire loop. */
-derr_t pvt_split(derr_t *orig, const char *file, const char *func, int line);
-#define SPLIT(e) pvt_split(&(e), FILE_LOC)
-
-/* BROADCAST duplicates an error object, like SPLIT, except with a different
-   implication.  BROADCAST implies a shared reasource failed and all of its
-   accessors will receive the same error. */
-derr_t pvt_broadcast(
-    derr_t *orig, const char *file, const char *func, int line
-);
-#define BROADCAST(e) pvt_broadcast(&(e), FILE_LOC)
 
 /* if you pass an error laterally, you need to reset it without freeing the
    message. It could be done manually but if I have any good ideas later for
