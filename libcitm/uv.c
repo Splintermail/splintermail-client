@@ -121,7 +121,6 @@ static void connect_cb(duv_connect_t *connect, derr_t error){
     return;
 
 fail:
-    TRACE_PROP(&e);
     if(uc){
         SSL_CTX_free(uc->conn.ctx);
         free(uc);

@@ -59,7 +59,7 @@ static void connect_cb(void *data, citm_conn_t *conn_up, derr_t e){
     io_pair_t *io_pair = data;
     if(is_error(e) && e.type != E_CANCELED){
         // non-canceled failure
-        TRACE_PROP(&e);
+        TRACE_PROP(&e, e);
         if(io_pair->conn_dn->security != IMAP_SEC_TLS){
             // not TLS, so we have a way to tell the client why
             io_pair->e = e;

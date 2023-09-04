@@ -286,10 +286,9 @@ static derr_t copy_codepoint(json_parser_t *p, uint32_t codepoint){
     derr_type_t etype = utf8_encode_quiet(
         codepoint, copy_codepoint_foreach, &arg
     );
-    if(is_error(e)){
-        TRACE_PROP(&e);
-        return e;
-    }
+    // check for derr_t error first
+    PROP(&e, e);
+    // then check for etype error
     if(etype != E_NONE){
         ORIG(&e, etype, "failure in utf8_encode");
     }

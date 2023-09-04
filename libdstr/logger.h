@@ -178,8 +178,8 @@ static inline bool pvt_prop(derr_t *e, derr_t code,
 #define PROP_GO(e, code, _label) \
      do { if(pvt_prop(e, code, FILE_LOC)) { goto _label; } } while(0)
 
-#define TRACE_PROP(e) \
-    do { IF_PROP(e, *e){} } while(0)
+#define TRACE_PROP(e, code) \
+    do { IF_PROP(e, code){} } while(0)
 
 
 // PROP_VAR and friends clean up the variable they merge from
