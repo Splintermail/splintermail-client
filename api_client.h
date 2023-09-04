@@ -62,19 +62,15 @@ derr_t api_token_read_increment_write_path(
     const string_builder_t *sb, api_token_t *token, bool *ok
 );
 
-/* JAPI is used like JOBJ, but it auto-dereferences the outer layer of json:
-   {"status": "...", "content": ...} */
-// (also JAPI hard-codes allow_extras=true
-derr_t jspec_api_read(jspec_t *jspec, jctx_t *ctx);
-#define JAPI(...) \
-    &((jspec_object_t){ \
-        .jspec = { .read = jspec_api_read }, \
-        .keys = &(_jkey_t[]){(_jkey_t){0}, __VA_ARGS__}[1], \
-        .nkeys = sizeof((_jkey_t[]){(_jkey_t){0}, __VA_ARGS__}) \
-                    / sizeof(_jkey_t) - 1, \
-        .allow_extras = true, \
-    }.jspec)
+typedef struct {
+    jspec_t jspec;
+    jspec_t *content;
+} jspec_api_t;
 
+/* JAPI auto-dereferences the outer layer of json:
+        {"status": "...", "content": ...} */
+derr_t jspec_api_read(jspec_t *jspec, jctx_t *ctx);
+#define JAPI(content) &((jspec_api_t){{jspec_api_read}, (content) }.jspec)
 
 derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
                          dstr_t* arg, const dstr_t* username,

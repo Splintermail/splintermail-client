@@ -187,10 +187,10 @@ cu:
 
 //
 
+DEF_CONTAINER_OF(jspec_api_t, jspec, jspec_t);
+
 derr_t jspec_api_read(jspec_t *jspec, jctx_t *ctx){
     derr_t e = E_OK;
-
-    // jspec is really a jspec_object_t, but we don't actually dereference it
 
     // capture error and ok independently of what we report upwards
     DSTR_VAR(errbuf, 1024);
@@ -211,7 +211,7 @@ derr_t jspec_api_read(jspec_t *jspec, jctx_t *ctx){
     }
 
     // now make sure that the request was a success
-    if(!dstr_eq(status, DSTR_LIT("success"))){
+    if(!dstr_ieq(status, DSTR_LIT("success"))){
         // contents should be a string failure message
         if(contents_ok){
             dstr_t dcontents;
@@ -227,9 +227,10 @@ derr_t jspec_api_read(jspec_t *jspec, jctx_t *ctx){
         ORIG(&e, E_RESPONSE, "api call failed");
     }
 
-    // now call the original jspec_object_read() on the inner layer
+    // now call the content jspec on the inner layer
     jctx_t innerctx = jctx_sub_key(ctx, DSTR_LIT("contents"), jcontents.node);
-    PROP(&e, jspec_object_read(jspec, &innerctx) );
+    jspec_t *content_spec = CONTAINER_OF(jspec, jspec_api_t, jspec)->content;
+    PROP(&e, jctx_read(&innerctx, content_spec) );
 
     return e;
 }
@@ -690,8 +691,10 @@ derr_t register_api_token_sync(
     // read the secret and token from contents
     PROP_GO(&e, api_token_init(&token), cu);
     jspec_t *jspec = JAPI(
-        JKEY("secret", JDCPY(&token.secret)),
-        JKEY("token", JU(&token.key)),
+        JOBJ(true,
+            JKEY("secret", JDCPY(&token.secret)),
+            JKEY("token", JU(&token.key)),
+        )
     );
     bool ok;
     DSTR_VAR(errbuf, 1024);
