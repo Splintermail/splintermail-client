@@ -282,3 +282,32 @@ derr_t jdump(jdump_i *j, writer_i *out, int indent){
     if(etype) ORIG(&e, etype, "jdump failed");
     return e;
 }
+
+derr_t jdump_file(jdump_i *j, const char *path, int indent){
+    derr_t e = E_OK;
+    FILE *f = NULL;
+
+    PROP(&e, dfopen(path, "w", &f) );
+
+    PROP_GO(&e, jdump(j, WF(f), indent), cu);
+
+    PROP(&e, dfclose2(&f) );
+
+cu:
+    if(f) fclose(f);
+    return e;
+}
+
+derr_t jdump_path(jdump_i *j, const string_builder_t sb, int indent){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(&sb, &stack, &heap, &path) );
+
+    PROP_GO(&e, jdump_file(j, path->data, indent), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}

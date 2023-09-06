@@ -321,6 +321,7 @@ derr_t list_ ## type ## _new(LIST(type)* list, size_t num_items){ \
     if(!list->data){ \
         ORIG(&e, E_NOMEM, "unable to malloc list"); \
     } \
+    memset(list->data, 0, newsize); \
     list->size = newsize; \
     list->len = 0; \
     list->fixed_size = false; \
@@ -341,6 +342,7 @@ derr_t list_ ## type ## _grow(LIST(type)* list, size_t num_items){ \
         } \
         void* new = realloc(list->data, newsize); \
         if(!new) ORIG(&e, E_NOMEM, "unable to realloc list"); \
+        memset(new + list->size, 0, newsize - list->size); \
         list->data = new; \
         list->size = newsize; \
     } \
@@ -372,15 +374,6 @@ void list_ ## type ## _free(LIST(type)* list){ \
         list->size = 0; \
     } \
 }
-
-derr_type_t dstr_grow_quiet(dstr_t *ds, size_t min_size);
-derr_t dstr_grow(dstr_t* ds, size_t min_size);
-/* throws: E_FIXEDSIZE
-           E_NOMEM */
-
-// same as dstr_grow, but zeroize the old buffer
-derr_type_t dstr_grow0_quiet(dstr_t *ds, size_t min_size);
-derr_t dstr_grow0(dstr_t* ds, size_t min_size);
 
 dstr_t dstr_from_cstr(char *cstr);
 dstr_t dstr_from_cstrn(char *cstr, size_t n, bool null_terminated);
@@ -533,15 +526,27 @@ bool dstr_endswith(const dstr_t *str, const dstr_t *pattern);
 bool dstr_endswith2(const dstr_t str, const dstr_t pattern);
 bool dstr_iendswith2(const dstr_t str, const dstr_t pattern);
 
+derr_type_t dstr_grow_quiet(dstr_t *ds, size_t min_size);
+derr_t dstr_grow(dstr_t* ds, size_t min_size);
+/* throws: E_FIXEDSIZE
+           E_NOMEM */
+
+// same as dstr_grow, but zeroize the old buffer
+derr_type_t dstr_grow0_quiet(dstr_t *ds, size_t min_size);
+derr_t dstr_grow0(dstr_t* ds, size_t min_size);
+
+derr_type_t dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text);
+derr_t dstr_append(dstr_t* dstr, const dstr_t* new_text);
+/* throws: E_FIXEDSIZE
+           E_NOMEM */
 /*
 in:     dstr with text to copy
 out:    dstr to be copied/appended to
 */
+derr_t dstr_copystrn(const char *in, size_t n, dstr_t *out);
+derr_t dstr_copystr(const char *in, dstr_t *out);
 derr_t dstr_copy(const dstr_t* in, dstr_t* out);
-/* throws: E_FIXEDSIZE
-           E_NOMEM */
-derr_type_t dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text);
-derr_t dstr_append(dstr_t* dstr, const dstr_t* new_text);
+derr_t dstr_copy2(const dstr_t in, dstr_t* out);
 /* throws: E_FIXEDSIZE
            E_NOMEM */
 

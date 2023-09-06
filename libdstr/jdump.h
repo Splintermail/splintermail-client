@@ -127,3 +127,6 @@ extern char *_objsnippet;
 
 derr_type_t jdump_quiet(jdump_i *j, writer_i *out, int indent);
 derr_t jdump(jdump_i *j, writer_i *out, int indent);
+
+derr_t jdump_file(jdump_i *j, const char *path, int indent);
+derr_t jdump_path(jdump_i *j, const string_builder_t sb, int indent);

@@ -645,13 +645,42 @@ derr_t dstr_append0(dstr_t* dstr, const dstr_t* new_text){
     return e;
 }
 
-// copy one dstr to another
+derr_t dstr_copystrn(const char *in, size_t n, dstr_t *out){
+    derr_t e = E_OK;
+
+    if(n){
+        PROP(&e, dstr_grow(out, n) );
+        memcpy(out->data, in, n);
+    }
+    out->len = n;
+
+    return e;
+}
+
+derr_t dstr_copystr(const char *in, dstr_t *out){
+    derr_t e = E_OK;
+
+    if(in){
+        PROP(&e, dstr_copystrn(in, strlen(in), out) );
+    }else{
+        out->len = 0;
+    }
+
+    return e;
+}
+
 derr_t dstr_copy(const dstr_t* in, dstr_t* out){
     derr_t e = E_OK;
-    PROP(&e, dstr_grow(out, in->len) );
 
-    memcpy(out->data, in->data, in->len);
-    out->len = in->len;
+    PROP(&e, dstr_copystrn(in->data, in->len, out) );
+
+    return e;
+}
+
+derr_t dstr_copy2(const dstr_t in, dstr_t* out){
+    derr_t e = E_OK;
+
+    PROP(&e, dstr_copystrn(in.data, in.len, out) );
 
     return e;
 }
