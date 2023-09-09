@@ -978,6 +978,10 @@ derr_t exists_path(const string_builder_t* sb, bool* ret){
     return e;
 }
 
+derr_t exists_path2(const string_builder_t path, bool* ret){
+    return exists_path(&path, ret);
+}
+
 derr_t dremove(const char* path){
     derr_t e = E_OK;
 
@@ -1474,6 +1478,10 @@ cu:
     return e;
 }
 
+derr_t dstr_read_path2(const string_builder_t sb, dstr_t* buffer){
+    return dstr_read_path(&sb, buffer);
+}
+
 derr_t dstr_write_file(const char* filename, const dstr_t* buffer){
     derr_t e = E_OK;
 
@@ -1505,6 +1513,10 @@ cleanup:
     return e;
 }
 
+derr_t dstr_write_file2(const dstr_t dstr, const char* filename){
+    return dstr_write_file(filename, &dstr);
+}
+
 derr_t dstr_write_path(const string_builder_t *sb, const dstr_t* buffer){
     derr_t e = E_OK;
     DSTR_VAR(stack, 256);
@@ -1517,4 +1529,8 @@ derr_t dstr_write_path(const string_builder_t *sb, const dstr_t* buffer){
 cu:
     dstr_free(&heap);
     return e;
+}
+
+derr_t dstr_write_path2(const dstr_t dstr, const string_builder_t sb){
+    return dstr_write_path(&sb, &dstr);
 }

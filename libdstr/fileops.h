@@ -129,6 +129,7 @@ derr_t file_rw_access_path(const string_builder_t* sb, bool* ret);
 
 derr_t dexists(const char *path, bool *exists);
 derr_t exists_path(const string_builder_t* path, bool* ret);
+derr_t exists_path2(const string_builder_t path, bool* ret);
 derr_t dremove(const char *path);
 derr_t remove_path(const string_builder_t* sb);
 derr_t dunlink(const char *path);
@@ -186,10 +187,13 @@ derr_t dstr_read_file(const char* filename, dstr_t* buffer);
              E_OPEN */
 
 derr_t dstr_read_path(const string_builder_t* sb, dstr_t* buffer);
+derr_t dstr_read_path2(const string_builder_t sb, dstr_t* buffer);
 
 // write an entire file from memory
 derr_t dstr_write_file(const char* filename, const dstr_t* buffer);
+derr_t dstr_write_file2(const dstr_t dstr, const char* filename);
 /*  throws : E_OS
              E_OPEN */
 
 derr_t dstr_write_path(const string_builder_t* sb, const dstr_t* buffer);
+derr_t dstr_write_path2(const dstr_t dstr, const string_builder_t sb);
