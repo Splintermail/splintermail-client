@@ -56,7 +56,7 @@ derr_t maildir_name_parse(
     LIST_VAR(dstr_t, major_tokens, 2);
     DSTR_STATIC(colon, ":");
     derr_t e2 = dstr_split(name, &colon, &major_tokens);
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         TRACE(&e2, "too many major tokens");
         RETHROW(&e, &e2, E_PARAM);
     }else PROP(&e, e2);

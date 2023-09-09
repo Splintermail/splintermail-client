@@ -9,7 +9,7 @@ const char *get_date_field(char *buf, size_t len, time_t epoch){
     if(epoch == (time_t)-1){
         // get the current time
         e = dtime(&epoch);
-        CATCH(e, E_ANY){
+        CATCH_ANY(&e){
             // log error, but ignore it
             TRACE(&e, "ignoring failure of dtime");
             DUMP(e);
@@ -20,7 +20,7 @@ const char *get_date_field(char *buf, size_t len, time_t epoch){
 
     struct tm tnow;
     e = dlocaltime(epoch, &tnow);
-    CATCH(e, E_ANY){
+    CATCH_ANY(&e){
         // log error, but ignore it
         TRACE(&e, "ignoring failure of dlocaltime");
         DUMP(e);
@@ -57,7 +57,7 @@ imap_time_t imap_time_now(time_t epoch){
     if(epoch == (time_t)-1){
         // get the current time
         e = dtime(&epoch);
-        CATCH(e, E_ANY){
+        CATCH_ANY(&e){
             // log error, but ignore it
             TRACE(&e, "ignoring failure of dtime");
             DUMP(e);

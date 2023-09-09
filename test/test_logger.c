@@ -160,7 +160,7 @@ msg_check:
     size_t oldmsglen = e1.msg.len;
 
     // ensure we can RETHROW a single variable
-    CATCH2(&e1, E_ANY){
+    CATCH_ANY(&e1){
         TRACE_RETHROW(&e1, &e1, E_CONN);
     }else{
         ORIG_GO(&e, E_INTERNAL, "expected an error", done);

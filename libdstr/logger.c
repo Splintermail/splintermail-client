@@ -196,6 +196,137 @@ void pvt_orig(
     );
 }
 
+/* PROP() and friends merge two error contexts.  Typically, the first error
+   context is the main `derr_t e` for the function, and the second is the
+   return value of some command, but also it may be the secondary error context
+   e2 in the `else` statement after a CATCH clause which does not trigger. */
+
+// append code's trace to e and return true if code is an error.
+bool pvt_prop(
+    derr_t *e, derr_t code, const char *file, const char *func, int line
+){
+    // always keep the new trace
+    if(code.msg.data != NULL){
+        // handle empty errors or duplicate parameters
+        if(e->msg.data == NULL || e->msg.data == code.msg.data){
+            // just use the new trace as is
+            e->msg = code.msg;
+        }else if(e->msg.data != NULL){
+            // apend the new trace to the existing one
+            // best effort; ignore error
+            dstr_append_quiet(&e->msg, &code.msg);
+            // done with the new msg
+            dstr_free(&code.msg);
+        }
+    }
+
+    // prefer the new type (this is different from MERGE)
+    if(code.type != E_NONE){
+        e->type = code.type;
+    }
+
+    if(!is_error(code)) return false;
+
+    TRACE(e, "propagating %x from file %x: %x(), line %x\n",
+        FD(error_to_dstr(e->type)), FS(file), FS(func), FI(line));
+    return true;
+}
+
+bool pvt_prop_var(
+    derr_t *e, derr_t *e2, const char *file, const char *func, int line
+){
+    bool ret = pvt_prop(e, *e2, file, func, line);
+    if(e != e2) *e2 = E_OK;
+    return ret;
+}
+
+/* CHECK handles an error that we have ignored until now, useful when
+   transitioning from chunks of code which use the builder api error handling
+   strategy to chunks of code which use normal error handling */
+bool pvt_check(derr_t *e, const char *file, const char *func, int line){
+    if(!is_error(*e)) return false;
+
+    TRACE(e, "Handling %x in file %x: %x(), line %x\n",
+        FD(error_to_dstr(e->type)), FS(file), FS(func), FI(line));
+    return true;
+}
+
+/* CATCH is almost always for checking the secondary error context, e2, to
+   do some analysis before dropping it or merging it into the main error
+   context `e` with RETHROW or PROP.
+
+   The reason you can't do CATCHing on a single error stack is that if you
+   decide to drop an error you don't know the "scope" of what you want to drop;
+   you want to erase the errors for this thing you tried but not any other
+   error information attached to the trace.  By having a separate derr_t you
+   have a clearly defined scope for the CATCH to make decisions about.  Then
+   you can choose to DROP the error, or merge it into the main error stack with
+   a PROP or a RETHROW. */
+
+bool trace_catch(derr_t *e, const char *file, const char *func, int line){
+    TRACE(e, "catching %x in file %x: %x(), line %x\n",
+            FD(error_to_dstr(e->type)), FS(file), FS(func), FI(line));
+    return true;
+}
+
+/* RETHROW works like ORIG except it gives context to generic low-level errors
+   in situations where we know what they mean.  Example:
+
+    dstr_toi(){
+        // the main error context
+        derr_t e = E_OK;
+
+        ...
+
+        // the secondary error context
+        derr_t e2 = dstr_copy(... , ...) // returns E_FIXEDSIZE
+
+        // right now we know E_FIXEDSIZE means a bad parameter,
+        // but higher up code might not know
+        CATCH(&e2, E_FIXEDSIZE){
+            // merge the secondary context into the main context as E_PARAM
+            RETHROW(&e, &e2, E_PARAM);
+        }else{
+            // Any uncaught errors in e2 should be merged into `e` normally
+            PROP(e, e2);
+        }
+        ...
+    }
+
+    Now it is easier to handle errors from dstr_toi() in higher-level code
+    because there is only one possible error it can throw.
+    */
+void pvt_rethrow(
+    derr_t *e,
+    derr_t *e2,
+    derr_type_t newtype,
+    const char *file,
+    const char *func,
+    int line
+){
+    derr_type_t oldtype = e2->type;
+    // we always use the specified type
+    e->type = newtype;
+    if(e->msg.data == e2->msg.data){
+        // same error object, just append to it at the end
+    }else if(e->msg.data == NULL){
+        // if there was no previous trace, just use the new trace
+        e->msg = e2->msg;
+        // done with the old error, but don't free the trace we are reusing
+        *e2 = E_OK;
+    }else{
+        // otherwise, combine the traces
+        /* TODO: you should clearly delineate the new trace from the old trace,
+                 so that it is clear exactly what is being rethrown */
+        dstr_append_quiet(&e->msg, &e2->msg);
+        // done with the old error
+        DROP_VAR(e2);
+    }
+    TRACE(e, "rethrowing %x as %x in file %x: %x(), line %x\n",
+        FD(error_to_dstr(oldtype)), FD(error_to_dstr(newtype)),
+        FS(file), FS(func), FI(line));
+}
+
 /* MERGE and friends don't do control flow because they are only used when
    gathering errors from multiple threads.
 

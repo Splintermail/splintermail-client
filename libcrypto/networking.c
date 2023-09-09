@@ -69,7 +69,7 @@ derr_t connection_new(connection_t* conn,
     // combine address and port
     DSTR_VAR(addr_port, 256);
     e2 = FMT(&addr_port, "%x:%x", FS(addr), FU(port));
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         TRACE(&e2, "address too long\n");
         RETHROW(&e, &e2, E_PARAM);
     }else PROP(&e, e2);
@@ -106,7 +106,7 @@ derr_t listener_new(listener_t* l, const char* addr, unsigned int port){
     // combine address and port
     DSTR_VAR(addr_port, 256);
     e2 = FMT(&addr_port, "%x:%x", FS(addr), FU(port));
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         TRACE(&e2, "address too long\n");
         RETHROW(&e, &e2, E_PARAM);
     }else PROP(&e, e2);
@@ -340,7 +340,7 @@ derr_t connection_new_ssl(connection_t* conn, ssl_context_t* ctx,
     // combine address and port
     DSTR_VAR(addr_port, 256);
     e2 = FMT(&addr_port, "%x:%x", FS(addr), FU(port));
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         TRACE(&e2, "address too long\n");
         RETHROW(&e, &e2, E_PARAM);
     }else PROP(&e, e2);
@@ -471,7 +471,7 @@ derr_t listener_new_ssl(listener_t* l, ssl_context_t* ctx,
     // combine address and port
     DSTR_VAR(addr_port, 256);
     derr_t e2 = FMT(&addr_port, "%x:%x", FS(addr), FU(port));
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         TRACE(&e2, "address too long\n");
         RETHROW(&e, &e2, E_PARAM);
     }else PROP(&e, e2);

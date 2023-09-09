@@ -12,7 +12,7 @@
 static bool parse_status_code(dstr_off_t off, int *code){
     derr_t e = E_OK;
     *code = parse_int_within(&e, off, 100, 599);
-    CATCH(e, E_ANY){
+    CATCH_ANY(&e){
         DROP_VAR(&e);
         return false;
     }
@@ -28,7 +28,7 @@ static bool is_valid_port(dstr_off_t off){
 
     derr_t e = E_OK;
     parse_int_within(&e, off, 1, 65535);
-    CATCH(e, E_ANY){
+    CATCH_ANY(&e){
         DROP_VAR(&e);
         return false;
     }

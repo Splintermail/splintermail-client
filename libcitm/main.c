@@ -85,7 +85,7 @@ int main(int argc, char **argv){
     int newargc;
     {
         derr_t e = opt_parse(argc, argv, spec, speclen, &newargc);
-        CATCH(e, E_ANY){
+        CATCH_ANY(&e){
             DUMP(e);
             DROP_VAR(&e);
             print_help(stderr);
@@ -134,7 +134,7 @@ cu:
 
 done:
 
-    CATCH(e, E_ANY){
+    CATCH_ANY(&e){
         DUMP(e);
         DROP_VAR(&e);
         return 1;

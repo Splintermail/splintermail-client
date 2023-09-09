@@ -267,7 +267,7 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
     size_t len;
 
     derr_t e2 = maildir_name_parse(name, NULL, &key, &len, NULL, NULL);
-    CATCH(e2, E_PARAM){
+    CATCH(&e2, E_PARAM){
         // TODO: Don't ignore bad filenames; add them as "need to be sync'd"
         DROP_VAR(&e2);
         return e;

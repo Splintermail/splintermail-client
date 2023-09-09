@@ -430,7 +430,7 @@ static derr_t dir_is_empty(const string_builder_t *path, bool *empty){
     *empty = true;
 
     derr_t e2 = for_each_file_in_dir(path, _dir_is_empty_hook, NULL);
-    CATCH(e2, E_BREAK){
+    CATCH(&e2, E_BREAK){
         DROP_VAR(&e2);
         *empty = false;
     }

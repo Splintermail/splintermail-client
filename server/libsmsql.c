@@ -175,7 +175,7 @@ static derr_t _parse_hash(
     // split fields
     LIST_VAR(dstr_t, fields, 5);
     derr_t e2 = dstr_split(&hash, &DSTR_LIT("$"), &fields);
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         // too many fields, invalid hash
         RETHROW(&e, &e2, E_PARAM);
     } else PROP_VAR(&e, &e2);
@@ -228,10 +228,12 @@ derr_t validate_password_hash(
     DSTR_VAR(true_salt, SMSQL_PASSWORD_HASH_SIZE);
     DSTR_VAR(true_hash_result, SMSQL_PASSWORD_HASH_SIZE);
 
-    // the true hash is from our system and must be valid
-    NOFAIL(&e, E_ANY,
-        _parse_hash(true_hash, &true_rounds, &true_salt, &true_hash_result)
-    );
+    derr_t e2;
+    e2 = _parse_hash(true_hash, &true_rounds, &true_salt, &true_hash_result);
+    CATCH_ANY(&e2){
+        // the true hash is from our system and must be valid
+        RETHROW(&e, &e2, E_INTERNAL);
+    }
 
     // raises E_USERPARAM on invalid password, which is a user input
     /* this will return too fast on invalid passwords, but that's ok... "your
@@ -245,8 +247,11 @@ derr_t validate_password_hash(
         hash_result.data[i] = '\0';
     }
 
-    // this should obviously be a valid hash since we just generated it
-    NOFAIL(&e, E_ANY, _parse_hash(hash, NULL, NULL, &hash_result));
+    e2 = _parse_hash(hash, NULL, NULL, &hash_result);
+    CATCH_ANY(&e2){
+        // this should obviously be a valid hash since we just generated it
+        RETHROW(&e, &e2, E_INTERNAL);
+    }
 
     *ok = dstr_eq_consttime(&hash_result, &true_hash_result);
 
@@ -502,7 +507,7 @@ static derr_t _add_random_alias_txn(
 
         DSTR_STATIC(q2, "INSERT INTO emails (email) VALUES (?)");
         derr_t e2 = sql_norow_query(sql, q2, NULL, string_bind_in(&temp));
-        CATCH(e2, E_SQL_DUP){
+        CATCH(&e2, E_SQL_DUP){
             // chose a duplicate alias, try again
             DROP_VAR(&e2);
             continue;
@@ -580,7 +585,7 @@ static derr_t _add_primary_alias_txn(
         bool_bind_in(&paid),
         blob_bind_in(&uuid),
     );
-    CATCH(e2, E_SQL_DUP){
+    CATCH(&e2, E_SQL_DUP){
         DROP_VAR(&e2);
         ORIG(&e, E_USERMSG, "alias not available");
     }else PROP_VAR(&e, &e2);
@@ -944,7 +949,7 @@ static derr_t _add_device_txn(
         string_bind_in(&pubkey),
         string_bind_in(&fpr_hex)
     );
-    CATCH(e2, E_SQL_DUP){
+    CATCH(&e2, E_SQL_DUP){
         DROP_VAR(&e2);
         ORIG(&e, E_USERMSG, "duplicate public key");
     }else PROP_VAR(&e, &e2);
@@ -962,7 +967,7 @@ static derr_t _validate_for_add_device(
     // validate pkey
     EVP_PKEY *pkey;
     derr_t e2 = read_pem_encoded_pubkey(pubkey, &pkey);
-    CATCH(e2, E_PARAM){
+    CATCH(&e2, E_PARAM){
         DROP_VAR(&e2);
         ORIG(&e, E_USERMSG, "invalid public key");
     }else PROP_VAR(&e, &e2);
@@ -1145,7 +1150,7 @@ derr_t add_token(
             uint_bind_in(&token_temp),
             string_bind_in(&secret_temp)
         );
-        CATCH(e2, E_SQL_DUP){
+        CATCH(&e2, E_SQL_DUP){
             // chose a duplicate token, try again
             DROP_VAR(&e2);
             continue;
@@ -1341,7 +1346,7 @@ derr_t add_installation(
             string_bind_in(&subdomain_temp),
             string_bind_in(&email_temp)
         );
-        CATCH(e2, E_SQL_DUP){
+        CATCH(&e2, E_SQL_DUP){
             // chose a duplicate token, try again
             DROP_VAR(&e2);
             continue;
@@ -1595,7 +1600,7 @@ static derr_t _create_account_txn(
 
     DSTR_STATIC(q1, "INSERT INTO emails (email) VALUES (?)");
     derr_t e2 = sql_norow_query(sql, q1, NULL, string_bind_in(&email));
-    CATCH(e2, E_SQL_DUP){
+    CATCH(&e2, E_SQL_DUP){
         // duplicate email
         DROP_VAR(&e2);
         ORIG(&e, E_USERMSG, "username not available");

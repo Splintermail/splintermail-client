@@ -58,7 +58,7 @@ static derr_t gen_msg_header(
 
     time_t epoch;
     e = dtime(&epoch);
-    CATCH(e, E_ANY){
+    CATCH_ANY(&e){
         TRACE(&e, "ignoring failure of dtime()\n");
         DUMP(e);
         DROP_VAR(&e);
@@ -494,6 +494,11 @@ cu:
 }
 
 
+static bool is_decrypt_err(derr_type_t etype){
+    return etype == E_SSL || etype == E_PARAM;
+}
+
+
 // inject the citm logic into the the imaildir_hooks_i
 static derr_t imaildir_hooks_process_msg(
     imaildir_hooks_i *hooks,
@@ -514,11 +519,11 @@ static derr_t imaildir_hooks_process_msg(
     if(encrypted){
         // do the decryption
         derr_t e2 = decrypt_msg(kd, mailbox, content, path, len);
-        CATCH(e2, E_NOT4ME){
+        CATCH(&e2, E_NOT4ME){
             LOG_INFO("detected NOT4ME message\n");
             DROP_VAR(&e2);
             *not4me = true;
-        }else CATCH(e2, E_SSL, E_PARAM){
+        }else CATCH_EX(&e2, is_decrypt_err){
             // decryption errors, pass the broken message to the user
             DROP_VAR(&e2);
             PROP(&e, mangle_corrupted(content, path, len) );

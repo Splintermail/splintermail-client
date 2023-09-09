@@ -36,10 +36,10 @@ derr_t api_token_read(const char *path, api_token_t *token){
     // read the file into memory
     e2 = dstr_read_file(path, &creds);
     // if we got a fixedsize error it is not a valid file
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         LOG_WARN("api credential file seems too long, ignoring\n");
         RETHROW_GO(&e, &e2, E_PARAM, fail);
-    }else CATCH(e2, E_OPEN){
+    }else CATCH(&e2, E_OPEN){
         RETHROW_GO(&e, &e2, E_FS, fail);
     }else PROP_VAR_GO(&e, &e2, fail);
 
@@ -50,7 +50,7 @@ derr_t api_token_read(const char *path, api_token_t *token){
 
     e2 = json_parse(creds, &json);
     // if we got a fixedsize error it is not a valid file
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         LOG_WARN("api creds contain way too much json\n");
         RETHROW_GO(&e, &e2, E_PARAM, fail);
     }else PROP_VAR_GO(&e, &e2, fail);
@@ -149,7 +149,7 @@ derr_t api_token_read_increment_write(
 
     // try reading the path
     derr_t e2 = api_token_read(path, token);
-    CATCH(e2, E_PARAM, E_INTERNAL){
+    CATCH(&e2, E_PARAM){
         LOG_DEBUG("corrupted token file @%x:\n%x", FS(path), FD(e2.msg));
         DROP_VAR(&e2);
         DROP_CMD( dunlink(path) );
@@ -330,7 +330,7 @@ static derr_t read_resp(
 
     // 2xx status means we have a json response
     derr_t e2 = json_parse(respbody, json);
-    CATCH(e2, E_PARAM){
+    CATCH(&e2, E_PARAM){
         // invalid json is not allowed from the server
         json_free(json);
         RETHROW(&e, &e2, E_RESPONSE);
@@ -466,6 +466,10 @@ fail:
     sched->schedule(sched, &apic->schedulable);
 }
 
+static bool is_param_or_fixedsize(derr_type_t etype){
+    return etype == E_PARAM || etype == E_FIXEDSIZE;
+}
+
 // reqbody must already be written
 static derr_t apic_token_hdrs(
     api_token_t token,
@@ -482,11 +486,11 @@ static derr_t apic_token_hdrs(
 
     // sign the request
     DSTR_VAR(signature, 128);
+    derr_t e2 = hmac(token.secret, reqbody, &signature);
     // token->secret shouldn't be too long, signature shouldn't be too short
-    NOFAIL(&e,
-        ERROR_GROUP(E_PARAM, E_FIXEDSIZE),
-        hmac(token.secret, reqbody, &signature)
-    );
+    CATCH_EX(&e2, is_param_or_fixedsize){
+        RETHROW(&e, &e2, E_INTERNAL);
+    }else PROP_VAR(&e, &e2);
 
     // write signature header
     d1->len = 0;

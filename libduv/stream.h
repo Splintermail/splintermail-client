@@ -260,7 +260,7 @@ struct wstream_i {
 
 // when CANCELED shouldn't be allowed
 #define UPGRADE_CANCELED_VAR(e, ETYPE) do { \
-    CATCH2(e, E_CANCELED){ \
+    CATCH(e, E_CANCELED){ \
         TRACE_RETHROW(e, e, (ETYPE)); \
     } \
 } while(0)

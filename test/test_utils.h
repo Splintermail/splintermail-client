@@ -19,7 +19,7 @@
     bool args_valid = true; \
     /* parse options */ \
     derr_t e2 = opt_parse(argc, argv, spec, speclen, &newargc); \
-    CATCH(e2, E_ANY){ \
+    CATCH_ANY(&e2){ \
         args_valid = false; \
         DROP_VAR(&e2); \
         goto print_usage; \

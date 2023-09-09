@@ -208,7 +208,7 @@ static derr_t do_test(
             if(!is_error(e2)){
                 ORIG_GO(&e, E_VALUE, "expected syntax error", show_case);
             }
-            CATCH(e2, E_PARAM){
+            CATCH(&e2, E_PARAM){
                 DROP_VAR(&e2);
             }
         }

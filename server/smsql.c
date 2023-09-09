@@ -980,7 +980,7 @@ int main(int argc, char **argv){
         o_pass.found ? &o_pass.val : NULL,
         action, newargc - 2, &argv[2]
     );
-    CATCH(e2, E_USERMSG){
+    CATCH(&e2, E_USERMSG){
         DSTR_VAR(usermsg, 256);
         consume_e_usermsg(&e2, &usermsg);
         FFMT(stderr, "%x\n", FD(usermsg));

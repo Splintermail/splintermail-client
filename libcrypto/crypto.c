@@ -343,7 +343,7 @@ derr_t keypair_load_private(keypair_t **out, const char *keyfile){
 
     DSTR_VAR(pem, 8192);
     derr_t e2 = dstr_read_file(keyfile, &pem);
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         DROP_VAR(&e2);
         ORIG(&e, E_PARAM, "keyfile (%x) too long", FS(keyfile));
     }else PROP_VAR(&e, &e2);
@@ -365,7 +365,7 @@ derr_t keypair_load_public(keypair_t **out, const char *keyfile){
 
     DSTR_VAR(pem, 8192);
     derr_t e2 = dstr_read_file(keyfile, &pem);
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         DROP_VAR(&e2);
         ORIG_GO(&e, E_PARAM, "keyfile (%x) too long", cu, FS(keyfile));
     }else PROP_VAR_GO(&e, &e2, cu);
@@ -1049,7 +1049,8 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 }
                 // store the iv
                 dc->iv_found = true;
-                NOFAIL(&e, E_ANY, dstr_copy(&iv, &dc->iv) );
+                dc->iv.len = 0;
+                dstr_append_quiet(&dc->iv, &iv);
                 // remove this line from the buffer
                 line_len = (uintptr_t)(leftover.data - dc->buffer.data) + iv_len + 1;
                 dstr_leftshift(&dc->buffer, line_len);
@@ -1155,7 +1156,7 @@ derr_t decrypter_update(decrypter_t* dc, dstr_t* in, dstr_t* out){
             // base64 the tag
             e2 = b642bin_stream(&sub, &dc->tag);
             // that should never error
-            CATCH(e2, E_FIXEDSIZE){
+            CATCH(&e2, E_FIXEDSIZE){
                 RETHROW_GO(&e, &e2, E_PARAM, fail);
             }else PROP(&e, e2);
             // that's all for the whole encryption message;
@@ -1164,7 +1165,7 @@ derr_t decrypter_update(decrypter_t* dc, dstr_t* in, dstr_t* out){
         }
 
         // read from *in to *base64
-        NOFAIL_GO(&e, E_ANY, dstr_append(&dc->base64, &sub), fail);
+        dstr_append_quiet(&dc->base64, &sub);
         read += sub.len;
 
         // now push *base64 through the decoder

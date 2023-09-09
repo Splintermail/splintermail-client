@@ -29,7 +29,7 @@ int main(int argc, char** argv){
     }while(amnt_read > 0);
 
 send:
-    CATCH(e, E_ANY){
+    CATCH_ANY(&e){
         DUMP(e);
         DROP_VAR(&e);
     }

@@ -386,7 +386,7 @@ static derr_t test_dstr_split_soft(void){
 
     // make sure we can't do a normal split
     derr_t e2 = dstr_split(&text, &pattern, &list);
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         // we expect this, do nothing
         DROP_VAR(&e2);
     }else{
@@ -468,7 +468,7 @@ static derr_t test_dstr_split2_soft(void){
     // make sure we can't do a normal split
     size_t len;
     derr_t e2 = dstr_split2(text, pattern, &len, &o0, &o1, &o2);
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         // we expect this, do nothing
         DROP_VAR(&e2);
     }else{
@@ -697,7 +697,7 @@ static derr_t test_fmt(void){
     #define TEST_FMT_TRUNC(expstr, fmtstr, ...) do { \
         DSTR_VAR(out, 4); \
         derr_t e2 = FMT(&out, fmtstr, __VA_ARGS__); \
-        CATCH(e2, E_FIXEDSIZE){ \
+        CATCH(&e2, E_FIXEDSIZE){ \
             DROP_VAR(&e2); \
         }else{ \
             TRACE(&e, "expected E_FIXEDSIZE but got %x\n", \
@@ -767,7 +767,7 @@ static derr_t test_list_append_with_mem(void){
     /* make sure if the backing memory runs out the cleanup works, that is,
        the list and backing memory still have to their original contents */
     derr_t e2 = list_append_with_mem(&list_fix, &mem_fix, d, false);
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         // we expect this, do nothing
         DROP_VAR(&e2);
     }else{
@@ -789,7 +789,7 @@ static derr_t test_list_append_with_mem(void){
 
     // verify clean failure if the list runs out of space
     e2 = list_append_with_mem(&list_fix, &mem_fix, y, true);
-    CATCH(e2, E_FIXEDSIZE){
+    CATCH(&e2, E_FIXEDSIZE){
         // we expect this, do nothing
         DROP_VAR(&e2);
     }else{

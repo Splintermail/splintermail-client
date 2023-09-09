@@ -837,7 +837,7 @@ int main(int argc, char **argv){
     size_t prespeclen = sizeof(prespec) / sizeof(*prespec);
     int preargc;
     derr_t e2 = opt_parse_soft(argc, argv, prespec, prespeclen, &preargc);
-    CATCH(e2, E_ANY){
+    CATCH_ANY(&e2){
         DUMP(e2);
         DROP_VAR(&e2);
         print_help(stderr);
@@ -873,7 +873,7 @@ int main(int argc, char **argv){
 
     int newargc;
     e2 = opt_parse(argc, argv, spec, speclen, &newargc);
-    CATCH(e2, E_ANY){
+    CATCH_ANY(&e2){
         DUMP(e2);
         DROP_VAR(&e2);
         print_help(stderr);

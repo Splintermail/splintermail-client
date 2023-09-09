@@ -84,7 +84,7 @@ int main(void){
     return 0;
 
 fail:
-    CATCH(e, E_PARAM){
+    CATCH(&e, E_PARAM){
         // syntax error
         DROP_VAR(&e);
         return 1;

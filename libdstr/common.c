@@ -12,17 +12,6 @@
 // define standard error types
 // derr_type_t E_NONE = NULL;
 
-DSTR_STATIC(E_ANY_dstr, "ANY");
-static bool E_ANY_matches(derr_type_t self, derr_type_t other){
-    (void)self;
-    return other != E_NONE;
-}
-derr_type_t E_ANY = &(struct derr_type_t){
-    .name = &E_ANY_dstr,
-    .msg = &E_ANY_dstr,
-    .matches = E_ANY_matches,
-};
-
 REGISTER_ERROR_TYPE(E_NOMEM, "NOMEM", "out of memory");
 REGISTER_ERROR_TYPE(E_SOCK, "SOCKERROR", "socket error");
 REGISTER_ERROR_TYPE(E_CONN, "CONNERROR", "connection error");
@@ -38,21 +27,6 @@ REGISTER_ERROR_TYPE(E_RESPONSE, "RESPONSE", "bad response from server");
 REGISTER_ERROR_TYPE(E_USERMSG, "USERMSG", "usermsg");
 REGISTER_ERROR_TYPE(E_CANCELED, "CANCELED", "operation canceled");
 REGISTER_ERROR_TYPE(E_BUSY, "BUSY", "resource in use");
-
-// support for error type groups
-bool derr_type_group_matches(derr_type_t self, derr_type_t other){
-    struct derr_type_group_arg_t *arg = self->data;
-    for(size_t i = 0; i < arg->ntypes; i++){
-        // allow matching against E_NONE
-        if(arg->types[i] == E_NONE && other == E_NONE){
-            return true;
-        }
-        if(arg->types[i]->matches(arg->types[i], other)){
-            return true;
-        }
-    }
-    return false;
-}
 
 dstr_t error_to_dstr(derr_type_t type){
     if(type == E_NONE){

@@ -38,7 +38,7 @@ static derr_t get_tag(dstr_t* tag){
     // hexify
     DSTR_VAR(hex, 10);
     e2 = bin2hex(&bin, &hex);
-    CATCH(e2, E_ANY){
+    CATCH_ANY(&e2){
         TRACE(&e2, "failed to hexify tag\n");
         RETHROW(&e, &e2, E_INTERNAL);
     }
@@ -99,7 +99,7 @@ static void badbadbad_write_log(dstr_t* blob){
 cleanup:
     close(fd);
 fail:
-    CATCH(e, E_ANY){
+    CATCH_ANY(&e){
         LOG_ERROR("failed in badbadbad_write_log():\n");
         DUMP(e);
         DROP_VAR(&e);
@@ -129,7 +129,7 @@ static void badbadbad_log(dstr_t tag, dstr_t summary, dstr_t body,
          FD(ts), FD(tag), FD(summary), FD(body))
     ){}
 
-    CATCH(e, E_ANY){
+    CATCH_ANY(&e){
         LOG_ERROR("failed in badbadbad_log():\n");
         DUMP(e);
         DROP_VAR(&e);
@@ -176,7 +176,7 @@ static void send_to_badbadbad_server(
     // prep the alert buffer
     buff->len = 0;
     e2 = FMT(buff, "%x\n%x\n%x", FD(tag), FD(summary), FD(body));
-    CATCH(e2, E_ANY){
+    CATCH_ANY(&e2){
         buff->len = 0;
         IF_PROP(&e, FMT(buff,
             "###################################################\n"
@@ -190,7 +190,7 @@ static void send_to_badbadbad_server(
 
     // send the alert to the badbadbad server
     e2 = dstr_write(sock, buff);
-    CATCH(e2, E_ANY){
+    CATCH_ANY(&e2){
         buff->len = 0;
         IF_PROP(&e, FMT(buff,
             "###################################################\n"
@@ -224,7 +224,7 @@ fail_sock:
     close(sock);
 fail:
     // this is just to make the log files clearer
-    CATCH(e, E_ANY){
+    CATCH_ANY(&e){
         TRACE(&e, "failure in send_to_badbadbad_server(), continuing\n");
     }
     DUMP(e);

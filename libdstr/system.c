@@ -912,7 +912,7 @@ static derr_t dwhich(const dstr_t file, dstr_t *out, bool *found){
 
         string_builder_t elem_path = SBD(elem);
         derr_t e2 = for_each_file_in_dir(&elem_path, which_hook, &arg);
-        CATCH(e2, E_FS){
+        CATCH(&e2, E_FS){
             // ignore filesystem errors
             DROP_VAR(&e2);
             continue;

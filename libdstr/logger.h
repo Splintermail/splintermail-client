@@ -138,34 +138,9 @@ void pvt_orig(
    e2 in the `else` statement after a CATCH clause which does not trigger. */
 
 // append code's trace to e and return true if code is an error.
-static inline bool pvt_prop(derr_t *e, derr_t code,
-        const char *file, const char *func, int line){
-    // always keep the new trace
-    if(code.msg.data != NULL){
-        // handle empty errors or duplicate parameters
-        if(e->msg.data == NULL || e->msg.data == code.msg.data){
-            // just use the new trace as is
-            e->msg = code.msg;
-        }else if(e->msg.data != NULL){
-            // apend the new trace to the existing one
-            // best effort; ignore error
-            dstr_append_quiet(&e->msg, &code.msg);
-            // done with the new msg
-            dstr_free(&code.msg);
-        }
-    }
-
-    // prefer the new type (this is different from MERGE)
-    if(code.type != E_NONE){
-        e->type = code.type;
-    }
-
-    if(!is_error(code)) return false;
-
-    TRACE(e, "propagating %x from file %x: %x(), line %x\n",
-        FD(error_to_dstr(e->type)), FS(file), FS(func), FI(line));
-    return true;
-}
+bool pvt_prop(
+    derr_t *e, derr_t code, const char *file, const char *func, int line
+);
 
 // An if statement with useful side-effects
 #define IF_PROP(e, code) \
@@ -183,12 +158,9 @@ static inline bool pvt_prop(derr_t *e, derr_t code,
 
 
 // PROP_VAR and friends clean up the variable they merge from
-static inline bool pvt_prop_var(derr_t *e, derr_t *e2,
-        const char *file, const char *func, int line){
-    bool ret = pvt_prop(e, *e2, file, func, line);
-    if(e != e2) *e2 = E_OK;
-    return ret;
-}
+bool pvt_prop_var(
+    derr_t *e, derr_t *e2, const char *file, const char *func, int line
+);
 
 #define IF_PROP_VAR(e, e2) \
     if(pvt_prop_var(e, e2, FILE_LOC))
@@ -206,14 +178,7 @@ static inline bool pvt_prop_var(derr_t *e, derr_t *e2,
 /* CHECK handles an error that we have ignored until now, useful when
    transitioning from chunks of code which use the builder api error handling
    strategy to chunks of code which use normal error handling */
-static inline bool pvt_check(derr_t *e,
-        const char *file, const char *func, int line){
-    if(!is_error(*e)) return false;
-
-    TRACE(e, "Handling %x in file %x: %x(), line %x\n",
-        FD(error_to_dstr(e->type)), FS(file), FS(func), FI(line));
-    return true;
-}
+bool pvt_check(derr_t *e, const char *file, const char *func, int line);
 
 #define CHECK(e) \
     do { if(pvt_check(e, FILE_LOC)){ return *(e); } } while(0)
@@ -232,23 +197,11 @@ static inline bool pvt_check(derr_t *e,
    have a clearly defined scope for the CATCH to make decisions about.  Then
    you can choose to DROP the error, or merge it into the main error stack with
    a PROP or a RETHROW. */
-static inline bool pvt_catch(derr_t *e, derr_type_t error_mask,
-        const char *file, const char *func, int line){
-    // if(e->type & error_mask){
-    //     TRACE(e, "catching %x in file %x: %x(), line %x\n",
-    //             FD(error_to_dstr(e->type)), FS(file), FS(func), FI(line));
-    //     return true;
-    // }
-    if(error_mask->matches(error_mask, e->type)){
-        TRACE(e, "catching %x in file %x: %x(), line %x\n",
-                FD(error_to_dstr(e->type)), FS(file), FS(func), FI(line));
-        return true;
-    }
-    return false;
-}
-#define CATCH(e, ...) if(pvt_catch(&(e), ERROR_GROUP(__VA_ARGS__), FILE_LOC))
-// TODO: fix all the CATCH instances
-#define CATCH2(e, ...) if(pvt_catch((e), ERROR_GROUP(__VA_ARGS__), FILE_LOC))
+bool trace_catch(derr_t *e, const char *file, const char *func, int line);
+
+#define CATCH(e, etype) if((e)->type == etype && trace_catch(e, FILE_LOC))
+#define CATCH_EX(e, fn) if(fn((e)->type) && trace_catch(e, FILE_LOC))
+#define CATCH_ANY(e) if(is_error(*(e)) && trace_catch(e, FILE_LOC))
 
 
 /* RETHROW works like ORIG except it gives context to generic low-level errors
@@ -265,7 +218,7 @@ static inline bool pvt_catch(derr_t *e, derr_type_t error_mask,
 
         // right now we know E_FIXEDSIZE means a bad parameter,
         // but higher up code might not know
-        CATCH(e2, E_FIXEDSIZE){
+        CATCH(&e2, E_FIXEDSIZE){
             // merge the secondary context into the main context as E_PARAM
             RETHROW(&e, &e2, E_PARAM);
         }else{
@@ -278,30 +231,14 @@ static inline bool pvt_catch(derr_t *e, derr_type_t error_mask,
     Now it is easier to handle errors from dstr_toi() in higher-level code
     because there is only one possible error it can throw.
     */
-static inline void pvt_rethrow(derr_t *e, derr_t *e2, derr_type_t newtype,
-        const char *file, const char *func, int line){
-    derr_type_t oldtype = e2->type;
-    // we always use the specified type
-    e->type = newtype;
-    if(e->msg.data == e2->msg.data){
-        // same error object, just append to it at the end
-    }else if(e->msg.data == NULL){
-        // if there was no previous trace, just use the new trace
-        e->msg = e2->msg;
-        // done with the old error, but don't free the trace we are reusing
-        *e2 = E_OK;
-    }else{
-        // otherwise, combine the traces
-        /* TODO: you should clearly delineate the new trace from the old trace,
-                 so that it is clear exactly what is being rethrown */
-        dstr_append_quiet(&e->msg, &e2->msg);
-        // done with the old error
-        DROP_VAR(e2);
-    }
-    TRACE(e, "rethrowing %x as %x in file %x: %x(), line %x\n",
-        FD(error_to_dstr(oldtype)), FD(error_to_dstr(newtype)),
-        FS(file), FS(func), FI(line));
-}
+void pvt_rethrow(
+    derr_t *e,
+    derr_t *e2,
+    derr_type_t newtype,
+    const char *file,
+    const char *func,
+    int line
+);
 
 #define RETHROW(e, _new, _newtype) do {\
     pvt_rethrow((e), (_new), (_newtype), FILE_LOC); \
@@ -318,25 +255,18 @@ static inline void pvt_rethrow(derr_t *e, derr_t *e2, derr_type_t newtype,
 
 /* NOFAIL will catch errors we have specifically prevented and turn them into
    E_INTERNAL errors */
-static inline bool pvt_nofail(derr_t *e, derr_type_t mask, derr_t cmd,
-        const char* file, const char* func, int line){
-    // does the error from the command match the mask?
-    if(pvt_catch(&cmd, mask, file, func, line)){
-        // set error to E_INTERNAL
-        pvt_rethrow(e, &cmd, E_INTERNAL, file, func, line);
-        // take error actions
-        return true;
-    }
-    // otherwise, use normal PROP semantics
-    return pvt_prop(e, cmd, file, func, line);
-}
-
-#define NOFAIL(e, error_mask, cmd) do { \
-    if(pvt_nofail((e), (error_mask), (cmd), FILE_LOC)){ return *(e); } \
+#define NOFAIL(e, etype, cmd) do { \
+    derr_t _temp = (cmd); \
+    CATCH(&_temp, etype){ \
+        RETHROW(e, &_temp, E_INTERNAL); \
+    }else PROP_VAR(e, &_temp); \
 } while(0)
 
-#define NOFAIL_GO(e, error_mask, cmd, label) do { \
-    if(pvt_nofail((e), (error_mask), (cmd), FILE_LOC)){ goto label; } \
+#define NOFAIL_GO(e, etype, cmd, label) do { \
+    derr_t _temp = (cmd); \
+    CATCH(&_temp, etype){ \
+        RETHROW_GO(e, &_temp, E_INTERNAL, label); \
+    }else PROP_VAR_GO(e, &_temp, label); \
 } while(0)
 
 /* MERGE and friends don't do control flow because they are only used when

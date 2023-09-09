@@ -138,7 +138,7 @@ int main(int argc, char **argv){
 
     // parse options
     derr_t e2 = opt_parse(argc, argv, spec, speclen, &newargc);
-    CATCH(e2, E_ANY){
+    CATCH_ANY(&e2){
         DROP_VAR(&e2);
         fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
         return 1;

@@ -400,7 +400,7 @@ PHP_FUNCTION(smphp_validate_session_auth){
 
     DSTR_VAR(email, SMSQL_EMAIL_SIZE);
     derr_t e2 = _validate_session_auth((int)server_id, session_id, &email);
-    CATCH(e2, E_USERMSG){
+    CATCH(&e2, E_USERMSG){
         // user is not logged in; drop the user message and return NULL
         DROP_VAR(&e2);
         // return NULL

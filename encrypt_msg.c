@@ -271,7 +271,7 @@ cleanup_ssl:
 exit:
 #ifdef BUILD_SERVER_CODE
     // any error at all is badbadbad
-    CATCH(e, E_ANY){
+    CATCH_ANY(&e){
         // write errors to logfile
         DUMP(e);
         DSTR_STATIC(summary, "error in encrypt_message");

@@ -264,7 +264,7 @@ static derr_t test_conf_parse(void){
         DSTR_VAR(text, 4096);
         PROP(&e, dstr_read_file(badconf1.data, &text) );
         e2 = conf_parse(&text, spec, speclen);
-        CATCH(e2, E_VALUE){
+        CATCH(&e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
             DROP_VAR(&e2);
         }else{
@@ -276,7 +276,7 @@ static derr_t test_conf_parse(void){
         DSTR_VAR(text, 4096);
         PROP(&e, dstr_read_file(badconf2.data, &text) );
         e2 = conf_parse(&text, spec, speclen);
-        CATCH(e2, E_VALUE){
+        CATCH(&e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
             DROP_VAR(&e2);
         }else{
@@ -288,7 +288,7 @@ static derr_t test_conf_parse(void){
         DSTR_VAR(text, 4096);
         PROP(&e, dstr_read_file(badconf3.data, &text) );
         e2 = conf_parse(&text, spec, speclen);
-        CATCH(e2, E_VALUE){
+        CATCH(&e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
             DROP_VAR(&e2);
         }else{

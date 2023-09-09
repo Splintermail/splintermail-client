@@ -69,9 +69,6 @@ typedef const struct derr_type_t *derr_type_t;
 struct derr_type_t {
     const dstr_t *name;
     const dstr_t *msg;
-    bool (*matches)(derr_type_t self, derr_type_t other);
-    // for simple closures, like with error groups
-    void *data;
 };
 
 typedef struct {
@@ -85,52 +82,20 @@ dstr_t error_to_msg(derr_type_t type);
 #define REGISTER_ERROR_TYPE(NAME, NAME_STRING, MSG_STRING) \
     DSTR_STATIC(NAME ## _name_dstr, NAME_STRING); \
     DSTR_STATIC(NAME ## _msg_dstr, MSG_STRING); \
-    static bool NAME ## _matches(derr_type_t self, derr_type_t other){ \
-        (void)self; \
-        return other == NAME; \
-    } \
     derr_type_t NAME = &(struct derr_type_t){ \
         .name = &NAME ## _name_dstr, \
         .msg = &NAME ## _msg_dstr, \
-        .matches = NAME ## _matches, \
     }
 
 #define REGISTER_STATIC_ERROR_TYPE(NAME, NAME_STRING, MSG_STRING) \
     DSTR_STATIC(NAME ## _name_dstr, NAME_STRING); \
     DSTR_STATIC(NAME ## _msg_dstr, MSG_STRING); \
-    static bool NAME ## _matches(derr_type_t self, derr_type_t other){ \
-        (void)self; \
-        return other == NAME; \
-    } \
     static derr_type_t NAME = &(struct derr_type_t){ \
         .name = &NAME ## _name_dstr, \
         .msg = &NAME ## _msg_dstr, \
-        .matches = NAME ## _matches, \
-    }
-
-/* Error type groups are for matching matching against multiple error types.
-   Error groups must never be thrown, because they do not support .to_string
-   and they will not self-match. They are only for catching errors. */
-struct derr_type_group_arg_t {
-    derr_type_t *types;
-    size_t ntypes;
-};
-bool derr_type_group_matches(derr_type_t self, derr_type_t other);
-#define ERROR_GROUP(...) \
-    &(struct derr_type_t){ \
-        .name = NULL, \
-        .msg = NULL, \
-        .matches = derr_type_group_matches, \
-        .data = &(struct derr_type_group_arg_t){ \
-            .types = (derr_type_t[]){__VA_ARGS__}, \
-            .ntypes = sizeof((derr_type_t[]){__VA_ARGS__}) / sizeof(derr_type_t), \
-        } \
     }
 
 #define E_NONE NULL
-extern derr_type_t E_ANY;        /* For catching errors only; this value must
-                                    never be thrown.  Will match against any
-                                    non-E_NONE error. */
 
 extern derr_type_t E_NOMEM;      // some memory allocation failed
 extern derr_type_t E_SOCK;       // error in socket(), bind(), listen(), or accept()

@@ -22,7 +22,7 @@
         } \
         ORIG_GO(&e, E_VALUE, "unexpected status", cu); \
     } \
-    CATCH(e, E_ANY){ \
+    CATCH_ANY(&e){ \
         DROP_VAR(&e); \
     } \
     if(exp_error == E_NONE && exp_type != type){ \

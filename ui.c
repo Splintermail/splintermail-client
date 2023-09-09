@@ -52,7 +52,7 @@ static derr_t maybe_parse_config(
     dstr_t sub = dstr_from_off(off);
 
     derr_t e2 = conf_parse(&sub, spec, speclen);
-    CATCH(e2, E_ANY){
+    CATCH_ANY(&e2){
         DROP_VAR(&e2);
         ORIG(&e, E_VALUE, "unable to parse config file at \"%x\"", FSB(path));
     }
@@ -339,7 +339,7 @@ static derr_t check_api_token_register(const string_builder_t *account_path,
             }
             // now write to the noregister file
             e2 = touch_path(&noregister_path);
-            CATCH(e2, E_ANY){
+            CATCH_ANY(&e2){
                 DROP_VAR(&e2);
                 LOG_DEBUG("failed to save noregister\n");
                 return e;
@@ -688,7 +688,7 @@ static derr_t api_command_main(
             derr_t e2 = register_api_token_path_sync(
                 &sync, baseurl, user, password, &creds_path
             );
-            CATCH(e2, E_ANY){
+            CATCH_ANY(&e2){
                 LOG_ERROR("failed to register API token with server\n");
                 LOG_DEBUG("%x", FD(e2.msg));
                 DROP_VAR(&e2);
@@ -742,7 +742,7 @@ static derr_t api_command_main(
         derr_t e2 = api_token_sync(
             &sync, baseurl, apipath, apiarg, token, &json
         );
-        CATCH(e2, E_TOKEN){
+        CATCH(&e2, E_TOKEN){
             FFMT_QUIET(stderr,
                 "API Token rejected, deleting token.  Run this "
                 "command again to generate a new token.\n"
@@ -750,7 +750,7 @@ static derr_t api_command_main(
             LOG_DEBUG("%x", FD(e2.msg));
             DROP_VAR(&e2);
             e2 = dunlink_path(&creds_path);
-            CATCH(e2, E_ANY){
+            CATCH_ANY(&e2){
                 TRACE(&e2, "error removing token\n");
                 FFMT_QUIET(stderr,
                     "error removing token:\n %x", FD(e2.msg)
@@ -978,7 +978,7 @@ int do_main(int argc, char* argv[], bool windows_service){
     size_t prespeclen = sizeof(prespec) / sizeof(*prespec);
     int preargc;
     derr_t e2 = opt_parse_soft(argc, argv, prespec, prespeclen, &preargc);
-    CATCH(e2, E_ANY){
+    CATCH_ANY(&e2){
         DROP_VAR(&e2);
         fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
         retval = 1;
@@ -1088,7 +1088,7 @@ int do_main(int argc, char* argv[], bool windows_service){
 
     // parse commandline options
     e2 = opt_parse(argc, argv, spec, speclen, &newargc);
-    CATCH(e2, E_ANY){
+    CATCH_ANY(&e2){
         DROP_VAR(&e2);
         fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
         retval = 1;
