@@ -137,9 +137,9 @@ static derr_t new_order(
 
     PROP_GO(&e, acme_new_ex(&acme, &http, directory, verify_name), fail);
 
-    PROP_GO(&e, acme_account_from_file(&acct, acct_file, acme), fail);
+    PROP_GO(&e, acme_account_from_file(&acct, acct_file), fail);
 
-    acme_new_order(acct, domain, _new_order_cb, &g);
+    acme_new_order(acme, acct, domain, _new_order_cb, &g);
 
     derr_t e2 = duv_run(&loop);
     TRACE_PROP_VAR(&e, &e2);

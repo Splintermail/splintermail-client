@@ -128,7 +128,7 @@ typedef struct {
     dstr_t domain;
     dstr_t expires;
     dstr_t challenge;
-    dstr_t token;
+    dstr_t token_thumb;
     time_t retry_after;
 } acme_get_authz_state_t;
 
@@ -342,12 +342,10 @@ void acme_free(acme_t **old){
     *old = NULL;
 }
 
-derr_t acme_account_from_json(
-    acme_account_t *acct, json_ptr_t ptr, acme_t *acme
-){
+derr_t acme_account_from_json(acme_account_t *acct, json_ptr_t ptr){
     derr_t e = E_OK;
 
-    *acct = (acme_account_t){ .acme = acme };
+    *acct = (acme_account_t){0};
 
     jspec_t *jspec = JOBJ(false,
         JKEY("key", JJWK(&acct->key)),
@@ -363,7 +361,7 @@ derr_t acme_account_from_json(
     return e;
 }
 
-derr_t acme_account_from_dstr(acme_account_t *acct, dstr_t dstr, acme_t *acme){
+derr_t acme_account_from_dstr(acme_account_t *acct, dstr_t dstr){
     derr_t e = E_OK;
     json_t json;
     JSON_PREP_PREALLOCATED(json, 1024, 64, true);
@@ -371,31 +369,58 @@ derr_t acme_account_from_dstr(acme_account_t *acct, dstr_t dstr, acme_t *acme){
         *acct = (acme_account_t){0};
         return e;
     }
-    PROP(&e, acme_account_from_json(acct, json.root, acme) );
+    PROP(&e, acme_account_from_json(acct, json.root) );
+    dstr_zeroize(&json_textbuf);
     return e;
 }
 
-derr_t acme_account_from_file(acme_account_t *acct, char *file, acme_t *acme){
+derr_t acme_account_from_file(acme_account_t *acct, char *file){
     derr_t e = E_OK;
     DSTR_VAR(account, 1024);
     IF_PROP(&e, dstr_read_file(file, &account) ){
         *acct = (acme_account_t){0};
         return e;
     }
-    PROP(&e, acme_account_from_dstr(acct, account, acme) );
+    PROP(&e, acme_account_from_dstr(acct, account) );
+    dstr_zeroize(&account);
     return e;
 }
 
-derr_t acme_account_from_path(
-    acme_account_t *acct, string_builder_t path, acme_t *acme
-){
+derr_t acme_account_from_path(acme_account_t *acct, string_builder_t path){
     derr_t e = E_OK;
     DSTR_VAR(account, 1024);
     IF_PROP(&e, dstr_read_path(&path, &account) ){
         *acct = (acme_account_t){0};
         return e;
     }
-    PROP(&e, acme_account_from_dstr(acct, account, acme) );
+    PROP(&e, acme_account_from_dstr(acct, account) );
+    dstr_zeroize(&account);
+    return e;
+}
+
+derr_t acme_account_to_file(const acme_account_t acct, char *file){
+    derr_t e = E_OK;
+    FILE *f = NULL;
+
+    PROP_GO(&e, dfopen(file, "w", &f), cu);
+    PROP_GO(&e, jdump(DACCT(acct), WF(f), 2), cu);
+    PROP_GO(&e, dfclose2(&f), cu);
+
+cu:
+    if(f) fclose(f);
+    return e;
+}
+
+derr_t acme_account_to_path(const acme_account_t acct, string_builder_t path){
+    derr_t e = E_OK;
+    FILE *f = NULL;
+
+    PROP_GO(&e, dfopen_path(&path, "w", &f), cu);
+    PROP_GO(&e, jdump(DACCT(acct), WF(f), 2), cu);
+    PROP_GO(&e, dfclose2(&f), cu);
+
+cu:
+    if(f) fclose(f);
     return e;
 }
 
@@ -1048,12 +1073,12 @@ static void new_order_free_state(acme_t *acme){
 }
 
 void acme_new_order(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t domain,
     acme_new_order_cb cb,
     void *cb_data
 ){
-    acme_t *acme = acct.acme;
     acme_new_order_state_t *state = &acme->state.new_order;
     *state = (acme_new_order_state_t){
         .acct = acct,
@@ -1203,12 +1228,12 @@ static void get_order_free_state(acme_t *acme){
 }
 
 void acme_get_order(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t order,
     acme_get_order_cb cb,
     void *cb_data
 ){
-    acme_t *acme = acct.acme;
     acme_get_order_state_t *state = &acme->state.get_order;
     *state = (acme_get_order_state_t){
         .acct = acct,
@@ -1414,11 +1439,11 @@ static void list_orders_free_state(acme_t *acme){
 }
 
 void acme_list_orders(
+    acme_t *acme,
     const acme_account_t acct,
     acme_list_orders_cb cb,
     void *cb_data
 ){
-    acme_t *acme = acct.acme;
     acme_list_orders_state_t *state = &acme->state.list_orders;
     *state = (acme_list_orders_state_t){
         .acct = acct,
@@ -1526,8 +1551,16 @@ static void get_authz_reader_cb(stream_reader_t *reader, derr_t err){
         ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
     }
 
+    // token_thumb is: token + '.' + b64url(thumbprint)
+    DSTR_VAR(bin, SHA256_DIGEST_LENGTH);
+    PROP_GO(&e, jwk_thumbprint(state->acct.key, &bin), done);
+    PROP_GO(&e,
+        FMT(&state->token_thumb,
+            "%x.%x", FD(challenge.token), FB64URL(bin)
+        ),
+    done);
+
     PROP_GO(&e, dstr_copy(&challenge.url, &state->challenge), done);
-    PROP_GO(&e, dstr_copy(&challenge.token, &state->token), done);
     state->challenge_status = challenge.status;
 
     state->retry_after = acme->retry_after;
@@ -1545,7 +1578,7 @@ static void get_authz_advance_state(acme_t *acme, derr_t err){
     dstr_t domain = {0};
     dstr_t expires = {0};
     dstr_t challenge = {0};
-    dstr_t token = {0};
+    dstr_t token_thumb = {0};
     time_t retry_after = 0;
 
     // check for errors
@@ -1577,7 +1610,7 @@ done:
         domain = STEAL(dstr_t, &state->domain);
         expires = STEAL(dstr_t, &state->expires);
         challenge = STEAL(dstr_t, &state->challenge);
-        token = STEAL(dstr_t, &state->token);
+        token_thumb = STEAL(dstr_t, &state->token_thumb);
         status = state->status;
         challenge_status = state->challenge_status;
         retry_after = state->retry_after;
@@ -1595,7 +1628,7 @@ done:
         domain,
         expires,
         challenge,
-        token,
+        token_thumb,
         retry_after
     );
 }
@@ -1605,17 +1638,17 @@ static void get_authz_free_state(acme_t *acme){
     dstr_free(&state->domain);
     dstr_free(&state->expires);
     dstr_free(&state->challenge);
-    dstr_free(&state->token);
+    dstr_free(&state->token_thumb);
     *state = (acme_get_authz_state_t){0};
 }
 
 void acme_get_authz(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t authz,
     acme_get_authz_cb cb,
     void *cb_data
 ){
-    acme_t *acme = acct.acme;
     acme_get_authz_state_t *state = &acme->state.get_authz;
     *state = (acme_get_authz_state_t){
         .acct = acct,
@@ -1817,13 +1850,13 @@ static void challenge_free_state(acme_t *acme){
 }
 
 void acme_challenge(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t authz,
     const dstr_t challenge,
     acme_challenge_cb cb,
     void *cb_data
 ){
-    acme_t *acme = acct.acme;
     acme_challenge_state_t *state = &acme->state.challenge;
     *state = (acme_challenge_state_t){
         .acct = acct,
@@ -1839,13 +1872,13 @@ void acme_challenge(
 }
 
 void acme_challenge_finish(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t authz,
     time_t retry_after,
     acme_challenge_cb cb,
     void *cb_data
 ){
-    acme_t *acme = acct.acme;
     acme_challenge_state_t *state = &acme->state.challenge;
     *state = (acme_challenge_state_t){
         .acct = acct,
@@ -1958,7 +1991,8 @@ static derr_t makecsr(dstr_t domain, EVP_PKEY *pkey, dstr_t *out){
     X509_REQ_set_pubkey(csr, pkey);
 
     // v1 (0x0)
-    X509_REQ_set_version(csr, 0);
+    int ret = X509_REQ_set_version(csr, 0);
+    if(ret != 1) ORIG_GO(&e, E_SSL, "X509_REQ_set_version: %x", done, FSSL);
 
     // name is still owned by the X509_REQ
     X509_NAME *name = X509_REQ_get_subject_name(csr);
@@ -1969,7 +2003,7 @@ static derr_t makecsr(dstr_t domain, EVP_PKEY *pkey, dstr_t *out){
         ORIG_GO(&e, E_INTERNAL, "domain is way too long", done);
     }
     int udomainlen = (int)domain.len;
-    int ret = X509_NAME_add_entry_by_txt(
+    ret = X509_NAME_add_entry_by_txt(
         name, "CN", MBSTRING_ASC, udomain, udomainlen, -1, 0
     );
     if(ret != 1){
@@ -2199,6 +2233,7 @@ static void finalize_free_state(acme_t *acme){
 }
 
 void acme_finalize(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t order,
     const dstr_t finalize,
@@ -2207,7 +2242,6 @@ void acme_finalize(
     acme_finalize_cb cb,
     void *cb_data
 ){
-    acme_t *acme = acct.acme;
     acme_finalize_state_t *state = &acme->state.finalize;
     *state = (acme_finalize_state_t){
         .acct = acct,
@@ -2228,13 +2262,13 @@ void acme_finalize(
 }
 
 void acme_finalize_from_processing(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t order,
     time_t retry_after,
     acme_finalize_cb cb,
     void *cb_data
 ){
-    acme_t *acme = acct.acme;
     acme_finalize_state_t *state = &acme->state.finalize;
     *state = (acme_finalize_state_t){
         .acct = acct,
@@ -2252,12 +2286,12 @@ void acme_finalize_from_processing(
 }
 
 void acme_finalize_from_valid(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t certurl,
     acme_finalize_cb cb,
     void *cb_data
 ){
-    acme_t *acme = acct.acme;
     acme_finalize_state_t *state = &acme->state.finalize;
     *state = (acme_finalize_state_t){
         .acct = acct,

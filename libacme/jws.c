@@ -895,6 +895,7 @@ cu:
     return e;
 }
 
+// not base64url-encoded
 derr_t jwk_thumbprint(key_i *k, dstr_t *out){
     derr_t e = E_OK;
 

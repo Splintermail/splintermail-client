@@ -65,11 +65,13 @@ static void _get_authz_cb(
     }else if(challenge_status == ACME_PROCESSING){
         // continue a previous challenge
         acme_challenge_finish(
-            *g->acct, g->authz, retry_after, _challenge_cb, g
+            *g->acme, *g->acct, g->authz, retry_after, _challenge_cb, g
         );
     }else{
         // need to post our challenge first
-        acme_challenge(*g->acct, g->authz, g->challenge, _challenge_cb, g);
+        acme_challenge(
+            *g->acme, *g->acct, g->authz, g->challenge, _challenge_cb, g
+        );
     }
 
     return;
@@ -104,9 +106,9 @@ static derr_t _challenge(
 
     PROP_GO(&e, acme_new_ex(&acme, &http, directory, verify_name), fail);
 
-    PROP_GO(&e, acme_account_from_file(&acct, acct_file, acme), fail);
+    PROP_GO(&e, acme_account_from_file(&acct, acct_file), fail);
 
-    acme_get_authz(acct, authz, _get_authz_cb, &g);
+    acme_get_authz(acme, acct, authz, _get_authz_cb, &g);
 
     derr_t e2 = duv_run(&loop);
     TRACE_PROP_VAR(&e, &e2);

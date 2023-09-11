@@ -14,22 +14,24 @@ void acme_close(acme_t *acme, acme_close_cb close_cb, void *cb_data);
 void acme_free(acme_t **acme);
 
 typedef struct {
-    acme_t *acme;
     key_i *key;
     dstr_t kid;
     dstr_t orders;
 } acme_account_t;
 
-derr_t acme_account_from_json(
-    acme_account_t *acct, json_ptr_t ptr, acme_t *acme
-);
-derr_t acme_account_from_dstr(
-    acme_account_t *acct, dstr_t dstr, acme_t *acme
-);
-derr_t acme_account_from_file(acme_account_t *acct, char *file, acme_t *acme);
-derr_t acme_account_from_path(
-    acme_account_t *acct, string_builder_t path, acme_t *acme
-);
+derr_t acme_account_from_json(acme_account_t *acct, json_ptr_t ptr);
+derr_t acme_account_from_dstr(acme_account_t *acct, dstr_t dstr);
+derr_t acme_account_from_file(acme_account_t *acct, char *file);
+derr_t acme_account_from_path(acme_account_t *acct, string_builder_t path);
+
+#define DACCT(acct) DOBJ( \
+    DKEY("key", DJWKPVT((acct).key)), \
+    DKEY("kid", DD((acct).kid)), \
+    DKEY("orders", DD((acct).orders)), \
+)
+
+derr_t acme_account_to_file(const acme_account_t acct, char *file);
+derr_t acme_account_to_path(const acme_account_t acct, string_builder_t path);
 
 void acme_account_free(acme_account_t *acct);
 
@@ -48,11 +50,7 @@ typedef enum {
 
 dstr_t acme_status_dstr(acme_status_e status);
 
-typedef void (*acme_new_account_cb)(
-    void*,
-    derr_t,
-    acme_account_t acct
-);
+typedef void (*acme_new_account_cb)(void*, derr_t, acme_account_t acct);
 
 void acme_new_account(
     acme_t *acme,
@@ -73,6 +71,7 @@ typedef void (*acme_new_order_cb)(
 );
 
 void acme_new_order(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t domain,
     acme_new_order_cb cb,
@@ -93,6 +92,7 @@ typedef void (*acme_get_order_cb)(
 );
 
 void acme_get_order(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t order,
     acme_get_order_cb cb,
@@ -103,6 +103,7 @@ void acme_get_order(
 typedef void (*acme_list_orders_cb)(void*, derr_t, LIST(dstr_t) orders);
 
 void acme_list_orders(
+    acme_t *acme,
     const acme_account_t acct,
     acme_list_orders_cb cb,
     void *cb_data
@@ -117,11 +118,12 @@ typedef void (*acme_get_authz_cb)(
     dstr_t domain,
     dstr_t expires,
     dstr_t challenge,   // only the dns challenge is returned
-    dstr_t token,       // only the dns challenge is returned
+    dstr_t token_thumb, // only the dns challenge is returned, with thumprint
     time_t retry_after  // might be zero
 );
 
 void acme_get_authz(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t authz,
     acme_get_authz_cb cb,
@@ -132,6 +134,7 @@ void acme_get_authz(
 typedef void (*acme_challenge_cb)(void*, derr_t);
 
 void acme_challenge(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t authz,
     const dstr_t challenge,
@@ -141,6 +144,7 @@ void acme_challenge(
 
 // finish challenging, when you wake up to an authz with status=processing
 void acme_challenge_finish(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t authz,
     time_t retry_after,
@@ -152,6 +156,7 @@ void acme_challenge_finish(
 typedef void (*acme_finalize_cb)(void*, derr_t, dstr_t cert);
 
 void acme_finalize(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t order,
     const dstr_t finalize,
@@ -163,6 +168,7 @@ void acme_finalize(
 
 // finish finalizing, when you wake up to an order with status=processing
 void acme_finalize_from_processing(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t order,
     time_t retry_after,
@@ -172,6 +178,7 @@ void acme_finalize_from_processing(
 
 // finish finalizing, when you wake up to an order with status=valid
 void acme_finalize_from_valid(
+    acme_t *acme,
     const acme_account_t acct,
     const dstr_t certurl,
     acme_finalize_cb cb,

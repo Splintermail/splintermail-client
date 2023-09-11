@@ -33,6 +33,7 @@ derr_t jwk_to_key(json_ptr_t jwk, key_i **out);
 
 derr_t json_to_key(const dstr_t text, key_i **out);
 
+// not base64url-encoded
 derr_t jwk_thumbprint(key_i *k, dstr_t *out);
 
 // signatures

@@ -68,16 +68,25 @@ static void _get_order_cb(
 
     if(status == ACME_VALID){
         // finish a near-complete finalize
-        acme_finalize_from_valid(g->acct, g->certurl, _finalize_cb, g);
+        acme_finalize_from_valid(
+            *g->acme, g->acct, g->certurl, _finalize_cb, g
+        );
     }else if(status == ACME_PROCESSING){
         // finish an in-progress finalize
         acme_finalize_from_processing(
-            g->acct, g->order, retry_after, _finalize_cb, g
+            *g->acme, g->acct, g->order, retry_after, _finalize_cb, g
         );
     }else{
         // get started finalizing
         acme_finalize(
-            g->acct, g->order, g->finalize, g->domain, g->pkey, _finalize_cb, g
+            *g->acme,
+            g->acct,
+            g->order,
+            g->finalize,
+            g->domain,
+            g->pkey,
+            _finalize_cb,
+            g
         );
     }
 
@@ -113,10 +122,10 @@ static derr_t finalize(
 
     PROP_GO(&e, acme_new_ex(&acme, &http, directory, verify_name), fail);
 
-    PROP_GO(&e, acme_account_from_file(&g.acct, acct_file, acme), fail);
+    PROP_GO(&e, acme_account_from_file(&g.acct, acct_file), fail);
 
     // get finalize url and domain from get_order() first
-    acme_get_order(g.acct, order, _get_order_cb, &g);
+    acme_get_order(acme, g.acct, order, _get_order_cb, &g);
 
     derr_t e2 = duv_run(&loop);
     TRACE_PROP_VAR(&e, &e2);

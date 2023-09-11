@@ -79,9 +79,9 @@ static derr_t get_authz(
 
     PROP_GO(&e, acme_new_ex(&acme, &http, directory, verify_name), fail);
 
-    PROP_GO(&e, acme_account_from_file(&acct, acct_file, acme), fail);
+    PROP_GO(&e, acme_account_from_file(&acct, acct_file), fail);
 
-    acme_get_authz(acct, authz, _get_authz_cb, &g);
+    acme_get_authz(acme, acct, authz, _get_authz_cb, &g);
 
     derr_t e2 = duv_run(&loop);
     TRACE_PROP_VAR(&e, &e2);
