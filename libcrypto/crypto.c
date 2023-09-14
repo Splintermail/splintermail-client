@@ -499,6 +499,44 @@ void keypair_free(keypair_t **old){
     *old = NULL;
 }
 
+derr_t get_private_pem(EVP_PKEY *pkey, dstr_t *out){
+    derr_t e = E_OK;
+
+    // first create a memory BIO for writing the key to
+    BIO* bio = BIO_new(BIO_s_mem());
+    if(!bio){
+        trace_ssl_errors(&e);
+        ORIG(&e, E_NOMEM, "unable to create memory BIO");
+    }
+
+    // now write the private key to memory
+    int ret = PEM_write_bio_PKCS8PrivateKey(
+        bio, pkey, NULL, NULL, 0, NULL, NULL
+    );
+    if(!ret){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_NOMEM, "failed to write private key", cleanup);
+    }
+
+    // now get a pointer to what was written
+    char* ptr;
+    long bio_len = BIO_get_mem_data(bio, &ptr);
+    // I don't see any indication on how to check for errors, so here's a guess
+    if(bio_len < 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_INTERNAL, "failed to read private key from memory", cleanup);
+    }
+
+    // now wrap that pointer in a dstr_t for a dstr_copy operation
+    dstr_t dptr;
+    DSTR_WRAP(dptr, ptr, (size_t)bio_len, false);
+    PROP_GO(&e, dstr_copy(&dptr, out), cleanup);
+
+cleanup:
+    BIO_free(bio);
+    return e;
+}
+
 derr_t get_public_pem(EVP_PKEY *pkey, dstr_t *out){
     derr_t e = E_OK;
 

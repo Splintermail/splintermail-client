@@ -105,6 +105,7 @@ derr_t keypair_from_pubkey_pem(keypair_t **out, dstr_t pem);
 derr_t keypair_from_private_pem(keypair_t **out, dstr_t pem);
 void keypair_free(keypair_t **old);
 
+derr_t get_private_pem(EVP_PKEY *pkey, dstr_t *out);
 derr_t get_public_pem(EVP_PKEY *pkey, dstr_t *out);
 derr_t keypair_get_public_pem(const keypair_t *kp, dstr_t *out);
 /* throws: E_NOMEM (either internally with the memory BIO or writing to *out)
