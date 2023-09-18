@@ -3,7 +3,8 @@
 #include "libduv/libduv.h"
 #include "libhttp/libhttp.h"
 #include "libacme/libacme.h"
-#include "libacme/pebble.h"
+
+#include "test/certs.h"
 
 #include <string.h>
 

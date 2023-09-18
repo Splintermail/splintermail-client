@@ -1,6 +1,7 @@
 sm_lib(dummy_ui_harness.c DEPS duv crypto TEST)
 sm_lib(fake_api_server.c DEPS crypto TEST)
 sm_lib(test_utils.c DEPS dstr TEST)
+sm_lib(certs.c DEPS dstr crypto TEST)
 
 sm_test(test_common.c DEPS dstr)
 sm_test(test_fileops.c DEPS dstr)

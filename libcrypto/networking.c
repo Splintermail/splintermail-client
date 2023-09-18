@@ -217,108 +217,226 @@ derr_t ssl_context_new_client(ssl_context_t* ctx){
     return e;
 }
 
-derr_t ssl_context_new_server(
-    ssl_context_t* ctx, const char* certfile, const char* keyfile
-){
+// loosely based on openssl's ssl/ssl_rsa.c::use_certificate_chain_file()
+static derr_t ssl_ctx_read_cert_chain(SSL_CTX *ctx, dstr_t chain){
     derr_t e = E_OK;
 
-    // make sure certfile is a real file and that we have access
-    if(!file_r_access(certfile)){
-        ORIG(&e, E_FS, "unable to access certfile");
-    }
-    // make sure keyfile is a real file and that we have access
-    if(!file_r_access(keyfile)){
-        ORIG(&e, E_FS, "unable to access keyfile");
+    BIO *bio = NULL;
+    X509 *x = NULL;
+
+    if(chain.len > INT_MAX) ORIG(&e, E_PARAM, "chain is way too long");
+    int chainlen = (int)chain.len;
+
+    bio = BIO_new_mem_buf((void*)chain.data, chainlen);
+    if(!bio){
+        ORIG_GO(&e, E_NOMEM, "unable to create BIO", cu);
     }
 
+    x = X509_new();
+    if(!x){
+        ORIG_GO(&e, E_NOMEM, "nomem", cu);
+    }
+
+    // the first certificate may have trust information
+    X509 *xret = PEM_read_bio_X509_AUX(bio, &x, NULL, NULL);
+    if(!xret){
+        ORIG_GO(&e, E_SSL, "unable to read cert: %x", cu, FSSL);
+    }
+
+    int ret = SSL_CTX_use_certificate(ctx, x);
+    if(ret != 1){
+        ORIG_GO(&e, E_SSL, "unable to use cert: %x", cu, FSSL);
+    }
+
+    X509_free(x);
+    x = NULL;
+
+    long lret = SSL_CTX_clear_chain_certs(ctx);
+    if(lret != 1){
+        ORIG_GO(&e, E_SSL, "unable to clear chain certs: %x", cu, FSSL);
+    }
+
+    // read chain certs until the file runs out
+    ERR_clear_error();
+    while(true){
+        // prepare memory
+        x = X509_new();
+        if(!x){
+            ORIG_GO(&e, E_NOMEM, "nomem", cu);
+        }
+        // read a chain cert, no trust info
+        X509 *xret = PEM_read_bio_X509(bio, &x, NULL, NULL);
+        if(!xret){
+            unsigned long err = ERR_peek_last_error();
+            if(ERR_GET_LIB(err) == ERR_LIB_PEM
+            && ERR_GET_REASON(err) == PEM_R_NO_START_LINE){
+                // just an EOF error
+                ERR_clear_error();
+                break;
+            }
+            // non-EOF error
+            ORIG_GO(&e, E_SSL, "unable to read chain cert: %x", cu, FSSL);
+        }
+        lret = SSL_CTX_add0_chain_cert(ctx, x);
+        if(lret != 1){
+            ORIG_GO(&e, E_SSL, "unable to add chain certs: %x", cu, FSSL);
+        }
+        // don't free successfully add0'd cert
+        x = NULL;
+    }
+
+cu:
+    X509_free(x);
+    BIO_free(bio);
+
+    return e;
+}
+
+static derr_t ssl_ctx_read_private_key(SSL_CTX *ctx, dstr_t key){
+    derr_t e = E_OK;
+
+    BIO *bio = NULL;
+    EVP_PKEY *pkey = NULL;
+
+    if(key.len > INT_MAX) ORIG(&e, E_PARAM, "key is way too long");
+    int keylen = (int)key.len;
+
+    bio = BIO_new_mem_buf((void*)key.data, keylen);
+    if(!bio){
+        ORIG_GO(&e, E_NOMEM, "unable to create BIO", cu);
+    }
+
+    pkey = EVP_PKEY_new();
+    if(!pkey){
+        ORIG_GO(&e, E_NOMEM, "nomem", cu);
+    }
+
+    EVP_PKEY *pkret = PEM_read_bio_PrivateKey(bio, &pkey, NULL, NULL);
+    if(!pkret){
+        ORIG_GO(&e, E_SSL, "unable to read private key: %x\n", cu, FSSL);
+    }
+
+    int ret = SSL_CTX_use_PrivateKey(ctx, pkey);
+    if(ret != 1){
+        ORIG_GO(&e, E_SSL, "unable to use private key: %x\n", cu, FSSL);
+    }
+
+cu:
+    EVP_PKEY_free(pkey);
+    BIO_free(bio);
+
+    return e;
+}
+
+derr_t ssl_context_new_server_pem(
+    ssl_context_t* ctx, dstr_t fullchain, dstr_t key
+){
+    derr_t e = E_OK;
     long lret;
+
+    *ctx = (ssl_context_t){0};
+    SSL_CTX *out = NULL;
 
     // pick method
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
     // openssl pre-1.1.0 API
     // allow server to start talking to anybody
     const SSL_METHOD* meth = SSLv23_server_method();
-    ctx->ctx = NULL;
-    ctx->ctx = SSL_CTX_new(meth);
-    if(!ctx->ctx){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "failed to create SSL context");
+    out = SSL_CTX_new(meth);
+    if(!out){
+        ORIG(&e, E_NOMEM, "failed to create SSL context: %x", FSSL);
     }
     long ulret;
 #else
     // openssl 1.1.0 API
     // allow server to start talking to anybody
     const SSL_METHOD* meth = TLS_server_method();
-    ctx->ctx = NULL;
-    ctx->ctx = SSL_CTX_new(meth);
-    if(!ctx->ctx){
+    out = SSL_CTX_new(meth);
+    if(!out){
         trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "failed to create SSL context");
+        ORIG(&e, E_NOMEM, "failed to create SSL context: %x", FSSL);
     }
     uint64_t ulret;
 #endif
-    PROP_GO(&e, set_safe_protocol(ctx->ctx), cleanup);
+    PROP_GO(&e, set_safe_protocol(out), cu);
 
     // set key and cert
-    int ret = SSL_CTX_use_certificate_chain_file(ctx->ctx, certfile);
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "could not set certificate", cleanup);
-    }
-    ret = SSL_CTX_use_PrivateKey_file(ctx->ctx, keyfile, SSL_FILETYPE_PEM);
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "could not set private key", cleanup);
-    }
+    PROP_GO(&e, ssl_ctx_read_cert_chain(out, fullchain), cu);
+    PROP_GO(&e, ssl_ctx_read_private_key(out, key), cu);
+
     // make sure the key matches the certificate
-    ret = SSL_CTX_check_private_key(ctx->ctx);
+    int ret = SSL_CTX_check_private_key(out);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "private key does not match certificate", cleanup);
+        ORIG_GO(&e,
+            E_SSL, "private key does not match certificate: %x", cu, FSSL
+        );
     }
 
     // make sure server sets cipher preference
-    ulret = SSL_CTX_set_options(ctx->ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
+    ulret = SSL_CTX_set_options(out, SSL_OP_CIPHER_SERVER_PREFERENCE);
     if( !(ulret & SSL_OP_CIPHER_SERVER_PREFERENCE) ){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to set server cipher preference ", cleanup);
+        ORIG_GO(&e,
+            E_SSL, "failed to set server cipher preference: %x", cu, FSSL
+        );
     }
 
-    ret = SSL_CTX_set_cipher_list(ctx->ctx, PREFERRED_CIPHERS);
+    ret = SSL_CTX_set_cipher_list(out, PREFERRED_CIPHERS);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "could not set ciphers", cleanup);
+        ORIG_GO(&e, E_SSL, "could not set ciphers: %x", cu, FSSL);
     }
 
     // read/write operations should only return after handshake completed
-    lret = SSL_CTX_set_mode(ctx->ctx, SSL_MODE_AUTO_RETRY);
+    lret = SSL_CTX_set_mode(out, SSL_MODE_AUTO_RETRY);
     if(!(lret & SSL_MODE_AUTO_RETRY)){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "error setting SSL mode", cleanup);
+        ORIG_GO(&e, E_SSL, "error setting SSL mode: %x", cu, FSSL);
     }
 
+    ctx->ctx = out;
+    out = NULL;
+
+cu:
+    SSL_CTX_free(out);
     return e;
-cleanup:
-    SSL_CTX_free(ctx->ctx);
-    ctx->ctx = NULL;
+}
+
+derr_t ssl_context_new_server(
+    ssl_context_t* ctx, const char* fullchainfile, const char* keyfile
+){
+    derr_t e = E_OK;
+    *ctx = (ssl_context_t){0};
+
+    dstr_t chain = {0};
+    dstr_t key = {0};
+
+    // read the chainfile and keyfile
+    PROP_GO(&e, dstr_read_file(fullchainfile, &chain), cu);
+    PROP_GO(&e, dstr_read_file(keyfile, &key), cu);
+
+    PROP_GO(&e, ssl_context_new_server_pem(ctx, chain, key), cu);
+
+cu:
+    dstr_free0(&chain);
+    dstr_free0(&key);
     return e;
 }
 
 derr_t ssl_context_new_server_path(
-    ssl_context_t* ctx, string_builder_t cert, string_builder_t key
+    ssl_context_t* ctx, string_builder_t fullchain, string_builder_t key
 ){
     DSTR_VAR(stack_cert, 256);
     dstr_t heap_cert = {0};
-    dstr_t* dcert = NULL;
+    dstr_t* dchain = NULL;
     DSTR_VAR(stack_key, 256);
     dstr_t heap_key = {0};
     dstr_t* dkey = NULL;
 
     derr_t e = E_OK;
 
-    PROP_GO(&e, sb_expand(&cert, &stack_cert, &heap_cert, &dcert), cu);
+    *ctx = (ssl_context_t){0};
+
+    PROP_GO(&e, sb_expand(&fullchain, &stack_cert, &heap_cert, &dchain), cu);
     PROP_GO(&e, sb_expand(&key, &stack_key, &heap_key, &dkey), cu);
-    PROP_GO(&e, ssl_context_new_server(ctx, dcert->data, dkey->data), cu);
+    PROP_GO(&e, ssl_context_new_server(ctx, dchain->data, dkey->data), cu);
 
 cu:
     dstr_free(&heap_key);

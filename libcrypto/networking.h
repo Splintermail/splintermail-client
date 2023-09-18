@@ -40,16 +40,15 @@ derr_t ssl_context_new_client_ex(
 derr_t ssl_context_new_client(ssl_context_t* ctx);
 
 // server side
+derr_t ssl_context_new_server_pem(
+    ssl_context_t* ctx, dstr_t fullchain, dstr_t key
+);
 derr_t ssl_context_new_server(
-    ssl_context_t* ctx, const char* certfile, const char* keyfile
+    ssl_context_t* ctx, const char* fullchainfile, const char* keyfile
 );
 derr_t ssl_context_new_server_path(
-    ssl_context_t* ctx, string_builder_t cert, string_builder_t key
+    ssl_context_t* ctx, string_builder_t fullchain, string_builder_t key
 );
-/* throws: E_NOMEM
-           E_FS error accessing key/certificate files
-           E_SSL error reading PEM files (technically could be an OS error),
-                 or various other SSL errors, but that's most likely */
 
 derr_t listener_new(listener_t* l, const char* addr, unsigned int port);
 derr_t listener_new_ssl(listener_t* l, ssl_context_t* ctx,
