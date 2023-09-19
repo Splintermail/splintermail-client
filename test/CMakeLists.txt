@@ -30,16 +30,12 @@ sm_test(test_log_file.c DEPS dstr imaildir test_utils)
 
 # add some python-based tests
 
-set(test_proxy_cmd "${PYTHON_3_CMD}" "${PROJECT_SOURCE_DIR}/test/e2e_citm.py")
-if(NOT "${USE_TEST_PROXY}" STREQUAL "")
+set(e2e_test_cmd "${PYTHON_3_CMD}" "${PROJECT_SOURCE_DIR}/test/e2e_citm.py")
+if(USE_TEST_SERVER)
     # let some linux machine run dovecot and mysql for us
-    list(APPEND test_proxy_cmd "--proxy" "${USE_TEST_PROXY}")
+    list(APPEND e2e_test_cmd "--remote" "insecure://${USE_TEST_SERVER}:1234")
 endif()
-if(WIN32)
-    # ctest needs some protection against the strange windows SIGINT behavior
-    list(APPEND test_proxy_cmd "--extra-subproc")
-endif()
-sm_test(e2e_citm ${test_proxy_cmd} CWD "${PROJECT_BINARY_DIR}")
+sm_test(e2e_citm ${e2e_test_cmd} CWD "${PROJECT_BINARY_DIR}")
 
 sm_test(
     enc_dec

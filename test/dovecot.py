@@ -25,7 +25,7 @@ class Dovecot:
         basedir=None,
         sql_sock=None,
         bind_addr=None,
-        imaps_port=None,
+        imap_port=None,
         plugin_path=None,
     ):
         assert not args, "all args must be kwargs"
@@ -34,7 +34,7 @@ class Dovecot:
         self.sql_sock = os.path.abspath(sql_sock)
         self.bind_addr = bind_addr or "127.0.0.1"
         # pick a random port if not provided
-        self.imaps_port = imaps_port or random.randint(6000, 2**16-1)
+        self.imap_port = imap_port or random.randint(6000, 2**16-1)
         # assume we are in the build directory if not provided
         self.plugin_path = os.path.abspath(plugin_path or "server/xkey")
 
@@ -60,27 +60,27 @@ default_login_user = {self.user}
 
 mail_plugin_dir = {self.plugin_path}
 
-ssl_cert =<{HERE}/files/ssl/good-cert.pem
-ssl_key =<{HERE}/files/ssl/good-key.pem
-
 # don't use the syslog
 log_path = /dev/stdout
 
 ## dovecot conf for splintermail testing
 login_greeting = Dovecot ready DITMv0.2.0
 
+# always allow plaintext logins from anywhere
+login_trusted_networks=0.0.0.0/0
+
 # no chroot
 service imap-login {{
     chroot =
     user = $default_internal_user
-    # disable non-ssl imap
     inet_listener imap {{
-        address = 0.0.0.0
-        port = {self.imaps_port+1}
-    }}
-    inet_listener imaps {{
         address = {self.bind_addr}
-        port = {self.imaps_port}
+        port = {self.imap_port}
+    }}
+    # disable imaps; use insecure connections for testing
+    inet_listener imaps {{
+        address =
+        port = 0
     }}
 }}
 
@@ -108,8 +108,6 @@ service stats {{
 service anvil {{
     chroot =
 }}
-
-ssl = required
 
 # include FSID characters
 auth_username_chars = abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-+_@
@@ -169,14 +167,14 @@ password_query = SELECT TO_FSID(user_uuid) as username, 'x.splintermail.com' as 
 
     def __enter__(self):
         self.start()
-        return self.imaps_port
+        return self.imap_port
 
     def __exit__(self, *_,):
         self.close()
 
     def _ready_check(self, timeout):
         if self.lsof is not None:
-            cmd = ["lsof", f"-itcp:{self.imaps_port}"]
+            cmd = ["lsof", f"-itcp:{self.imap_port}"]
             if subprocess.run(cmd, stdout=subprocess.DEVNULL).returncode == 0:
                 return True
             else:
@@ -188,7 +186,7 @@ password_query = SELECT TO_FSID(user_uuid) as username, 'x.splintermail.com' as 
             start = time.time()
             s.settimeout(.01)
             try:
-                s.connect(('localhost', self.imaps_port))
+                s.connect(('localhost', self.imap_port))
                 return True
             except ConnectionRefusedError:
                 wait = .1 - (time.time() - start)
@@ -249,11 +247,11 @@ def tempdir():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='run dovecot as a user')
     parser.add_argument(
-        "--imaps-port",
+        "--imap-port",
         type=int,
         default=2993,
         action="store",
-        help="imaps port",
+        help="imap port",
     )
     parser.add_argument(
         "--build-dir",
@@ -271,7 +269,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    imaps_port = args.imaps_port
+    imap_port = args.imap_port
     migrations = os.path.join(HERE, "..", "server", "migrations")
     migmysql_path = os.path.join(args.build_dir, "server", "migmysql")
     if not os.path.exists(migmysql_path):
@@ -288,7 +286,7 @@ if __name__ == "__main__":
             with Dovecot(
                 basedir=basedir,
                 sql_sock=runner.sockpath,
-                imaps_port=args.imaps_port,
+                imap_port=imap_port,
                 bind_addr="127.0.0.1",
                 plugin_path=plugin_path,
             ):
@@ -299,5 +297,5 @@ if __name__ == "__main__":
                 else:
                     env = dict(**os.environ)
                     env["SQL_SOCK"] = runner.sockpath
-                    env["IMAPS_PORT"] = str(args.imaps_port)
+                    env["IMAP_PORT"] = str(imap_port)
                     subprocess.run(cmd, env=env, check=True)

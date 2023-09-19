@@ -11,7 +11,6 @@ import selectors
 import shutil
 import signal
 import socket
-import ssl
 import subprocess
 import sys
 import tempfile
@@ -19,6 +18,7 @@ import textwrap
 import threading
 import time
 import traceback
+import urllib.parse
 
 HERE = os.path.dirname(__file__)
 test_files = os.path.join(HERE, "files")
@@ -172,99 +172,12 @@ class WriterThread(IOThread):
                 if data is None:
                     break
                 self.buffer.append(data)
-                self.io.write(data)
+                self.io.send(data)
         finally:
             self.io.close()
 
     def quit(self, _):
         self.q.put(None)
-
-
-class TLS:
-    def __init__(self, sock, modify_fn, send_fn):
-        self.sock = sock
-        self.modify_fn = modify_fn
-        self.send_fn = send_fn
-
-        self.out = b""
-        self.handshake = False
-        self.read_wants_write = False
-        self.write_wants_read = False
-        self.registered = None
-
-    def advance_handshake(self, readable, writable):
-        try:
-            self.sock.do_handshake()
-        except ssl.SSLWantReadError:
-            self.modify(read=True, write=False)
-        except ssl.SSLWantWriteError:
-            self.modify(read=False, write=True)
-        else:
-            self.handshake = True
-            self.modify(read=True, write=len(self.out) > 0)
-
-    def advance_state(self, readable, writable):
-        if not self.handshake:
-            return self.advance_handshake(readable, writable)
-
-        if readable or (writable and self.read_wants_write):
-            try:
-                data = self.sock.recv(4096)
-            except ssl.SSLWantReadError:
-                self.modify(read=True, write=False)
-                return False
-            except ssl.SSLWantWriteError:
-                self.modify(read=False, write=True)
-                self.read_wants_write = True
-                return False
-            except ConnectionResetError:
-                return True
-
-            if not data:
-                return True
-
-            self.modify(read=True, write=len(self.out) > 0)
-            self.send_fn(data)
-
-        if writable or (readable and self.write_wants_read):
-            assert self.out, "nothing to write"
-            try:
-                written = self.sock.send(self.out)
-            except ssl.SSLWantReadError:
-                self.modify(read=True, write=False)
-                self.write_wants_read = True
-                return False
-            except ssl.SSLWantWriteError:
-                self.modify(read=False, write=True)
-                return False
-
-            if not written:
-                return True
-
-            self.out = self.out[written:]
-            self.modify(read=True, write=len(self.out) > 0)
-
-    def send(self, data):
-        self.out += data
-        if not self.handshake:
-            return
-        if self.read_wants_write:
-            return
-        if self.write_wants_read:
-            return
-        self.modify(read=True, write=len(self.out) > 0)
-
-    def modify(self, read, write):
-        if self.registered == (read, write):
-            return
-        self.registered = (read, write)
-
-        mask = 0
-        if read:
-            mask |= selectors.EVENT_READ
-        if write:
-            mask |= selectors.EVENT_WRITE
-        self.modify_fn(self.sock, mask)
 
 
 def peel_line(text):
@@ -274,70 +187,145 @@ def peel_line(text):
     return text[:idx+1], text[idx+1:]
 
 
-class TLSPair:
+class SocketPair:
     def __init__(self, sel, local, remote):
         self.sel = sel
+        self.local = local
+        self.remote = remote
+
+        self.local_flags = selectors.EVENT_READ
+        self.remote_flags = selectors.EVENT_READ
+        self.sel.register(self.local, self.local_flags, self)
+        self.sel.register(self.remote, self.remote_flags, self)
 
         self.closed = False
-
         self.local_buf = b""
+        self.pending = b"" # incomplete lines or trapped lines
         self.remote_buf = b""
+        self.trapped = b""
+        self.local_eof = False
+        self.remote_eof = False
 
         self.cond = threading.Condition()
         self.trap_response = None
         self.trapped = False
 
-        self.local = TLS(local, self.modify_fn, self.local_data)
-        self.remote = TLS(remote, self.modify_fn, self.remote_data)
-        self.sel.register(local, selectors.EVENT_READ, self)
-        self.sel.register(remote, selectors.EVENT_WRITE, self)
-
-    def hook(self, sock, readable, writable):
+    def event(self, sock, readable, writable):
         if self.closed:
             return
-        if sock == self.local.sock:
-            if self.local.advance_state(readable, writable):
-                self.close()
-        else:
-            if self.remote.advance_state(readable, writable):
-                self.close()
+
+        if sock == self.local:
+            if readable:
+                try:
+                    data = self.local.recv(4096)
+                except ConnectionError:
+                    data = b""
+                if not data:
+                    # read EOF
+                    self.local_eof = True
+                else:
+                    self.local_buf += data
+
+            if writable:
+                try:
+                    nsent = self.local.send(self.remote_buf)
+                    self.remote_buf = self.remote_buf[nsent:]
+                except:
+                    # Don't support SHUT_RD mechanics, just break.
+                    self.close()
+                    return
+
+        if sock == self.remote:
+            if readable:
+                try:
+                    data = self.remote.recv(4096)
+                except ConnectionError:
+                    data = b""
+                if not data:
+                    # read EOF
+                    self.remote_eof = True
+                else:
+                    self.pending += data
+                    # forward as much to the local as is safe
+                    while True:
+                        line, temp = peel_line(self.pending)
+                        if line is None:
+                            # no complete lines
+                            break
+                        if self.trap_response and re.match(
+                            self.trap_response, line
+                        ):
+                            # found the line to trap
+                            with self.cond:
+                                self.trapped = True
+                                self.cond.notify()
+                            break
+                        # safe to forward this line
+                        self.remote_buf += line
+                        self.pending = temp
+
+            if writable:
+                try:
+                    nsent = self.remote.send(self.local_buf)
+                    self.local_buf = self.local_buf[nsent:]
+                except:
+                    # Don't support SHUT_RD mechanics, just break.
+                    self.close()
+
+        self.reregister()
+
+    def reregister(self):
+        local_flags = 0
+        remote_flags = 0
+
+        if not self.local_eof:
+            local_flags |= selectors.EVENT_READ
+
+        if not self.remote_eof:
+            remote_flags |= selectors.EVENT_READ
+
+        if self.remote_buf:
+            local_flags |= selectors.EVENT_WRITE
+
+        if self.local_buf:
+            remote_flags |= selectors.EVENT_WRITE
+
+        if not local_flags and not remote_flags and not self.trapped:
+            self.close()
+            return
+
+        self.local_flags = self.register_one(
+            self.local, local_flags, self.local_flags
+        )
+        self.remote_flags = self.register_one(
+            self.remote, remote_flags, self.remote_flags
+        )
+
+    def register_one(self, sock, flags, cache):
+        if flags == cache:
+            # noop
+            return flags
+        if not cache:
+            # first registration
+            self.sel.register(sock, flags, self)
+            return flags
+        if not flags:
+            # unregister
+            self.sel.unregister(sock)
+            return flags
+        # modify an existing registration
+        self.sel.modify(sock, flags, self)
+        return flags
 
     def close(self):
         if self.closed:
             return
         self.closed = True
-        self.sel.unregister(self.local.sock)
-        self.sel.unregister(self.remote.sock)
-        self.local.sock.close()
-        self.remote.sock.close()
-
-    def remote_data(self, data):
-        """Forward a line at a time"""
-        self.local_buf += data
-        while not self.trapped:
-            line, self.local_buf = peel_line(self.local_buf)
-            if line is None:
-                break
-            # Do we need to trap this response?
-            if self.trap_response and re.match(self.trap_response, line):
-                with self.cond:
-                    self.trapped = True
-                    self.cond.notify()
-                self.local_buf = line + self.local_buf
-                break
-            self.local.send(line)
-
-    def local_data(self, data):
-        """Forward a line at a time"""
-        self.remote_buf += data
-        while True:
-            line, self.remote_buf = peel_line(self.remote_buf)
-            if line is None:
-                break
-            self.remote.send(line)
-
-    def modify_fn(self, sock, mask):
-        self.sel.modify(sock, mask, self)
+        # unregister safely
+        self.register_one(self.local, 0, self.local_flags)
+        self.register_one(self.remote, 0, self.remote_flags)
+        self.local.close()
+        self.remote.close()
 
     # event loop function
     def set_trap_response(self, pattern):
@@ -350,8 +338,10 @@ class TLSPair:
         with self.cond:
             self.trapped = False
             self.trap_response = None
+            self.remote_buf += self.pending
+            self.pending = b""
             self.cond.notify()
-        self.remote_data(b"")
+        self.reregister()
 
     # main thread function
     def wait_for_trap_start(self):
@@ -372,17 +362,20 @@ class TLSPair:
                 self.cond.wait()
 
 
-class TLSSocketIntercept(threading.Thread):
+class SocketIntercept(threading.Thread):
     def __init__(self, cmd):
         self.closed = False
-
         self.pairs = []
-
         self.quitting = False
         self.started = False
 
+        # bind to a random port
+        self.listener = socket.socket()
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(5)
+        self.port = self.listener.getsockname()[1]
+
         # configure command and gather host/port info
-        self.port = random.randint(32768, 60999)
         self.cmd = [*cmd]
         if "--remote" in cmd:
             remote_idx = cmd.index("--remote") + 1
@@ -390,23 +383,14 @@ class TLSSocketIntercept(threading.Thread):
             host, port = hostport.split(":", maxsplit=1)
             self.remote_host = host
             self.remote_port = int(port)
-            self.cmd[remote_idx] = f"tls://127.0.0.1:{self.port}"
+            self.cmd[remote_idx] = f"insecure://127.0.0.1:{self.port}"
         else:
             self.remote_host = "127.0.0.1"
             self.remote_port = 993
-            cmd += ["--remote", f"tls://127.0.0.1:{self.port}"]
+            cmd += ["--remote", f"insecure://127.0.0.1:{self.port}"]
 
-        # create a listener
-        self.listener = socket.socket()
-        self.listener.bind(("127.0.0.1", self.port))
-        self.listener.listen(5)
-
-        # create a control connection (must be TCP so select works on windows)
-        self.ctl_w = socket.socket()
-        self.ctl_w.connect(("127.0.0.1", self.port))
-
-        # accept the other side of the control connection
-        self.ctl_r, _ = self.listener.accept()
+        # create a socketpair control connection
+        self.ctl_w, self.ctl_r = socket.socketpair()
         self.ctl_r.setblocking(False)
 
         # configure event loop
@@ -436,18 +420,7 @@ class TLSSocketIntercept(threading.Thread):
         remote.connect((self.remote_host, self.remote_port))
         remote.setblocking(False)
 
-        local = server_context().wrap_socket(
-            local, server_side=True, do_handshake_on_connect=False,
-        )
-
-        remote = client_context().wrap_socket(
-            remote,
-            server_hostname=self.remote_host,
-            do_handshake_on_connect=False,
-        )
-
-        pair = TLSPair(self.sel, local, remote)
-        self.pairs.append(pair)
+        self.pairs.append(SocketPair(self.sel, local, remote))
 
     def run(self):
         while not self.quitting:
@@ -455,15 +428,14 @@ class TLSSocketIntercept(threading.Thread):
             for key, mask in events:
                 readable = mask & selectors.EVENT_READ
                 writable = mask & selectors.EVENT_WRITE
-                if key.fileobj == self.listener:
-                    self.listener_ready()
-                    continue
                 if key.fileobj == self.ctl_r:
                     self.ctl_ready()
                     continue
-                # all other objects should register with their pair
-                assert isinstance(key.data, TLSPair)
-                key.data.hook(key.fileobj, readable, writable)
+                if key.fileobj == self.listener:
+                    self.listener_ready()
+                    continue
+                assert isinstance(key.data, SocketPair), key.data
+                key.data.event(key.fileobj, readable, writable)
 
     @contextlib.contextmanager
     def trap_response(self, pattern):
@@ -575,71 +547,28 @@ class RW:
         return req_matches, b"".join(recvd[:-1])
 
 
-_client_context = None
-
-def client_context(cafile=None):
-    global _client_context
-
-    if _client_context is not None:
-        return _client_context
-
-    _client_context = ssl.create_default_context()
-    if cafile is not None:
-        _client_context.load_verify_locations(cafile=cafile)
-    # on some OS's ssl module loads certs automatically
-    if len(_client_context.get_ca_certs()) == 0:
-        # on others it doesn't
-        import certifi
-        _client_context.load_verify_locations(cafile=certifi.where())
-    # always manually include our test certs
-    _client_context.load_verify_locations(
-        cafile=os.path.join(test_files, "ssl", "good.crt")
-    )
-
-    # always load our self-signed test CA
-    _client_context.load_verify_locations(
-        os.path.join(test_files, "ssl", "good.crt")
-    )
-
-    return _client_context
-
-
-_server_context = None
-
-def server_context(cert=None, key=None):
-    global _server_context
-
-    if _server_context is not None:
-        return _server_context
-
-    assert cert is not None and key is not None, \
-        "server_context must be initialized with a cert and key"
-
-    _server_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-    _server_context.load_cert_chain(certfile=cert, keyfile=key)
-
-    return _server_context
-
-
 @contextlib.contextmanager
-def run_connection(closable, host=None, port=None):
-    host = host or "127.0.0.1"
-    port = port or 2993
+def run_connection(closable, remote=None):
+    remote = remote or "insecure://127.0.0.1:2993"
+    p = urllib.parse.urlparse(remote)
+    netloc = p.netloc
+    host = p.netloc.split(":")[0]
+    port = int(p.netloc.split(":")[1])
+
     with socket.socket() as sock:
         sock.connect((host, port))
-        tls = client_context().wrap_socket(sock, server_hostname=host)
 
         read_q = queue.Queue()
         write_q = queue.Queue()
 
-        with WriterThread(tls, write_q), \
-                SocketReaderThread(closable, tls, read_q):
+        with WriterThread(sock, write_q), \
+                SocketReaderThread(closable, sock, read_q):
             yield RW(read_q, write_q)
 
 
 def fmt_failure(reader):
     print("log from failed test:", file=sys.stderr)
-    print("=====================", file=sys.stderr)
+    print("=====================", file=sys.stderr, flush=True)
     if reader is not None:
         os.write(sys.stderr.fileno(), reader.full_text())
     print("=====================", file=sys.stderr)
@@ -650,7 +579,7 @@ def wait_for_listener(q):
     while True:
         line = q.get()
         if line is None:
-            raise EOFError("did not find \"listener ready\" message")
+            raise EOFError("did not find \"all listeners ready\" message")
         if b"all listeners ready" in line:
             break
 
@@ -740,7 +669,7 @@ class Subproc:
                     raise ValueError("cmd exited %d"%self.p.poll())
                 if success_logs:
                     print("log from successful test:")
-                    print("=====================")
+                    print("=====================", flush=True)
                     if self.reader is not None:
                         os.write(sys.stderr.fileno(), self.reader.full_text())
                     print("=====================")
@@ -759,10 +688,15 @@ class Subproc:
                 pass
 
             # hit second timeout, just SIGKILL
-            print(f"pid {self.p.pid} is stalled! go ahead and debug it now.")
-            input("press enter to continue...\n")
-            self.p.send_signal(signal.SIGKILL)
-            print(f"sent sigkill at t={time.time()-start}")
+            if sys.platform == "win32":
+                print(f"pid {self.p.pid} is stalled!")
+                self.p.kill()
+                print(f"killed process at t={time.time()-start}")
+            else:
+                print(f"pid {self.p.pid} is stalled! you should debug it now.")
+                input("press enter to continue...\n")
+                self.p.send_signal(signal.SIGKILL)
+                print(f"sent sigkill at t={time.time()-start}")
             self.p.wait()
             raise ValueError("cmd hung, required sent SIGKILL")
         finally:
@@ -770,8 +704,8 @@ class Subproc:
 
 
 @contextlib.contextmanager
-def _session(closable, host=None, port=None):
-    with run_connection(closable, host=host, port=port) as rw:
+def _session(closable, remote=None):
+    with run_connection(closable, remote=remote) as rw:
         rw.wait_for_match(b"\\* OK")
 
         rw.put(b"A login %s %s\r\n"%(USER.encode('utf8'), PASS.encode('utf8')))
@@ -782,7 +716,6 @@ def _session(closable, host=None, port=None):
         rw.put(b"Z logout\r\n")
         rw.wait_for_match(b"\\* BYE")
         rw.wait_for_match(b"Z OK")
-
 
 
 @contextlib.contextmanager
@@ -833,39 +766,39 @@ def inbox(cmd):
 #### tests
 
 @register_test
-def test_start_kill(cmd, maildir_root, **kwargs):
+def test_start_kill(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc:
         pass
 
 
 @register_test
-def test_login_logout(cmd, maildir_root, **kwargs):
+def test_login_logout(cmd, maildir_root, remote):
     with session(cmd) as rw:
         pass
 
 
 @register_test
-def test_select_logout(cmd, maildir_root, **kwargs):
+def test_select_logout(cmd, maildir_root, remote):
     with inbox(cmd) as rw:
         pass
 
 
 @register_test
-def test_select_reselect(cmd, maildir_root, **kwargs):
+def test_select_reselect(cmd, maildir_root, remote):
     with inbox(cmd) as rw:
         rw.put(b"1 select INBOX\r\n")
         rw.wait_for_resp("1", "OK")
 
 
 @register_test
-def test_select_close(cmd, maildir_root, **kwargs):
+def test_select_close(cmd, maildir_root, remote):
     with inbox(cmd) as rw:
         rw.put(b"1 close\r\n")
         rw.wait_for_resp("1", "OK")
 
 
 @register_test
-def test_select_select(cmd, maildir_root, **kwargs):
+def test_select_select(cmd, maildir_root, remote):
     with session(cmd) as rw:
         with temp_box(rw) as folder:
             rw.put(b"1 select INBOX\r\n")
@@ -874,14 +807,10 @@ def test_select_select(cmd, maildir_root, **kwargs):
             rw.wait_for_resp("2", "OK")
             rw.put(b"3 close\r\n")
             rw.wait_for_resp("3", "OK")
-            # TODO: remove this and still pass the test
-            # underlying bug is that an up_t is not being disconnected
-            rw.put(b"4 select INBOX\r\n")
-            rw.wait_for_resp("4", "OK")
 
 
 @register_test
-def test_select_nonexistent(cmd, maildir_root, **kwargs):
+def test_select_nonexistent(cmd, maildir_root, remote):
     with session(cmd) as rw:
         rw.put(b"1 select nonexistent\r\n")
         rw.wait_for_resp("1", "NO")
@@ -927,7 +856,7 @@ def get_uid(seq_num, rw):
 
 
 @register_test
-def test_store(cmd, maildir_root, **kwargs):
+def test_store(cmd, maildir_root, remote):
     def require_line(uid, flag_str):
         flags = []
         if "s" in flag_str:
@@ -1063,7 +992,7 @@ def test_store(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_store_after_expunge(cmd, maildir_root, **kwargs):
+def test_store_after_expunge(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc, \
             _inbox(subproc) as rw1, \
             _inbox(subproc) as rw2:
@@ -1095,9 +1024,7 @@ def test_store_after_expunge(cmd, maildir_root, **kwargs):
         rw2.wait_for_resp("7", "OK", require=[b".*EXPUNGE.*"])
 
         # delete another message from an unrelated connection
-        with _session(
-            None, host="127.0.0.1", port=kwargs["imaps_port"]
-        ) as rwx:
+        with _session(None, remote=remote) as rwx:
             rwx.put(b"8 SELECT INBOX\r\n")
             rwx.wait_for_resp("8", "OK")
             rwx.put(b"8 STORE * FLAGS \\Deleted\r\n")
@@ -1122,7 +1049,7 @@ def test_store_after_expunge(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_store_after_upload(cmd, maildir_root, **kwargs):
+def test_store_after_upload(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc, \
             _inbox(subproc) as rw1, \
             _inbox(subproc) as rw2:
@@ -1138,7 +1065,7 @@ def test_store_after_upload(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_expunge(cmd, maildir_root, **kwargs):
+def test_expunge(cmd, maildir_root, remote):
     def assert_expunged(rw, tag, uid):
         rw.put(b"%s search UID %d\r\n"%(tag, u1))
         rw.wait_for_resp(
@@ -1232,7 +1159,7 @@ def test_expunge(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_expunge_on_close(cmd, maildir_root, **kwargs):
+def test_expunge_on_close(cmd, maildir_root, remote):
     with inbox(cmd) as rw:
         # make sure there is at least one message present
         append_messages(rw, 1)
@@ -1257,7 +1184,7 @@ def test_expunge_on_close(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_no_expunge_on_logout(cmd, maildir_root, **kwargs):
+def test_no_expunge_on_logout(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc:
         with _inbox(subproc) as rw:
             # make sure there is at least one message present
@@ -1278,7 +1205,7 @@ def test_no_expunge_on_logout(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_store_and_fetch_after_expunged(cmd, maildir_root, **kwargs):
+def test_store_and_fetch_after_expunged(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc:
         with _inbox(subproc) as rw1:
             # create a message we'll keep and one we'll expunge
@@ -1322,7 +1249,7 @@ def test_store_and_fetch_after_expunged(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_noop(cmd, maildir_root, **kwargs):
+def test_noop(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc:
         with _inbox(subproc) as rw1, _inbox(subproc) as rw2:
             # make sure there are at least three messages present
@@ -1361,7 +1288,7 @@ def test_noop(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_up_transition(cmd, maildir_root, **kwargs):
+def test_up_transition(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc:
         with _session(subproc) as rw1:
             # make sure at least one message is present
@@ -1457,13 +1384,13 @@ def do_passthru_test(rw):
 
 
 @register_test
-def test_passthru_unselected(cmd, maildir_root, **kwargs):
+def test_passthru_unselected(cmd, maildir_root, remote):
     with session(cmd) as rw:
         do_passthru_test(rw)
 
 
 @register_test
-def test_passthru_selected(cmd, maildir_root, **kwargs):
+def test_passthru_selected(cmd, maildir_root, remote):
     with inbox(cmd) as rw:
         do_passthru_test(rw)
 
@@ -1481,7 +1408,7 @@ def get_highest_uid(mailbox, rw):
 
 
 @register_test
-def test_append(cmd, maildir_root, **kwargs):
+def test_append(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc:
         # APPEND while not open
         with _session(subproc) as rw:
@@ -1552,9 +1479,7 @@ def test_append(cmd, maildir_root, **kwargs):
 
         # APPEND from a totally unrelated connection, not passing through citm
         with _inbox(subproc) as rw:
-            with _session(
-                None, host="127.0.0.1", port=kwargs["imaps_port"]
-            ) as rwx:
+            with _session(None, remote=remote) as rwx:
                 # APPEND from the unrelated connection
                 append_messages(rwx, 1)
 
@@ -1578,9 +1503,7 @@ def test_append(cmd, maildir_root, **kwargs):
 
             # Append from the direct connection again, this time with a timer
             # instead of round-trips to test that the up_t's IDLE works
-            with _session(
-                None, host="127.0.0.1", port=kwargs["imaps_port"]
-            ) as rwx:
+            with _session(None, remote=remote) as rwx:
                 append_messages(rwx, 1)
 
             # allow up to 3 seconds
@@ -1600,7 +1523,7 @@ def test_append(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_append_to_nonexisting(cmd, maildir_root, **kwargs):
+def test_append_to_nonexisting(cmd, maildir_root, remote):
     bad_path = os.path.join(maildir_root, USER, "asdf")
     assert not os.path.exists(bad_path), \
             "non-existing directory exists before APPEND"
@@ -1631,7 +1554,7 @@ def get_msg_count(rw, box):
 
 
 @register_test
-def test_copy(cmd, maildir_root, **kwargs):
+def test_copy(cmd, maildir_root, remote):
     # sync the inbox before injecting uids (so the local messages are appended)
     with inbox(cmd):
         pass
@@ -1764,7 +1687,7 @@ def test_copy(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_examine(cmd, maildir_root, **kwargs):
+def test_examine(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc:
         with _session(subproc) as rw:
             append_messages(rw, 1)
@@ -1838,7 +1761,7 @@ def test_examine(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_terminate_with_open_connection(cmd, maildir_root, **kwargs):
+def test_terminate_with_open_connection(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc:
         with run_connection(subproc) as rw:
             rw.wait_for_match(b"\\* OK")
@@ -1850,7 +1773,7 @@ def test_terminate_with_open_connection(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_terminate_with_open_session(cmd, maildir_root, **kwargs):
+def test_terminate_with_open_session(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc:
         with run_connection(subproc) as rw:
             rw.wait_for_match(b"\\* OK")
@@ -1867,7 +1790,7 @@ def test_terminate_with_open_session(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_terminate_with_open_mailbox(cmd, maildir_root, **kwargs):
+def test_terminate_with_open_mailbox(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc:
         with run_connection(subproc) as rw:
             rw.wait_for_match(b"\\* OK")
@@ -1887,7 +1810,7 @@ def test_terminate_with_open_mailbox(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_syntax_errors(cmd, maildir_root, **kwargs):
+def test_syntax_errors(cmd, maildir_root, remote):
     with inbox(cmd) as rw:
         # incomplete command
         rw.put(b"1 ERROR\r\n")
@@ -1920,7 +1843,7 @@ def test_syntax_errors(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_upwards_idle(cmd, maildir_root, **kwargs):
+def test_upwards_idle(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc:
         with _inbox(subproc) as rw1:
             # Add a message to the inbox
@@ -1935,8 +1858,7 @@ def test_upwards_idle(cmd, maildir_root, **kwargs):
             rw1.wait_for_resp("2a", "OK")
 
             # make a direct connection to dovecot
-            dovecot_port = kwargs["imaps_port"]
-            with _session(None, host="127.0.0.1", port=dovecot_port) as rw2:
+            with _session(None, remote=remote) as rw2:
                 rw2.put(b"2b SELECT INBOX\r\n")
                 rw2.wait_for_resp("2b", "OK")
 
@@ -1972,8 +1894,8 @@ def test_upwards_idle(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_intercept(cmd, maildir_root, **kwargs):
-    with TLSSocketIntercept(cmd) as intercept:
+def test_intercept(cmd, maildir_root, remote):
+    with SocketIntercept(cmd) as intercept:
         with Subproc(intercept.cmd) as subproc:
             with _session(subproc) as rw:
                 with _session(subproc) as rw:
@@ -1982,18 +1904,21 @@ def test_intercept(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_imaildir_hold(cmd, maildir_root, **kwargs):
-    with TLSSocketIntercept(cmd) as intercept:
+def test_imaildir_hold(cmd, maildir_root, remote):
+    with SocketIntercept(cmd) as intercept:
         with Subproc(intercept.cmd) as subproc:
             # start hold before opening mailbox
             with _session(subproc) as rw1, _session(subproc) as rw2:
+                # start with a non-empty mailbox
+                append_messages(rw1, 1)
+
                 # The first connection will be frozen to trap the inbox in a
                 # hold state.
                 rw1.put(b"1 APPEND INBOX {11}\r\n")
                 rw1.wait_for_match(b"\\+")
 
                 # The second connection will have the inbox open, but will not
-                # be able to see an EXISTS message since we can't downlad
+                # be able to see an EXISTS message since we can't download
                 rw2.put(b"1 SELECT INBOX\r\n")
                 rw2.wait_for_resp("1", "OK")
                 rw2.put(b"2 NOOP\r\n")
@@ -2020,7 +1945,7 @@ def test_imaildir_hold(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_initial_deletions(cmd, maildir_root, **kwargs):
+def test_initial_deletions(cmd, maildir_root, remote):
     inbox_path = os.path.join(maildir_root, USER, "mail", "INBOX", "cur")
     with Subproc(cmd) as subproc:
         # initial sync
@@ -2051,7 +1976,7 @@ def test_initial_deletions(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def prep_test_large_initial_download(cmd, maildir_root, **kwargs):
+def prep_test_large_initial_download(cmd, maildir_root, remote):
     with inbox(cmd) as rw:
         append_messages(rw, 1)
         for i in range(10):
@@ -2063,7 +1988,7 @@ def prep_test_large_initial_download(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_large_initial_download(cmd, maildir_root, **kwargs):
+def test_large_initial_download(cmd, maildir_root, remote):
     with inbox(cmd) as rw:
         # finished downloading messages, now delete them to keep the tests fast
         rw.put(b"1 STORE 1:* FLAGS \\Deleted\r\n")
@@ -2074,7 +1999,7 @@ def test_large_initial_download(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_mangling(cmd, maildir_root, **kwargs):
+def test_mangling(cmd, maildir_root, remote):
     # Dovecot mangles APPENDED messages to use \r\n instead of \n, so there's
     # no e2e way to test the non-\r\n message mangling
 
@@ -2197,8 +2122,7 @@ def test_mangling(cmd, maildir_root, **kwargs):
             msgs = get_msg_count(rw, b"INBOX")
 
         # inject messages directly to dovecot
-        dovecot_port = kwargs["imaps_port"]
-        with _session(None, host="127.0.0.1", port=dovecot_port) as rw:
+        with _session(None, remote=remote) as rw:
             for i, msg in enumerate(
                 [unenc, nosubj, broken, noparse, enc, subjfirst]
             ):
@@ -2246,20 +2170,19 @@ def test_mangling(cmd, maildir_root, **kwargs):
                     .replace(b"+", b"\\+")
                 )
                 assert re.match(exp_pat, recvd), (
-                    f"did not match\n    {exp_pat}\nagainst\n    {recvd}"
+                    f"(i={i}): did not match\n  {exp_pat}\nagainst\n  {recvd}"
                 )
 
 @register_test
-def test_mangle_corrupted(cmd, maildir_root, **kwargs):
-    dovecot_port = kwargs["imaps_port"]
-    with _session(None, host="127.0.0.1", port=dovecot_port) as rw2:
+def test_mangle_corrupted(cmd, maildir_root, remote):
+    with _session(None, remote=remote) as rw2:
         rw2.put(b"2b SELECT INBOX\r\n")
         rw2.wait_for_resp("2b", "OK")
     with inbox(cmd) as rw:
         pass
 
 @register_test
-def test_search(cmd, maildir_root, **kwargs):
+def test_search(cmd, maildir_root, remote):
     with inbox(cmd) as rw:
         # append a message that is sure to break the imf parsing
         append_messages(rw, 1)
@@ -2278,7 +2201,7 @@ def test_search(cmd, maildir_root, **kwargs):
         rw.wait_for_resp("2", "OK", require=[b"\\* SEARCH %d"%uid])
 
 @register_test
-def test_fetch_envelope(cmd, maildir_root, **kwargs):
+def test_fetch_envelope(cmd, maildir_root, remote):
     with inbox(cmd) as rw:
         # append a message with known contents
         msg = (
@@ -2339,7 +2262,7 @@ def test_fetch_envelope(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_fetch_body(cmd, maildir_root, **kwargs):
+def test_fetch_body(cmd, maildir_root, remote):
     with inbox(cmd) as rw:
         # append a message with known contents
         msg = (
@@ -2461,7 +2384,7 @@ def test_fetch_body(cmd, maildir_root, **kwargs):
         rw.wait_for_resp("9.5", "OK")
 
 @register_test
-def test_fetch_nonpeek(cmd, maildir_root, **kwargs):
+def test_fetch_nonpeek(cmd, maildir_root, remote):
     with session(cmd) as rw:
         # first sync with the existing messages dovecot has, so local messages
         # do not appear before remote messages
@@ -2551,7 +2474,7 @@ def test_fetch_nonpeek(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_fetch_broken_msgs(cmd, maildir_root, **kwargs):
+def test_fetch_broken_msgs(cmd, maildir_root, remote):
     with inbox(cmd) as rw:
         tag = 1
         def append_msg(text):
@@ -2631,7 +2554,7 @@ def test_fetch_broken_msgs(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_uid_mode_fetch_responses(cmd, maildir_root, **kwargs):
+def test_uid_mode_fetch_responses(cmd, maildir_root, remote):
     # UID FETCH/STORE/SEARCH/COPY should cause FETCH responses to report UID
     with Subproc(cmd) as subproc, \
             _inbox(subproc) as rw1, \
@@ -2758,7 +2681,7 @@ def test_uid_mode_fetch_responses(cmd, maildir_root, **kwargs):
         )
 
 @register_test
-def test_uid_mode_messagesets(cmd, maildir_root, **kwargs):
+def test_uid_mode_messagesets(cmd, maildir_root, remote):
     # UID mode commands allow for non-existent UIDs in a message set.
     # Non-UID mode commands all return BAD for missing sequence numbers.
     with session(cmd) as rw:
@@ -2810,7 +2733,7 @@ def test_uid_mode_messagesets(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_combine_updates_into_fetch(cmd, maildir_root, **kwargs):
+def test_combine_updates_into_fetch(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc, \
             _inbox(subproc) as rw1, \
             _inbox(subproc) as rw2:
@@ -2850,7 +2773,7 @@ def test_combine_updates_into_fetch(cmd, maildir_root, **kwargs):
         )
 
 @register_test
-def test_status_with_local_info(cmd, maildir_root, **kwargs):
+def test_status_with_local_info(cmd, maildir_root, remote):
     # We modify the upstream server's STATUS response in the following ways:
     #  - RECENT is always 0
     #  - MESSAGES and UNSEEN counts are are decreased for NOT4ME messages
@@ -2877,9 +2800,7 @@ def test_status_with_local_info(cmd, maildir_root, **kwargs):
     # run this in a temp mailbox
     mbx = b"deleteme_" + codecs.encode(os.urandom(5), "hex_codec")
 
-    with _session(
-        None, host="127.0.0.1", port=kwargs["imaps_port"]
-    ) as rwx:
+    with _session(None, remote=remote) as rwx:
         rwx.put(b"1 CREATE %s\r\n"%mbx)
         rwx.wait_for_resp("1", "OK")
 
@@ -2926,7 +2847,7 @@ def test_status_with_local_info(cmd, maildir_root, **kwargs):
         assert nrecent == 0, nrecent
 
         # add an unseen local message
-        inject_local_msg(maildir_root, mbx)
+        inject_local_msg(maildir_root, mbx.decode('utf8'))
 
         # Now we should add to the server's messages and unseen
         rw.put(b"8 STATUS %s (MESSAGES UNSEEN RECENT)\r\n"%mbx)
@@ -2944,7 +2865,7 @@ def test_status_with_local_info(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_idle(cmd, maildir_root, **kwargs):
+def test_idle(cmd, maildir_root, remote):
     with Subproc(cmd) as subproc:
         with run_connection(subproc) as rw:
             # expect the capability in the greeting
@@ -2977,9 +2898,7 @@ def test_idle(cmd, maildir_root, **kwargs):
                 rw1.wait_for_match(b"\\* [0-9]+ EXPUNGE")
 
             # same thing but on an external connection
-            with _session(
-                None, host="127.0.0.1", port=kwargs["imaps_port"]
-            ) as rwx:
+            with _session(None, remote=remote) as rwx:
                 rwx.put(b"6 SELECT INBOX\r\n")
                 rwx.wait_for_resp("6", "OK")
 
@@ -3040,10 +2959,10 @@ def temp_maildir_root():
 
 
 @contextlib.contextmanager
-def dovecot_setup(imaps_port):
-    if imaps_port is not None:
-        yield imaps_port
-        return
+def dovecot_setup(imap_port=None):
+    # when running server for somebody else, expose dovecot to the world
+    bind_addr = "0.0.0.0" if imap_port else "127.0.0.1"
+
 
     import mariadb
     import dovecot
@@ -3070,35 +2989,40 @@ def dovecot_setup(imaps_port):
             with dovecot.Dovecot(
                 basedir=basedir,
                 sql_sock=runner.sockpath,
-                bind_addr="127.0.0.1",
+                bind_addr=bind_addr,
+                imap_port=imap_port,
                 plugin_path=plugin_path,
-            ) as imaps_port:
-                print(f"dovecot ready! ({imaps_port})")
-                yield imaps_port
+            ) as imap_port:
+                print(f"dovecot ready! ({imap_port})")
+                yield f"insecure://{bind_addr}:{imap_port}"
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("patterns", nargs="*")
-    parser.add_argument("--imaps-port", type=int)
     parser.add_argument("--verbose", action="store_true")
-    parser.add_argument("--proxy")
-    parser.add_argument("--extra-subproc", action="store_true")
+    parser.add_argument("--remote")
+    parser.add_argument("--test-server", action="store_true")
+    parser.add_argument("--no-extra-subproc", action="store_true")
     args = parser.parse_args()
+
+    if args.test_server:
+        with dovecot_setup(1234) as remote:
+            print(f"--remote {remote}")
+            try:
+                while True:
+                    time.sleep(1000)
+            except KeyboardInterrupt:
+                exit(0)
 
     if args.verbose:
         success_logs = True
 
-    if args.extra_subproc:
-        assert sys.platform == "win32", "--extra-subproc is only for windows"
-        # In windows, we can create an extra layer of subprocess in a new
-        # subprocess group to protect the calling process from our crazy
-        # SIGINT behavior, as we try to exercise the shutdown behavior of the
-        # citm loop.
-        cmd = [sys.executable, __file__]
-        if args.proxy:
-            cmd += ["--proxy", args.proxy]
-        cmd += args.patterns
+    # In windows, we can create an extra layer of subprocess in a new
+    # subprocess group to protect the calling process from our crazy SIGINT
+    # behavior, as we try to exercise the shutdown behavior of the citm loop.
+    if sys.platform == "win32" and not args.no_extra_subproc:
+        cmd = [sys.executable, __file__, *sys.argv[1:], "--no-extra-subproc"]
         print("extra subproc!", cmd)
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
         creationflags |= subprocess.CREATE_NEW_CONSOLE
@@ -3106,12 +3030,9 @@ if __name__ == "__main__":
             p = subprocess.Popen(
                 cmd, creationflags=creationflags, stdout=f, stderr=f
             )
-            exit(p.wait())
-
-    # initialize the global server_context
-    cert = os.path.join(test_files, "ssl", "good-cert.pem")
-    key = os.path.join(test_files, "ssl", "good-key.pem")
-    _ = server_context(cert, key)
+            ret = p.wait()
+            print("PASS" if ret == 0 else "FAIL")
+            exit(ret)
 
     if len(args.patterns) == 0:
         tests = all_tests
@@ -3126,19 +3047,16 @@ if __name__ == "__main__":
             print("no tests match any patterns", file=sys.stderr)
             sys.exit(1)
 
-    if args.proxy is not None:
-        import proxy
-        proxy_spec = proxy.read_spec(args.proxy)
-        imaps_port = 12385
-        dovecot_ctx_mgr = proxy.ProxyClient(
-            proxy_spec, ("127.0.0.1", imaps_port)
-        )
+    if args.remote is not None:
+        @contextlib.contextmanager
+        def externally_managed():
+            yield args.remote
+        dovecot_ctx_mgr = externally_managed()
     else:
-        dovecot_ctx_mgr = dovecot_setup(args.imaps_port)
+        dovecot_ctx_mgr = dovecot_setup()
 
-    with dovecot_ctx_mgr as imaps_port:
+    with dovecot_ctx_mgr as remote:
         with temp_maildir_root() as maildir_root:
-            kwargs = {"imaps_port": imaps_port}
             for test in tests:
                 # clean up the mail before each test, but leave the keys alone
                 userpath = os.path.join(maildir_root, USER)
@@ -3150,18 +3068,14 @@ if __name__ == "__main__":
                 cmd = [
                     "libcitm/citm",
                     "--listen",
-                    "tls://:2993",
+                    "insecure://127.0.0.1:2993",
                     "--remote",
-                    f"tls://127.0.0.1:{imaps_port}",
-                    "--key",
-                    os.path.join(test_files, "ssl", "good-key.pem"),
-                    "--cert",
-                    os.path.join(test_files, "ssl", "good-cert.pem"),
+                    remote,
                     "--maildirs",
                     maildir_root,
                 ]
                 try:
-                    test(cmd, maildir_root, **kwargs)
+                    test(cmd, maildir_root, remote)
                     print("PASS")
                 except:
                     print(f"FAIL ({test.__name__})")
