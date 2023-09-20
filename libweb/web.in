@@ -422,7 +422,7 @@ delay_seconds:time =
     num:n
     {{  dstr_t text = dstr_from_off(@n);
         time_t delay = 0;
-        derr_type_t etype = dstr_tol_quiet(text, &delay, 10);
+        derr_type_t etype = dstr_toi64_quiet(text, &delay, 10);
         if(etype){
             MANUAL_ERROR(@$);
             return WEB_STATUS_SYNTAX_ERROR;

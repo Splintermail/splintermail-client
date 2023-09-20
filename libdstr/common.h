@@ -286,7 +286,7 @@ derr_t list_ ## type ## _new(LIST(type)* list, size_t num_items){ \
     if(!list->data){ \
         ORIG(&e, E_NOMEM, "unable to malloc list"); \
     } \
-    memset(list->data, 0, newsize); \
+    memset((char*)list->data, 0, newsize); \
     list->size = newsize; \
     list->len = 0; \
     list->fixed_size = false; \
@@ -307,7 +307,7 @@ derr_t list_ ## type ## _grow(LIST(type)* list, size_t num_items){ \
         } \
         void* new = realloc(list->data, newsize); \
         if(!new) ORIG(&e, E_NOMEM, "unable to realloc list"); \
-        memset(new + list->size, 0, newsize - list->size); \
+        memset((char*)new + list->size, 0, newsize - list->size); \
         list->data = new; \
         list->size = newsize; \
     } \

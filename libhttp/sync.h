@@ -27,7 +27,7 @@ derr_t http_sync_req(
     url_t url,
     http_pairs_t *params,
     http_pairs_t *hdrs,
-    dstr_t body,
+    const dstr_t body,
     // headers you want to receive
     hdr_selector_t *selectors,
     int *status,

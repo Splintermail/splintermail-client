@@ -11,7 +11,7 @@ extern derr_type_t E_PASSWORD;  // invalid password
 typedef struct {
     unsigned int key;
     dstr_t secret;
-    unsigned long nonce;
+    uint64_t nonce;
 } api_token_t;
 
 typedef void (*api_client_cb)(void *data, derr_t err, json_t *json);

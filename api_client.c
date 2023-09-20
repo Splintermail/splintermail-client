@@ -57,7 +57,7 @@ derr_t api_token_read(const char *path, api_token_t *token){
 
     // now we can dereference things
     jspec_t *jspec = JOBJ(false,
-        JKEY("nonce", JUL(&token->nonce)),
+        JKEY("nonce", JU64(&token->nonce)),
         JKEY("secret", JDCPY(&token->secret)),
         JKEY("token", JU(&token->key)),
     );
@@ -669,7 +669,7 @@ cu:
 
 derr_t register_api_token_sync(
     http_sync_t *sync,
-    dstr_t baseurl,
+    const dstr_t baseurl,
     const dstr_t user,
     const dstr_t pass,
     const char* creds_path
