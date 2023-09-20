@@ -13,56 +13,27 @@ parent_path = os.path.dirname(__file__)
 test_files = os.path.join(parent_path, "files")
 migrations = os.path.join(parent_path, "..", "server", "migrations")
 
-class ReaderThread(threading.Thread):
-    def __init__(self, io):
-        self.io = io
-        self.error = None
-        super().__init__()
-
-    def run(self):
-        try:
-            self.data = self.io.read()
-        except Exception:
-            self.error = traceback.format_exc()
-
-    def get_data(self):
-        self.join()
-        if self.error is not None:
-            print(self.error, file=sys.stderr)
-            raise ValueError("error on ReaderThread")
-        return self.data
-
 
 def test_file_enc_dec(enc, dec, test_files):
     keyfile = os.path.join(test_files, "key_tool/key_m.pem")
 
     payload = base64.b64encode(os.urandom(10000))
 
-    dec_proc = subprocess.Popen(
-        [dec, keyfile], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    # sometimes, in windows, when trying to open one file from a samba share
+    # simultaneously from multiple files, you can see a permissions error,
+    # so rather than start decoder and pipe it to the encoder, we run them
+    # in serial to make the test more robust.
+
+    enc_proc = subprocess.run(
+        [enc, keyfile], input=payload, stdout=subprocess.PIPE, check=True,
+    )
+    msg = enc_proc.stdout
+    dec_proc = subprocess.run(
+        [dec, keyfile], input=msg, stdout=subprocess.PIPE, check=True,
     )
 
-    enc_proc = subprocess.Popen(
-        [enc, keyfile], stdin=subprocess.PIPE, stdout=dec_proc.stdin,
-    )
+    result = dec_proc.stdout
 
-    # let go of our file descriptor for dec_proc.stdin
-    dec_proc.stdin.close()
-
-    # start reading from the end of the pipe
-    reader = ReaderThread(dec_proc.stdout)
-    reader.start()
-
-    # write into the start of the pipe
-    enc_proc.stdin.write(payload)
-    enc_proc.stdin.close()
-    ret = enc_proc.wait()
-    assert ret == 0, f"encrypt_msg exited {ret}"
-
-    ret = dec_proc.wait()
-    assert ret == 0, f"decrypt_msg exited {ret}"
-
-    result = reader.get_data()
     assert payload == result, f"payload mismatch:\n{payload}\n  vs\n{result}"
 
 
@@ -83,45 +54,26 @@ def test_server_enc_dec(enc, dec, test_files, smsql, sock):
     payload = base64.b64encode(os.urandom(10000))
 
     # encrypt the message once to all keys in the database
-    enc_proc = subprocess.Popen(
+    enc_proc = subprocess.run(
         [enc, "--socket", sock],
-        stdin=subprocess.PIPE,
+        input=payload,
         stdout=subprocess.PIPE,
         env={"USER": pysm.to_fsid(uuid) + "@x.splintermail.com"},
+        check=True,
     )
 
-    reader = ReaderThread(enc_proc.stdout)
-    reader.start()
-
-    enc_proc.stdin.write(payload)
-    enc_proc.stdin.close()
-
-    ret = enc_proc.wait()
-    assert ret == 0, f"encrypt_msg exited {ret}"
-
     # get the encrypted message
-    msg = reader.get_data()
+    msg = enc_proc.stdout
 
     # ensure that encrypt_msg is encrypting to all recipients in the table
     keyfiles = [
         os.path.join(test_files, "key_tool", "key_%s.pem"%x) for x in "aemn"
     ]
     for keyfile in keyfiles:
-        dec_proc = subprocess.Popen(
-            [dec, keyfile], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        dec_proc = subprocess.run(
+            [dec, keyfile], input=msg, stdout=subprocess.PIPE, check=True
         )
-
-        reader = ReaderThread(dec_proc.stdout)
-        reader.start()
-
-        dec_proc.stdin.write(msg)
-        dec_proc.stdin.close()
-
-        ret = dec_proc.wait()
-        assert ret == 0, f"decrypt_msg exited {ret}"
-
-        result = reader.get_data()
-        assert payload == result, (
+        assert dec_proc.stdout == payload, (
             f"payload mismatch:\n{payload}\n  vs\n{result}"
         )
 
@@ -133,25 +85,17 @@ def test_server_enc_dec_nokeys(enc, smsql, sock):
     payload = base64.b64encode(os.urandom(10000))
 
     # encrypt the message once to all keys in the database
-    enc_proc = subprocess.Popen(
+    enc_proc = subprocess.run(
         [enc, "--socket", sock],
-        stdin=subprocess.PIPE,
+        input=payload,
         stdout=subprocess.PIPE,
         env={"USER": pysm.to_fsid(uuid) + "@x.splintermail.com"},
+        check=True,
     )
 
-    reader = ReaderThread(enc_proc.stdout)
-    reader.start()
-
-    enc_proc.stdin.write(payload)
-    enc_proc.stdin.close()
-
-    ret = enc_proc.wait()
-    assert ret == 0, f"encrypt_msg exited {ret}"
-
     # get the (un)encrypted message
-    msg = reader.get_data()
-    assert msg == payload
+    msg = enc_proc.stdout
+    assert msg == payload, f"payload mismatch\n{payload}\n  vs\n{msg}"
 
 
 if __name__ == "__main__":
@@ -165,13 +109,11 @@ if __name__ == "__main__":
     enc = "./encrypt_msg"
     dec = "./decrypt_msg"
 
-    test_file_enc_dec(enc, dec, test_files)
-
-    if "--server" in sys.argv:
+    if "--server" not in sys.argv:
+        test_file_enc_dec(enc, dec, test_files)
+    else:
         import mariadb
-        # TODO: fix this
-        pysm_path = "./server/pysm"
-        sys.path.append(pysm_path)
+        sys.path.append("./server/pysm")
         import pysm
         migmysql_path = "./server/migmysql"
         with mariadb.mariadb(None, migrations, migmysql_path) as script_runner:
