@@ -882,6 +882,13 @@ def test_store(cmd, maildir_root, remote):
             require=[require_line(k, v) for k, v in state.items()],
         )
 
+    # pre-sync the inbox, in case we're reusing a test server, otherwise this
+    # test will start with no files in the inbox, and inject_local_msg will
+    # always return l1,l2 = 1,2, but u1,u2 will reflect how many messages are
+    # in the inbox after a sync.
+    with inbox(cmd):
+        pass
+
     # inject a couple local uids
     l1 = inject_local_msg(maildir_root)
     l2 = inject_local_msg(maildir_root)
@@ -1854,13 +1861,14 @@ def test_upwards_idle(cmd, maildir_root, remote):
             uid = get_uid("*", rw1)
 
             # Ensure that the message is already \Seen
-            rw1.put(b"2a STORE %s flags \\Seen\r\n"%(uid))
+            rw1.put(b"2a UID STORE %s flags \\Seen\r\n"%(uid))
             rw1.wait_for_resp("2a", "OK")
 
             # make a direct connection to dovecot
             with _session(None, remote=remote) as rw2:
                 rw2.put(b"2b SELECT INBOX\r\n")
                 rw2.wait_for_resp("2b", "OK")
+                uid_up = get_uid("*", rw2)
 
                 # ensure that the NOOP on first connection returns nothing
                 rw1.put(b"3a NOOP\r\n")
@@ -1870,7 +1878,7 @@ def test_upwards_idle(cmd, maildir_root, remote):
                     disallow=[br"\* .*"],
                 )
 
-                rw2.put(b"3b STORE %s flags \\Deleted\r\n"%(uid))
+                rw2.put(b"3b UID STORE %s flags \\Deleted\r\n"%(uid_up))
                 rw2.wait_for_resp("3b", "OK")
 
                 # There's currently no way to synchronize this, so we'll have
