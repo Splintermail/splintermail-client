@@ -421,7 +421,7 @@ retry_after:time =
 delay_seconds:time =
     num:n
     {{  dstr_t text = dstr_from_off(@n);
-        time_t delay = 0;
+        int64_t delay = 0;
         derr_type_t etype = dstr_toi64_quiet(text, &delay, 10);
         if(etype){
             MANUAL_ERROR(@$);

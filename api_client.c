@@ -356,7 +356,7 @@ cu:
 
 //
 
-DEF_CONTAINER_OF(jspec_api_t, jspec, jspec_t);
+DEF_CONTAINER_OF(jspec_api_t, jspec, jspec_t)
 
 derr_t jspec_api_read(jspec_t *jspec, jctx_t *ctx){
     derr_t e = E_OK;
@@ -508,7 +508,7 @@ static derr_t read_resp(
     return e;
 }
 
-DEF_CONTAINER_OF(api_client_t, reader, stream_reader_t);
+DEF_CONTAINER_OF(api_client_t, reader, stream_reader_t)
 
 static void apic_reader_cb(stream_reader_t *reader, derr_t err){
     api_client_t *apic = CONTAINER_OF(reader, api_client_t, reader);
