@@ -240,7 +240,10 @@ static void peer_read_cb_phase6(
     for(size_t i = 0; i < MANY; i++){
         for(size_t j = 0; j < (i%(MANY/2))+1; j++){
             if(n++ < peer_nread) continue;
-            if(consumed == (size_t)nread) return;
+            if(consumed == (size_t)nread){
+                peer_nread += consumed;
+                return;
+            }
             char exp = bytes[i];
             char got = buf->base[consumed++];
             if(exp != got){
@@ -625,7 +628,10 @@ static void peer_read_cb_phase1(
     for(size_t i = 0; i < MANY; i++){
         for(size_t j = 0; j < (i%(MANY/2))+1; j++){
             if(n++ < peer_nread) continue;
-            if(consumed == (size_t)nread) return;
+            if(consumed == (size_t)nread){
+                peer_nread += consumed;
+                return;
+            }
             char exp = bytes[i];
             char got = buf->base[consumed++];
             if(exp != got){
