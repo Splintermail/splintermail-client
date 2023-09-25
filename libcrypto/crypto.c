@@ -56,33 +56,28 @@ derr_t gen_key(int bits, const char* keyfile){
     // make sure the PRNG is seeded
     int ret = RAND_status();
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "not enough randomness to gen key");
+        ORIG(&e, E_SSL, "not enough randomness to gen key: %x", FSSL);
     }
 
     BIGNUM* exp = BN_new();
     if(!exp){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "failed to allocate bignum");
+        ORIG(&e, E_NOMEM, "failed to allocate bignum: %x", FSSL);
     }
 
     // set the exponent argument to a safe value
     ret = BN_set_word(exp, RSA_F4);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to set key exponent", cleanup_1);
+        ORIG_GO(&e, E_SSL, "failed to set key exponent: %x", cleanup_1, FSSL);
     }
 
     // generate the key
     RSA* rsa = RSA_new();
     if(!rsa){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_NOMEM, "failed to allocate rsa", cleanup_1);
+        ORIG_GO(&e, E_NOMEM, "failed to allocate rsa: %x", cleanup_1, FSSL);
     }
     ret = RSA_generate_key_ex(rsa, bits, exp, NULL);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to generate key", cleanup_2);
+        ORIG_GO(&e, E_SSL, "failed to generate key: %x", cleanup_2, FSSL);
     }
 
     // open the file for the private key
@@ -92,8 +87,7 @@ derr_t gen_key(int bits, const char* keyfile){
     // write the private key to the file (no password protection)
     ret = PEM_write_RSAPrivateKey(f, rsa, NULL, NULL, 0, NULL, NULL);
     if(!ret){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to write private key", cleanup_3);
+        ORIG_GO(&e, E_SSL, "failed to write private key: %x", cleanup_3, FSSL);
     }
 
     PROP_GO(&e, dfclose(f), cleanup_2);
@@ -116,15 +110,13 @@ cleanup_1:
     // make sure the PRNG is seeded
     int ret = RAND_status();
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "not enough randomness to gen key");
+        ORIG(&e, E_SSL, "not enough randomness to gen key: %x", FSSL);
     }
 
     // generate the key
     pkey = EVP_RSA_gen(bits);
     if(!pkey){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to generate key", cu);
+        ORIG_GO(&e, E_SSL, "failed to generate key: %x", cu, FSSL);
     }
 
     // open the file ourselves, for better error typing
@@ -133,21 +125,18 @@ cleanup_1:
     // wrap the f in a bio
     bio = BIO_new_fp(f, BIO_NOCLOSE);
     if(!bio){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to create bio", cu);
+        ORIG_GO(&e, E_SSL, "failed to create bio: %x", cu, FSSL);
     }
 
     // write the private key to the file (no password protection)
     ret = PEM_write_bio_PrivateKey(bio, pkey, NULL, NULL, 0, NULL, NULL);
     if(!ret){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to write private key", cu);
+        ORIG_GO(&e, E_SSL, "failed to write private key: %x", cu, FSSL);
     }
 
     ret = BIO_flush(bio);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to flush private key bio", cu);
+        ORIG_GO(&e, E_SSL, "failed to flush private key bio: %x", cu, FSSL);
     }
 
     // done with bio
@@ -201,14 +190,12 @@ derr_t get_fingerprint(EVP_PKEY* pkey, dstr_t *out){
 
     X509* x = X509_new();
     if(!x){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "X509_new failed");
+        ORIG(&e, E_NOMEM, "X509_new failed: %x", FSSL);
     }
 
     int ret = X509_set_pubkey(x, pkey);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "X509_set_pubkey failed", fail_x509);
+        ORIG_GO(&e, E_SSL, "X509_set_pubkey failed: %x", fail_x509, FSSL);
     }
 
     // X509_pubkey_digest has a max output length and doesn't check at runtime
@@ -221,8 +208,7 @@ derr_t get_fingerprint(EVP_PKEY* pkey, dstr_t *out){
         x, type, (unsigned char*)fpr.data, &fpr_len
     );
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "X509_pubkey_digest failed", fail_x509);
+        ORIG_GO(&e, E_SSL, "X509_pubkey_digest failed: %x", fail_x509, FSSL);
     }
     fpr.len = fpr_len;
 
@@ -248,8 +234,7 @@ static derr_t _read_pem_encoded_key(
 
     EVP_PKEY *pkey = EVP_PKEY_new();
     if(!pkey){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "EVP_PKEY_new failed");
+        ORIG(&e, E_NOMEM, "EVP_PKEY_new failed: %x", FSSL);
     }
 
     // make sure pem isn't too long for OpenSSL
@@ -259,8 +244,7 @@ static derr_t _read_pem_encoded_key(
     // wrap the pem-encoded key in an SSL memory BIO
     BIO* pembio = BIO_new_mem_buf((void*)pem.data, pemlen);
     if(!pembio){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_NOMEM, "unable to create BIO", fail_pkey);
+        ORIG_GO(&e, E_NOMEM, "unable to create BIO: %x", fail_pkey, FSSL);
     }
 
     // read the public key from the BIO (no password protection)
@@ -268,8 +252,9 @@ static derr_t _read_pem_encoded_key(
     temp = read_fn(pembio, &pkey, NULL, NULL);
     BIO_free(pembio);
     if(!temp){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_PARAM, "failed to read %x key", fail_pkey, FS(kind));
+        ORIG_GO(&e,
+            E_PARAM, "failed to read %x key: %x", fail_pkey, FS(kind), FSSL
+        );
     }
 
     *out = pkey;
@@ -505,8 +490,7 @@ derr_t get_private_pem(EVP_PKEY *pkey, dstr_t *out){
     // first create a memory BIO for writing the key to
     BIO* bio = BIO_new(BIO_s_mem());
     if(!bio){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "unable to create memory BIO");
+        ORIG(&e, E_NOMEM, "unable to create memory BIO: %x", FSSL);
     }
 
     // now write the private key to memory
@@ -514,8 +498,7 @@ derr_t get_private_pem(EVP_PKEY *pkey, dstr_t *out){
         bio, pkey, NULL, NULL, 0, NULL, NULL
     );
     if(!ret){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_NOMEM, "failed to write private key", cleanup);
+        ORIG_GO(&e, E_NOMEM, "failed to write private key: %x", cleanup, FSSL);
     }
 
     // now get a pointer to what was written
@@ -523,8 +506,12 @@ derr_t get_private_pem(EVP_PKEY *pkey, dstr_t *out){
     long bio_len = BIO_get_mem_data(bio, &ptr);
     // I don't see any indication on how to check for errors, so here's a guess
     if(bio_len < 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_INTERNAL, "failed to read private key from memory", cleanup);
+        ORIG_GO(&e,
+            E_INTERNAL,
+            "failed to read private key from memory: %x",
+            cleanup,
+            FSSL
+        );
     }
 
     // now wrap that pointer in a dstr_t for a dstr_copy operation
@@ -543,15 +530,13 @@ derr_t get_public_pem(EVP_PKEY *pkey, dstr_t *out){
     // first create a memory BIO for writing the key to
     BIO* bio = BIO_new(BIO_s_mem());
     if(!bio){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "unable to create memory BIO");
+        ORIG(&e, E_NOMEM, "unable to create memory BIO: %x", FSSL);
     }
 
     // now write the public key to memory
     int ret = PEM_write_bio_PUBKEY(bio, pkey);
     if(!ret){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_NOMEM, "failed to write public key", cleanup);
+        ORIG_GO(&e, E_NOMEM, "failed to write public key: %x", cleanup, FSSL);
     }
 
     // now get a pointer to what was written
@@ -559,8 +544,12 @@ derr_t get_public_pem(EVP_PKEY *pkey, dstr_t *out){
     long bio_len = BIO_get_mem_data(bio, &ptr);
     // I don't see any indication on how to check for errors, so here's a guess
     if(bio_len < 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_INTERNAL, "failed to read public key from memory", cleanup);
+        ORIG_GO(&e,
+            E_INTERNAL,
+            "failed to read public key from memory: %x",
+            cleanup,
+            FSSL
+        );
     }
 
     // now wrap that pointer in a dstr_t for a dstr_copy operation
@@ -584,8 +573,7 @@ derr_t encrypter_new(encrypter_t* ec){
     // allocate the context
     ec->ctx = EVP_CIPHER_CTX_new();
     if(!ec->ctx){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "EVP_CIPHER_CTX_new failed");
+        ORIG(&e, E_SSL, "EVP_CIPHER_CTX_new failed: %x", FSSL);
     }
 
     DSTR_WRAP_ARRAY(ec->pre64, ec->pre64_buffer);
@@ -680,8 +668,7 @@ derr_t encrypter_start(encrypter_t* ec, link_t *keys, dstr_t* out){
     int npkeys = (int)ec->nkeys;
     int ret = EVP_SealInit(ec->ctx, type, eks, ek_len, iv, ec->pkeys, npkeys);
     if(ret != npkeys){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_SealInit failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_SealInit failed: %x", cu, FSSL);
     }
 
     // append PEM-like header to *out in plain text
@@ -760,8 +747,7 @@ derr_t encrypter_update(encrypter_t* ec, const dstr_t *in, dstr_t* out){
         // encrypt this chunk
         int ret = EVP_SealUpdate(ec->ctx, outptr, &outlen, inptr, inlen);
         if(ret != 1){
-            trace_ssl_errors(&e);
-            ORIG_GO(&e, E_SSL, "EVP_SealUpdate failed", fail);
+            ORIG_GO(&e, E_SSL, "EVP_SealUpdate failed: %x", fail, FSSL);
         }
         ec->pre64.len += (size_t)outlen;
 
@@ -799,8 +785,7 @@ derr_t encrypter_finish(encrypter_t* ec, dstr_t* out){
     // encrypt final chunk
     int ret = EVP_SealFinal(ec->ctx, outptr, &outlen);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_SealFinal failed", cleanup);
+        ORIG_GO(&e, E_SSL, "EVP_SealFinal failed: %x", cleanup, FSSL);
     }
     ec->pre64.len += (size_t)outlen;
 
@@ -813,8 +798,7 @@ derr_t encrypter_finish(encrypter_t* ec, dstr_t* out){
     ret = EVP_CIPHER_CTX_ctrl(ec->ctx, EVP_CTRL_GCM_GET_TAG, CIPHER_TAG_LEN,
                               (unsigned char*)tag.data);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to get GCM tag", cleanup);
+        ORIG_GO(&e, E_SSL, "failed to get GCM tag: %x", cleanup, FSSL);
     }
     tag.len = tag.size;
 
@@ -862,8 +846,7 @@ derr_t decrypter_new(decrypter_t* dc){
     // allocate the context
     dc->ctx = EVP_CIPHER_CTX_new();
     if(!dc->ctx){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "EVP_CIPHER_CTX_new failed");
+        ORIG(&e, E_NOMEM, "EVP_CIPHER_CTX_new failed: %x", FSSL);
     }
 
     // set some initial state (makes error handling easier)
@@ -1114,8 +1097,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 int ret = EVP_OpenInit(dc->ctx, type, bkey, ekeylen,
                                        biv, dc->kp->pair);
                 if(ret != 1){
-                    trace_ssl_errors(&e);
-                    ORIG(&e, E_SSL, "EVP_OpenInit failed");
+                    ORIG(&e, E_SSL, "EVP_OpenInit failed: %x", FSSL);
                 }
 
                 dc->message_started = true;
@@ -1231,12 +1213,13 @@ derr_t decrypter_update(decrypter_t* dc, dstr_t* in, dstr_t* out){
             // dc->buffer is fixed size, so this cast should be a safe cast
             int ret = EVP_OpenUpdate(dc->ctx, bout, &outl, bin, (int)inl);
             if(ret != 1){
-                trace_ssl_errors(&e);
-                ORIG_GO(&e, E_SSL, "EVP_OpenUpdate failed", fail);
+                ORIG_GO(&e, E_SSL, "EVP_OpenUpdate failed: %x", fail, FSSL);
             }
             // make sure no buffer overrun happened
             if((size_t)outl > bytes_max){
-                ORIG_GO(&e, E_INTERNAL, "more data decrypted than expected", fail);
+                ORIG_GO(&e,
+                    E_INTERNAL, "more data decrypted than expected",
+                fail);
             }
             out->len += (size_t)outl;
             dc->buffer.len = 0;
@@ -1269,8 +1252,7 @@ derr_t decrypter_finish(decrypter_t* dc, dstr_t* out){
     int ret = EVP_CIPHER_CTX_ctrl(dc->ctx, EVP_CTRL_GCM_SET_TAG,
                                   taglen, (unsigned char*)dc->tag.data);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "Failed to set GCM tag", cleanup);
+        ORIG_GO(&e, E_SSL, "Failed to set GCM tag: %x", cleanup, FSSL);
     }
 
     /* the output written as much as (block_size), so we need to
@@ -1282,8 +1264,7 @@ derr_t decrypter_finish(decrypter_t* dc, dstr_t* out){
     int outl;
     ret = EVP_OpenFinal(dc->ctx, bout, &outl);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_OpenFinal failed", cleanup);
+        ORIG_GO(&e, E_SSL, "EVP_OpenFinal failed: %x", cleanup, FSSL);
     }
     // make sure no buffer overrun happened
     if((size_t)outl > bytes_max){
@@ -1314,8 +1295,7 @@ derr_t hmac(const dstr_t secret, const dstr_t payload, dstr_t* hmac){
                               (unsigned char*)payload.data, payload.len,
                               (unsigned char*)hmac->data, &hmaclen);
     if(!ret){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_INTERNAL, "HMAC() failed");
+        ORIG(&e, E_INTERNAL, "HMAC() failed: %x", FSSL);
     }
     hmac->len = (size_t)hmaclen;
 
@@ -1335,8 +1315,7 @@ derr_t random_bytes(dstr_t* out, size_t nbytes){
     // get the random bytes
     int ret = RAND_bytes((unsigned char*)out->data, (int)nbytes);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "RAND_bytes() failed");
+        ORIG(&e, E_SSL, "RAND_bytes() failed: %x", FSSL);
     }
 
     // extend the length of the dstr

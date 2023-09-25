@@ -7,15 +7,6 @@
 
 REGISTER_ERROR_TYPE(E_SSL, "SSLERROR", "error from openssl");
 
-void trace_ssl_errors(derr_t *e){
-    unsigned long ssl_error;
-    while( (ssl_error = ERR_get_error()) ){
-        char buffer[256];
-        ERR_error_string_n(ssl_error, buffer, sizeof(buffer));
-        TRACE(e, "OpenSSL error: %x\n", FS(buffer));
-    }
-}
-
 static derr_type_t put_ssl_error(writer_i *out, unsigned long ssl_error){
     // single error case
     char buf[256];

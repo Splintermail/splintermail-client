@@ -18,15 +18,13 @@ static derr_t set_safe_protocol(SSL_CTX *ctx){
               | SSL_OP_NO_TLSv1_1;
     long lret = SSL_CTX_set_options(ctx->ctx, opts);
     if(!(lret & opts)){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "failed to limit SSL protocols");
+        ORIG(&e, E_SSL, "failed to limit SSL protocols: %x", FSSL);
     }
 #else
     // post-1.1.0
     long lret = SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     if(lret != 1){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "failed to limit SSL protocols");
+        ORIG(&e, E_SSL, "failed to limit SSL protocols: %x", FSSL);
     }
 #endif
 
@@ -73,8 +71,7 @@ derr_t ssl_context_new_client_ex(
     ctx->ctx = NULL;
     ctx->ctx = SSL_CTX_new(meth);
     if(!ctx->ctx){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "failed to create SSL context");
+        ORIG(&e, E_NOMEM, "failed to create SSL context: %x", FSSL);
     }
 #else
     // openssl 1.1.0 API
@@ -82,8 +79,7 @@ derr_t ssl_context_new_client_ex(
     ctx->ctx = NULL;
     ctx->ctx = SSL_CTX_new(meth);
     if(!ctx->ctx){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "failed to create SSL context");
+        ORIG(&e, E_NOMEM, "failed to create SSL context: %x", FSSL);
     }
 #endif
     PROP_GO(&e, set_safe_protocol(ctx->ctx), cleanup);
@@ -98,8 +94,13 @@ derr_t ssl_context_new_client_ex(
         // put the cert in the store
         ret = X509_STORE_load_locations(store, cafiles[i], NULL);
         if(!ret){
-            trace_ssl_errors(&e);
-            ORIG_GO(&e, E_SSL, "X509_STORE_load_file failed", cleanup);
+            ORIG_GO(&e,
+                E_SSL,
+                "X509_STORE_load_file(%x) failed: %x",
+                cleanup,
+                FS(cafiles[i]),
+                FSSL
+            );
         }
     }
 
@@ -108,15 +109,13 @@ derr_t ssl_context_new_client_ex(
        up-to-date, but this is a good precaution. */
     ret = SSL_CTX_set_cipher_list(ctx->ctx, PREFERRED_CIPHERS);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "could not set ciphers", cleanup);
+        ORIG_GO(&e, E_SSL, "could not set ciphers: %x", cleanup, FSSL);
     }
 
     // read/write operations should only return after handshake completed
     lret = SSL_CTX_set_mode(ctx->ctx, SSL_MODE_AUTO_RETRY);
     if(!(lret & SSL_MODE_AUTO_RETRY)){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "error setting SSL mode", cleanup);
+        ORIG_GO(&e, E_SSL, "error setting SSL mode: %x", cleanup, FSSL);
     }
 
     return e;
@@ -268,7 +267,6 @@ derr_t ssl_context_new_server_pem(
     const SSL_METHOD* meth = TLS_server_method();
     out = SSL_CTX_new(meth);
     if(!out){
-        trace_ssl_errors(&e);
         ORIG(&e, E_NOMEM, "failed to create SSL context: %x", FSSL);
     }
     uint64_t ulret;
@@ -383,7 +381,6 @@ derr_t ssl_context_load_from_os(ssl_context_t* ctx){
     // start building a certificate store
     X509_STORE* store = X509_STORE_new();
     if(!store){
-        trace_ssl_errors(&e);
         ORIG_GO(&e, E_NOMEM, "X509_STORE_new failed", cu_winstore);
     }
 
@@ -395,8 +392,12 @@ derr_t ssl_context_load_from_os(ssl_context_t* ctx){
         long len = wincert->cbCertEncoded;
         X509* x = d2i_X509(NULL, &ptr, len);
         if(x == NULL){
-            trace_ssl_errors(&e);
-            ORIG_GO(&e, E_SSL, "failed to convert system cert to SSL cert", cu_store);
+            ORIG_GO(&e,
+                E_SSL,
+                "failed to convert system cert to SSL cert: %x",
+                cu_store,
+                FSSL
+            );
         }
 
         // add cert to the store
@@ -633,9 +634,9 @@ derr_t ssl_context_load_from_os(ssl_context_t* ctx){
 
     int ret = SSL_CTX_load_verify_locations(ctx->ctx, location, NULL);
     if(ret != 1){
-        TRACE(&e, "failed to load verify_location: %x\n", FS(location));
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "failed to load verify_location");
+        ORIG(&e,
+            E_SSL, "failed to load verify_location(%x): %x", FS(location), FSSL
+        );
     }
     return e;
 }

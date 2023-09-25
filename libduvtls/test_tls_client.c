@@ -138,13 +138,11 @@ static void *peer_thread(void *arg){
     SSL *ssl;
     long lret = BIO_get_ssl(conn.bio, &ssl);
     if(lret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&E, E_VALUE, "unable to access BIO ssl", done);
+        ORIG_GO(&E, E_VALUE, "unable to access BIO ssl: %x", done, FSSL);
     }
     int ret = SSL_shutdown(ssl);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "SSL_shutdown failed", done);
+        ORIG_GO(&e, E_SSL, "SSL_shutdown failed: %x", done, FSSL);
     }
 
     // phase 5 is a noop for the peer, just close our end and shut down
@@ -163,13 +161,11 @@ static void *peer_thread(void *arg){
     // shutdown our side
     lret = BIO_get_ssl(conn.bio, &ssl);
     if(lret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&E, E_VALUE, "unable to access BIO ssl", done);
+        ORIG_GO(&E, E_VALUE, "unable to access BIO ssl: %x", done, FSSL);
     }
     ret = SSL_shutdown(ssl);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "SSL_shutdown failed", done);
+        ORIG_GO(&e, E_SSL, "SSL_shutdown failed: %x", done, FSSL);
     }
 
 done:

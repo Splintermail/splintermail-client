@@ -42,23 +42,20 @@ static derr_t print_protocol_and_cipher(connection_t* conn){
     SSL* ssl = NULL;
     BIO_get_ssl(conn->bio, &ssl);
     if(!ssl){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "error getting ssl from bio");
+        ORIG(&e, E_SSL, "error getting ssl from bio: %x", FSSL);
     }
 
     // print the protocol
     const char* protocol = SSL_get_version(ssl);
     if(!protocol){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "error getting protocol from ssl");
+        ORIG(&e, E_SSL, "error getting protocol from ssl: %x", FSSL);
     }
     LOG_INFO("protocol: %x\n", FS(protocol));
 
     // print the cipher
     const char* cipher = SSL_get_cipher(ssl);
     if(!cipher){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "error getting cipher from ssl");
+        ORIG(&e, E_SSL, "error getting cipher from ssl: %x", FSSL);
     }
     LOG_INFO("cipher: %x\n", FS(cipher));
 
@@ -133,54 +130,65 @@ static void* ssl_server_thread(void* arg){
         ctx.ctx = NULL;
         ctx.ctx = SSL_CTX_new(meth);
         if(!ctx.ctx){
-            trace_ssl_errors(e);
-            ORIG_GO(e, E_NOMEM, "failed to create SSL context", signal_client);
+            ORIG_GO(e,
+                E_NOMEM,
+                "failed to create SSL context: %x",
+                signal_client,
+                FSSL
+            );
         }
 
         // set default ssl protocols to be TLS (if not specified)
         uintmax_t ssl_types = spec->ssl_types ? spec->ssl_types : NOSSL2 | NOSSL3;
         uintmax_t uxret = SSL_CTX_set_options(ctx.ctx, ssl_types);
         if(!(uxret & spec->ssl_types)){
-            trace_ssl_errors(e);
-            ORIG_GO(e, E_SSL, "failed to limit SSL methods", ctx_fail);
+            ORIG_GO(e,
+                E_SSL, "failed to limit SSL methods: %x", ctx_fail, FSSL
+            );
         }
 
         // set key and cert
         int ret = SSL_CTX_use_certificate_chain_file(ctx.ctx, certfile.data);
         if(ret != 1){
-            trace_ssl_errors(e);
-            ORIG_GO(e, E_SSL, "could not set certificate", ctx_fail);
+            ORIG_GO(e, E_SSL, "could not set certificate: %x", ctx_fail, FSSL);
         }
-        ret = SSL_CTX_use_PrivateKey_file(ctx.ctx, keyfile.data, SSL_FILETYPE_PEM);
+        ret = SSL_CTX_use_PrivateKey_file(
+            ctx.ctx, keyfile.data, SSL_FILETYPE_PEM
+        );
         if(ret != 1){
-            trace_ssl_errors(e);
-            ORIG_GO(e, E_SSL, "could not set private key", ctx_fail);
+            ORIG_GO(e, E_SSL, "could not set private key: %x", ctx_fail, FSSL);
         }
         // make sure the key matches the certificate
         ret = SSL_CTX_check_private_key(ctx.ctx);
         if(ret != 1){
-            trace_ssl_errors(e);
-            ORIG_GO(e, E_SSL, "private key does not match certificate", ctx_fail);
+            ORIG_GO(e,
+                E_SSL,
+                "private key does not match certificate: %x",
+                ctx_fail,
+                FSSL
+            );
         }
 
         // make sure server sets cipher preference
         uxret = SSL_CTX_set_options(ctx.ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
         if( !(uxret & SSL_OP_CIPHER_SERVER_PREFERENCE) ){
-            trace_ssl_errors(e);
-            ORIG_GO(e, E_SSL, "failed to set server cipher preference ", ctx_fail);
+            ORIG_GO(e,
+                E_SSL,
+                "failed to set server cipher preference : %x",
+                ctx_fail,
+                FSSL
+            );
         }
 
         ret = SSL_CTX_set_cipher_list(ctx.ctx, PREFERRED_CIPHERS);
         if(ret != 1){
-            trace_ssl_errors(e);
-            ORIG_GO(e, E_SSL, "could not set ciphers", ctx_fail);
+            ORIG_GO(e, E_SSL, "could not set ciphers: %x", ctx_fail, FSSL);
         }
 
         // read/write operations should only return after handshake completed
         long lret = SSL_CTX_set_mode(ctx.ctx, SSL_MODE_AUTO_RETRY);
         if(!(lret & SSL_MODE_AUTO_RETRY)){
-            trace_ssl_errors(e);
-            ORIG_GO(e, E_SSL, "error setting SSL mode", ctx_fail);
+            ORIG_GO(e, E_SSL, "error setting SSL mode: %x", ctx_fail, FSSL);
         }
 
 ctx_fail:
@@ -300,14 +308,16 @@ static derr_pair_t do_ssl_test(
         ctx.ctx = NULL;
         ctx.ctx = SSL_CTX_new(meth);
         if(!ctx.ctx){
-            trace_ssl_errors(&e);
-            ORIG_GO(&e, E_NOMEM, "failed to create SSL context", ctx_fail);
+            ORIG_GO(&e,
+                E_NOMEM, "failed to create SSL context: %x", ctx_fail, FSSL
+            );
         }
         // set protocol limits based on spec
         uintmax_t uxret = SSL_CTX_set_options(ctx.ctx, cli_spec->ssl_types);
         if(!(uxret & cli_spec->ssl_types)){
-            trace_ssl_errors(&e);
-            ORIG_GO(&e, E_SSL, "failed to limit SSL methods", ctx_fail);
+            ORIG_GO(&e,
+                E_SSL, "failed to limit SSL methods: %x", ctx_fail, FSSL
+            );
         }
 
         // load SSL certificate location
@@ -319,27 +329,25 @@ static derr_pair_t do_ssl_test(
             const char* location = cli_spec->castorefile;
             int ret = SSL_CTX_load_verify_locations(ctx.ctx, location, NULL);
             if(ret != 1){
-                trace_ssl_errors(&e);
                 ORIG_GO(&e,
                     E_OS,
-                    "failed to load verify_location: %x",
+                    "failed to load verify_location (%x): %x",
                     ctx_fail,
-                    FS(location)
+                    FS(location),
+                    FSSL
                 );
             }
         }
 
         int ret = SSL_CTX_set_cipher_list(ctx.ctx, PREFERRED_CIPHERS);
         if(ret != 1){
-            trace_ssl_errors(&e);
-            ORIG_GO(&e, E_SSL, "could not set ciphers", ctx_fail);
+            ORIG_GO(&e, E_SSL, "could not set ciphers: %x", ctx_fail, FSSL);
         }
 
         // read/write operations should only return after handshake completed
         long lret = SSL_CTX_set_mode(ctx.ctx, SSL_MODE_AUTO_RETRY);
         if(!(lret & SSL_MODE_AUTO_RETRY)){
-            trace_ssl_errors(&e);
-            ORIG_GO(&e, E_SSL, "error setting SSL mode", ctx_fail);
+            ORIG_GO(&e, E_SSL, "error setting SSL mode: %x", ctx_fail, FSSL);
         }
 
 ctx_fail:

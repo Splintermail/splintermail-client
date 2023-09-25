@@ -215,13 +215,13 @@ static bool _advance_ssl_do_handshake(duv_tls_t *t){
                 }
                 X509_free(peer_cert);
                 // otherwise we emit a generic error
-                trace_ssl_errors(&t->e);
-                TRACE_ORIG(&t->e, E_SSL, "ssl error in handshake");
+                TRACE_ORIG(&t->e, E_SSL, "ssl error in handshake: %x", FSSL);
                 return false;
 
             default:
-                trace_ssl_errors(&t->e);
-                TRACE_ORIG(&t->e, E_SSL, "unidentified error in handshake");
+                TRACE_ORIG(&t->e,
+                    E_SSL, "unidentified error in handshake: %x", FSSL
+                );
                 return false;
         }
     }
@@ -332,8 +332,7 @@ static bool _advance_ssl_write(duv_tls_t *t){
                         TRACE_ORIG(&t->e, E_NOMEM, "write to membio failed");
                         return false;
                     default:
-                        trace_ssl_errors(&t->e);
-                        TRACE_ORIG(&t->e, E_SSL, "SSL_write failed");
+                        TRACE_ORIG(&t->e, E_SSL, "SSL_write failed: %x", FSSL);
                         return false;
                 }
             }
@@ -390,8 +389,7 @@ static bool _advance_ssl_read(duv_tls_t *t){
                     return false;
 
                 default:
-                    trace_ssl_errors(&t->e);
-                    TRACE_ORIG(&t->e, E_SSL, "SSL_read failed");
+                    TRACE_ORIG(&t->e, E_SSL, "SSL_read failed: %x", FSSL);
                     return false;
             }
         }
@@ -439,8 +437,7 @@ static bool _advance_ssl_shutdown(duv_tls_t *t){
                 TRACE_ORIG(&t->e, E_NOMEM, "failed to write to write_bio");
                 return false;
             default:
-                trace_ssl_errors(&t->e);
-                TRACE_ORIG(&t->e, E_SSL, "error in SSL_shutdown");
+                TRACE_ORIG(&t->e, E_SSL, "error in SSL_shutdown: %x", FSSL);
                 return false;
         }
     }
@@ -714,21 +711,18 @@ static derr_t wrap(
 
     t->ssl = SSL_new(ssl_ctx);
     if(!t->ssl){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "error creating SSL object", fail);
+        ORIG_GO(&e, E_SSL, "error creating SSL object: %x", fail, FSSL);
     }
 
     t->rawin = BIO_new(BIO_s_mem());
     if(t->rawin == NULL){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_NOMEM, "unable to create BIO", fail);
+        ORIG_GO(&e, E_NOMEM, "unable to create BIO: %x", fail, FSSL);
     }
     SSL_set0_rbio(t->ssl, t->rawin);
 
     t->rawout = BIO_new(BIO_s_mem());
     if(t->rawout == NULL){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_NOMEM, "unable to create BIO", fail);
+        ORIG_GO(&e, E_NOMEM, "unable to create BIO: %x", fail, FSSL);
     }
     SSL_set0_wbio(t->ssl, t->rawout);
 
@@ -748,12 +742,12 @@ static derr_t wrap(
 
         int ret = SSL_set1_host(t->ssl, buf.data);
         if(ret != 1){
-            trace_ssl_errors(&e);
             ORIG_GO(&e,
                 E_SSL,
-                "error setting SSL peer name (%x)",
+                "error setting SSL peer name (%x): %x",
                 fail,
-                FD_DBG(buf)
+                FD_DBG(buf),
+                FSSL
             );
         }
 
@@ -769,12 +763,12 @@ static derr_t wrap(
         // also configure SNI (server name indicator)
         long lret = SSL_set_tlsext_host_name(t->ssl, buf.data);
         if(lret != 1){
-            trace_ssl_errors(&e);
             ORIG_GO(&e,
                 E_SSL,
-                "error setting SSL SNI (%x)",
+                "error setting SSL SNI (%x): %x",
                 fail,
-                FD_DBG(buf)
+                FD_DBG(buf),
+                FSSL
             );
         }
     }

@@ -121,8 +121,7 @@ static derr_t ed25519_sign(key_i *iface, const dstr_t in, dstr_t *out){
 
     int ret = EVP_DigestSignInit(k->mdctx, NULL, NULL, NULL, k->pkey);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "EVP_DigestSignInit failed");
+        ORIG(&e, E_SSL, "EVP_DigestSignInit failed: %x", FSSL);
     }
 
     size_t siglen = out->size - out->len;
@@ -131,8 +130,7 @@ static derr_t ed25519_sign(key_i *iface, const dstr_t in, dstr_t *out){
         (const unsigned char*)in.data, in.len
     );
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "EVP_DigestSign failed");
+        ORIG(&e, E_SSL, "EVP_DigestSign failed: %x", FSSL);
     }
     out->len += siglen;
 
@@ -189,26 +187,22 @@ derr_t gen_ed25519(key_i **out){
     // first create a key
     pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL);
     if(!pctx){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_PKEY_CTX_new_id failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_CTX_new_id failed: %x", cu, FSSL);
     }
 
     int ret = EVP_PKEY_keygen_init(pctx);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_PKEY_keygen_init failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_keygen_init failed: %x", cu, FSSL);
     }
 
     ret = EVP_PKEY_keygen(pctx, &pkey);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_PKEY_keygen failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_keygen failed: %x", cu, FSSL);
     }
 
     mdctx = EVP_MD_CTX_new();
     if(!mdctx){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_MD_CTX_new failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_MD_CTX_new failed: %x", cu, FSSL);
     }
 
     ed25519_t *k = DMALLOC_STRUCT_PTR(&e, k);
@@ -237,14 +231,14 @@ derr_t ed25519_from_bytes(const dstr_t bytes, key_i **out){
         EVP_PKEY_ED25519, NULL, (unsigned char*)bytes.data, bytes.len
     );
     if(!pkey){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_PKEY_new_raw_private_key failed", cu);
+        ORIG_GO(&e,
+            E_SSL, "EVP_PKEY_new_raw_private_key failed: %x", cu, FSSL
+        );
     }
 
     mdctx = EVP_MD_CTX_new();
     if(!mdctx){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_MD_CTX_new failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_MD_CTX_new failed: %x", cu, FSSL);
     }
 
     ed25519_t *k = DMALLOC_STRUCT_PTR(&e, k);
@@ -300,8 +294,7 @@ static derr_t es256_sign(key_i *iface, const dstr_t in, dstr_t *out){
 
     int ret = EVP_DigestSignInit(k->mdctx, NULL, EVP_sha256(), NULL, k->pkey);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "EVP_DigestSignInit failed");
+        ORIG(&e, E_SSL, "EVP_DigestSignInit failed: %x", FSSL);
     }
 
     // use EVP_DigestSign to get a der-encoded ECDSA signature
@@ -312,8 +305,7 @@ static derr_t es256_sign(key_i *iface, const dstr_t in, dstr_t *out){
         (const unsigned char*)in.data, in.len
     );
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "EVP_DigestSign failed");
+        ORIG(&e, E_SSL, "EVP_DigestSign failed: %x", FSSL);
     }
 
 
@@ -321,8 +313,7 @@ static derr_t es256_sign(key_i *iface, const dstr_t in, dstr_t *out){
     const unsigned char *p = (unsigned char*)der.data;
     ECDSA_SIG *sig = d2i_ECDSA_SIG(NULL, &p, (long)der.len);
     if(!sig){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "d2i_ECDSA_SIG failed");
+        ORIG(&e, E_SSL, "d2i_ECDSA_SIG failed: %x", FSSL);
     }
 
     // errors must go through cu label
@@ -333,15 +324,13 @@ static derr_t es256_sign(key_i *iface, const dstr_t in, dstr_t *out){
         ECDSA_SIG_get0_r(sig), (unsigned char*)r.data, (int)r.size
     );
     if(ret != (int)r.size){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_bn2binpad(r) failed", cu);
+        ORIG_GO(&e, E_SSL, "BN_bn2binpad(r) failed: %x", cu, FSSL);
     }
     ret = BN_bn2binpad(
         ECDSA_SIG_get0_s(sig), (unsigned char*)s.data, (int)s.size
     );
     if(ret != (int)s.size){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_bn2binpad(s) failed", cu);
+        ORIG_GO(&e, E_SSL, "BN_bn2binpad(s) failed: %x", cu, FSSL);
     }
     r.len = r.size;
     s.len = s.size;
@@ -482,22 +471,19 @@ static derr_t es256_from_eckey(EC_KEY **eckey, key_i **out){
 
     pkey = EVP_PKEY_new();
     if(!pkey){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_PKEY_new failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_new failed: %x", cu, FSSL);
     }
 
     int ret = EVP_PKEY_assign_EC_KEY(pkey, *eckey);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_PKEY_assign_EC_KEY failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_assign_EC_KEY failed: %x", cu, FSSL);
     }
     // eckey now owned by pkey
     *eckey = NULL;
 
     mdctx = EVP_MD_CTX_new();
     if(!mdctx){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_MD_CTX_new failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_MD_CTX_new failed: %x", cu, FSSL);
     }
 
     es256_t *k = DMALLOC_STRUCT_PTR(&e, k);
@@ -552,41 +538,35 @@ static derr_t es256_from_jwk(
 
     xbn = BN_bin2bn((const unsigned char*)xbuf.data, (int)xbuf.len, NULL);
     if(!xbn){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_bin2bn failed", cu);
+        ORIG_GO(&e, E_SSL, "BN_bin2bn failed: %x", cu, FSSL);
     }
 
     ybn = BN_bin2bn((const unsigned char*)ybuf.data, (int)ybuf.len, NULL);
     if(!ybn){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_bin2bn failed", cu);
+        ORIG_GO(&e, E_SSL, "BN_bin2bn failed: %x", cu, FSSL);
     }
 
     dbn = BN_bin2bn((const unsigned char*)dbuf.data, (int)dbuf.len, NULL);
     if(!dbn){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_bin2bn failed", cu);
+        ORIG_GO(&e, E_SSL, "BN_bin2bn failed: %x", cu, FSSL);
     }
 
     eckey = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
     if(!eckey){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EC_KEY_new_by_curve_name failed", cu);
+        ORIG_GO(&e, E_SSL, "EC_KEY_new_by_curve_name failed: %x", cu, FSSL);
     }
 
     int ret = EC_KEY_set_public_key_affine_coordinates(eckey, xbn, ybn);
     if(ret != 1){
-        trace_ssl_errors(&e);
         ORIG_GO(&e,
-            E_SSL, "EC_KEY_set_public_key_affine_coordinates failed",
+            E_SSL, "EC_KEY_set_public_key_affine_coordinates failed: %x", FSSL
         cu);
     }
 
     ret = EC_KEY_set_private_key(eckey, dbn);
     if(ret != 1){
-        trace_ssl_errors(&e);
         ORIG_GO(&e,
-            E_SSL, "EC_KEY_set_public_key_affine_coordinates failed",
+            E_SSL, "EC_KEY_set_public_key_affine_coordinates failed: %x", FSSL
         cu);
     }
 
@@ -610,14 +590,12 @@ derr_t gen_es256(key_i **out){
 
     eckey = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
     if(!eckey){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EC_KEY_new_by_curve_name failed", cu);
+        ORIG_GO(&e, E_SSL, "EC_KEY_new_by_curve_name failed: %x", cu, FSSL);
     }
 
     int ret = EC_KEY_generate_key(eckey);
     if(!ret){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EC_KEY_generate_key failed", cu);
+        ORIG_GO(&e, E_SSL, "EC_KEY_generate_key failed: %x", cu, FSSL);
     }
 
     PROP_GO(&e, es256_from_eckey(&eckey, out), cu);
@@ -695,8 +673,7 @@ static derr_t es256_from_pkey(EVP_PKEY **pkey, key_i **out){
 
     mdctx = EVP_MD_CTX_new();
     if(!mdctx){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_MD_CTX_new failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_MD_CTX_new failed: %x", cu, FSSL);
     }
 
     es256_t *k = DMALLOC_STRUCT_PTR(&e, k);
@@ -772,20 +749,17 @@ static derr_t es256_from_jwk(
 
     ctx = EVP_PKEY_CTX_new_from_name(NULL, "EC", NULL);
     if(!ctx){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_PKEY_CTX_new_from_name failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_CTX_new_from_name failed: %x", cu, FSSL);
     }
 
     int ret = EVP_PKEY_fromdata_init(ctx);
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_PKEY_fromdata_init failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_fromdata_init failed: %x", cu, FSSL);
     }
 
     ret = EVP_PKEY_fromdata(ctx, &pkey, EVP_PKEY_KEYPAIR, params);
     if(ret != 1 || !pkey){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_PKEY_fromdata failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_fromdata failed: %x", cu, FSSL);
     }
 
     PROP_GO(&e, es256_from_pkey(&pkey, out), cu);
@@ -806,8 +780,7 @@ derr_t gen_es256(key_i **out){
 
     pkey = EVP_EC_gen("P-256");
     if(!pkey){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EC_KEY_new_by_curve_name failed", cu);
+        ORIG_GO(&e, E_SSL, "EC_KEY_new_by_curve_name failed: %x", cu, FSSL);
     }
 
     PROP_GO(&e, es256_from_pkey(&pkey, out), cu);
@@ -910,8 +883,7 @@ derr_t jwk_thumbprint(key_i *k, dstr_t *out){
         (unsigned char*)out->data + out->len
     );
     if(!uret){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "SHA256 failed");
+        ORIG(&e, E_SSL, "SHA256 failed: %x", FSSL);
     }
     out->len += SHA256_DIGEST_LENGTH;
 
@@ -941,8 +913,7 @@ derr_t sign_hs256(const dstr_t hmac_key, const dstr_t in, dstr_t *out){
         (unsigned char*)out->data, &siglen
     );
     if(!ucret){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "HMAC failed");
+        ORIG(&e, E_SSL, "HMAC failed: %x", FSSL);
     }
     out->len += siglen;
 

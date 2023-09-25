@@ -179,26 +179,22 @@ static derr_t test_es256(void){
     if(!ecdsa) ORIG_GO(&e, E_NOMEM, "ECDSA_SIG_new failed", cu);
     r = BN_bin2bn((unsigned char*)sig.data, 32, NULL);
     if(!r){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_bin2bn(r) failed", cu);
+        ORIG_GO(&e, E_SSL, "BN_bin2bn(r) failed: %x", cu, FSSL);
     }
     s = BN_bin2bn((unsigned char*)sig.data + 32, 32, NULL);
     if(!s){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_bin2bn(s) failed", cu);
+        ORIG_GO(&e, E_SSL, "BN_bin2bn(s) failed: %x", cu, FSSL);
     }
     int ret = ECDSA_SIG_set0(ecdsa, r, s);
     if(!ret){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "ECDSA_SIG_set0 failed", cu);
+        ORIG_GO(&e, E_SSL, "ECDSA_SIG_set0 failed: %x", cu, FSSL);
     }
     r = NULL; s = NULL;
     DSTR_VAR(der, 72);
     unsigned char *p = (unsigned char*)der.data;
     ret = i2d_ECDSA_SIG(ecdsa, &p);
     if(ret < 0){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "i2d_ECDSA_SIG failed", cu);
+        ORIG_GO(&e, E_SSL, "i2d_ECDSA_SIG failed: %x", cu, FSSL);
     }
     der.len = (size_t)ret;
 
@@ -206,8 +202,7 @@ static derr_t test_es256(void){
 
     mdctx = EVP_MD_CTX_new();
     if(!mdctx){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_MD_CTX_new failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_MD_CTX_new failed: %x", cu, FSSL);
     }
 
     es256_hack_t *es256 = CONTAINER_OF(k, es256_hack_t, iface);
@@ -215,8 +210,7 @@ static derr_t test_es256(void){
         mdctx, NULL, EVP_sha256(), NULL, es256->pkey
     );
     if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_DigestVerifyInit failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_DigestVerifyInit failed: %x", cu, FSSL);
     }
 
     ret = EVP_DigestVerify(mdctx,
@@ -229,8 +223,7 @@ static derr_t test_es256(void){
     }
     if(ret != 1){
         // function failed
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_DigestSign failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_DigestSign failed: %x", cu, FSSL);
     }
 
 cu:
