@@ -432,181 +432,306 @@ cu_winstore:
 #include <Security/SecItem.h>
 #include <Security/SecImportExport.h>
 #include <Security/SecCertificate.h>
+#include <Security/SecPolicy.h>
+#include <Security/SecTrust.h>
 
-static void sec_perror(derr_t *e, OSStatus err){
-    CFStringRef str = SecCopyErrorMessageString(err, NULL);
-    if(!str){
-        TRACE(e, "failed to get error message\n");
+#define MAX_DEPTH 100
+
+// macos error string fmt_i's
+
+static derr_type_t put_cfstring(writer_i *out, CFStringRef str, bool *ok){
+    // try to get a pointer (if CFStringRef is contiguous)
+    const char *s = CFStringGetCStringPtr(str, kCFStringEncodingUTF8);
+    if(s){
+        *ok = true;
+        return out->w->puts(out, s, strlen(s));
     }
-    const char* buf;
-    buf = CFStringGetCStringPtr(str, kCFStringEncodingUTF8);
-    TRACE(e, "%x\n", FS(buf));
-    CFRelease(str);
+
+    // otherwise grab the first 1k bytes
+    char buf[1024];
+    CFRange range = { .location = 0, .length = sizeof(buf) };
+    CFIndex used = 0;
+    CFIndex len = CFStringGetBytes(
+        str,
+        range,
+        kCFStringEncodingUTF8,
+        '?', // UInt8 lossByte, for undecodable characters
+        false, // isExternalRepresentation; if true, would include unicode BOM
+        (unsigned char*)buf,
+        sizeof(buf),
+        &used // usedBufLen
+    );
+
+    if(len < 1){
+        *ok = false;
+        return E_NONE;
+    }
+
+    *ok = true;
+    return out->w->puts(out, buf, (size_t)len);
 }
 
+typedef struct {
+    fmt_i iface;
+    OSStatus osstatus;
+} _fmt_osstatus_t;
 
-derr_t ssl_context_load_from_os(ssl_context_t* ctx){
+DEF_CONTAINER_OF(_fmt_osstatus_t, iface, fmt_i)
+
+static derr_type_t _fmt_osstatus(const fmt_i *iface, writer_i *out){
+    OSStatus osstatus = CONTAINER_OF(iface, _fmt_osstatus_t, iface)->osstatus;
+    CFStringRef str = SecCopyErrorMessageString(osstatus, NULL);
+    if(!str){
+        static char msg[] = "<failed to read macos OSStatus>";
+        return out->w->puts(out, msg, sizeof(msg)-1);
+    }
+    bool ok;
+    derr_type_t etype = put_cfstring(out, str, &ok);
+    CFRelease(str);
+    if(!ok){
+        static char msg[] = "<failed to read macos OSStatus>";
+        return out->w->puts(out, msg, sizeof(msg)-1);
+    }
+    return etype;
+}
+
+#define FMACOS(osstatus) (&(_fmt_osstatus_t){ {_fmt_osstatus}, osstatus }.iface)
+
+typedef struct {
+    fmt_i iface;
+    CFErrorRef cferror;
+} _fmt_cferror_t;
+
+DEF_CONTAINER_OF(_fmt_cferror_t, iface, fmt_i)
+
+static derr_type_t _fmt_cferror(const fmt_i *iface, writer_i *out){
+    CFErrorRef cferror = CONTAINER_OF(iface, _fmt_cferror_t, iface)->cferror;
+
+    CFStringRef str = CFErrorCopyDescription(cferror);
+    if(!str){
+        static char msg[] = "<failed to read CFErrorRef>";
+        return out->w->puts(out, msg, sizeof(msg)-1);
+    }
+    bool ok;
+    derr_type_t etype = put_cfstring(out, str, &ok);
+    CFRelease(str);
+    if(!ok){
+        static char msg[] = "<failed to read CFErrorRef>";
+        return out->w->puts(out, msg, sizeof(msg)-1);
+    }
+    return etype;
+}
+
+#define FCFERROR(cferror) (&(_fmt_cferror_t){ {_fmt_cferror}, cferror }.iface)
+
+/* macos strategy:  I don't see a non-deprecated way to get a list of all
+   system certs (the old strategy) but I do see ways to evaluate the trust
+   of a single certificate chain, so we'll just do exactly that in a
+   verify_callback.
+
+   We still rely on OpenSSL for the backbone of the verification.  This makes
+   it easy for test code with custom verify_name or explicitly trusted certs
+   to succeed without configuring the surrounding operating system.
+
+   The sequence is basically:
+
+    - We configure a verify_callback with SSL_CTX_set_verify().  There's three
+      layers of customizable callbacks in OpenSSL[1], but this seems to be the
+      most recommended, and also the least invasive.
+
+    - In our verify_callback, we ignore certificates with preverify_ok=1.  This
+      indicates that OpenSSL already trusts the cert.  In our case, that means
+      the certificate has been explicitly trusted by the application, since
+      no certificate store is available in macos.  Thanks, macos.
+
+    - If we see a preverify_ok=0, we check the whole TLS cert chain against
+      macos's trusted stores, and if the OS says it's trustworthy we override
+      the failure.
+
+    - Typically, that happens once while OpenSSL is evaluating the chain of
+      certs.  OpenSSL starts at the root certificate and says, "hey I don't
+      know this guy at all!", then we check the whole chain, say "no it's good
+      I trust it" and OpenSSL says, "ah ok whatever" and proceeds as if the
+      root is trusted.  Then, unless the cert chain is broken, the remaining
+      certs will be validated again by OpenSSL and our verify_callback skips
+      all callbacks (which have preverify_ok).
+
+    - After chain is verified, OpenSSL does the hostname check.  We
+      intentionally configure the macos lookup to not consider the hostname
+      verification since we have that covered.
+
+    - Note that hostname verification failures do not result in a call to
+      our verify_callback.
+
+   So in the end, we observe the following properties:
+
+    - hostname verification always belongs to OpenSSL.
+
+    - OpenSSL can declare a certificate valid, and macos will not be consulted.
+
+    - OpenSSL cannot declare a certificate invalid, it can only defer to macos.
+
+   If OpenSSL were at risk of declaring invalid certs valid, this would be a
+   problem.  But if that were true we'd be toast anyway.
+
+
+   [1] Three levels of callback overrides in OpenSSL:
+
+    - ssl_verify_cert_chain() will set up an X509_STORE_CTX, which is a
+      horrible name for an object used in a single certificate verification
+      check.  Then it will pass that X509_STORE_CTX to X509_verify_cert(),
+      unless somebody called SSL_CTX_set_cert_verify_callback(), in which case
+      the entire certificate validation process is handed off to the "app
+      callback".
+
+      If we hooked in at that level, we would have to reimplement explicit
+      certificate trust and verify_hostname overrides with the macos library,
+      but we wouldn't have the duplicate checks anymore.
+
+    - X509_verify_cert() does some basic validity checks on the X509_STORE_CTX
+      object itself and then calls verify_chain().  verify_chain() does a bunch
+      of validity checks on the cert (but not checking signatures or trust),
+      then it calls internal_verify() unless somebody called
+      X509_STORE_set_verify(), in which case the verify function (not the
+      "verify callback") is used instead of the internal_verify().
+
+    - internal_verify() walks through the chain of certs and tries to verify
+      their trust and the chain of signatures.  At each failure, it calls
+      the verify callback in case the user needs to override the failure.
+
+      Note that the verify_callback is used in other places than just
+      internal_verify(); it's not right to assume that the verify function and
+      the verify callback are mutually exclusive.
+*/
+static int macos_verify_callback(int preverify_ok, X509_STORE_CTX *ctx){
+    /* Don't interfere with successful checks.  Since we don't have access to
+       the list of system root certs, this could happen with a root cert if
+       we explicitly trusted the CA in the application.  It could also happen
+       if we're looking at an intermediate or leaf certificate that is valid,
+       given a root certificate that we've overridden to be trusted. */
+    fprintf(stderr, "preverify_ok: %d\n", preverify_ok);
+    if(preverify_ok) return preverify_ok;
+
+    int ok = 0;
+
+    int err = X509_STORE_CTX_get_error(ctx);
+    int depth = X509_STORE_CTX_get_error_depth(ctx);
+    fprintf(stderr, "err = %d, depth = %d, ntrusted = %d, ntotal = %d\n",
+            err, depth,
+            (int)sk_X509_num(X509_STORE_CTX_get0_chain(ctx)),
+            (int)sk_X509_num(X509_STORE_CTX_get0_untrusted(ctx))
+    );
+
+    /* prepare to pass a CFArrayRef of SecCertificateRef objects, starting
+       with the leaf-most certificate, to SecTrustCreateWithCertificates */
+
+    unsigned char *udata[MAX_DEPTH] = {0};
+    const void *certs[MAX_DEPTH] = {0};
+    CFIndex ncerts = 0;
+    CFDataRef certdata = NULL;
+    CFArrayRef certs_array = NULL;
+    SecPolicyRef policy = NULL;
+    SecTrustRef trust = NULL;
+    CFErrorRef cferror = NULL;
+
+    STACK_OF(X509) *sk = X509_STORE_CTX_get0_chain(ctx);
+
+    for(int i = 0; i < sk_X509_num(sk); i++){
+        // get the X509 at this depth
+        X509 *x509 = sk_X509_value(sk, 0);
+
+        // get der-encoded data
+        int ret = i2d_X509(x509, &udata[i]);
+        if(ret < 0){
+            LOG_ERROR("in macos_verify_callback: i2d_X509(): %x\n", FSSL);
+            goto cu;
+        }
+
+        /* pass kCFAllocatorNull because I don't know who should free it in
+           error situations if we let the core foundation free udata */
+        certdata = CFDataCreateWithBytesNoCopy(
+            kCFAllocatorDefault, // CFAllocatorRef allocator
+            udata[i],            // const UInt8 *bytes
+            ret,                 // CFIndex length
+            kCFAllocatorNull     // CFAllocatorRef bytesDeallocator
+        );
+        if(!certdata){
+            LOG_ERROR("CFDataCreateWithBytesNoCopy failed\n");
+            goto cu;
+        }
+
+        SecCertificateRef cert = SecCertificateCreateWithData(NULL, certdata);
+        if(!cert){
+            goto cu;
+        }
+        // certdata now owned by cert
+        certdata = NULL;
+
+        certs[ncerts++] = (void*)cert;
+    }
+
+    // create the certs array
+    certs_array = CFArrayCreate(NULL, certs, ncerts, NULL);
+    if(!certs_array){
+        LOG_ERROR("CFArrayCreate failed\n");
+        goto cu;
+    }
+
+    // create the SSL evaluation policy for our SecTrust request
+    policy = SecPolicyCreateSSL(
+        false, // server
+        NULL   // hostname (we rely on openssl for that)
+    );
+
+    // create the SecTrust request object
+    OSStatus osret = SecTrustCreateWithCertificates(
+        certs_array, // CFTypeRef certificates
+        policy,      // CFTypeRef policies
+        &trust       // SecTrustRef *trust
+    );
+    if(osret != errSecSuccess){
+        LOG_ERROR("SecTrustCreateWithCertificates(): %x\n", FMACOS(osret));
+        goto cu;
+    }
+
+    // now actually check the certificate chain
+    bool trusted = SecTrustEvaluateWithError(trust, &cferror);
+    if(cferror){
+        // we failed to evalue trust
+        LOG_ERROR("SecTrustEvaluateWithError(): %x\n", FCFERROR(cferror));
+        goto cu;
+    }
+
+    if(trusted){
+        LOG_ERROR("yo actually we do trust this cert\n");
+        ok = 1;
+        // erase the error entirely
+        X509_STORE_CTX_set_error(ctx, X509_V_OK);
+    }
+
+cu:
+    if(cferror) CFRelease(cferror);
+    if(trust) CFRelease(trust);
+    if(policy) CFRelease(policy);
+    if(certdata) CFRelease(certdata);
+    if(certs_array){
+        // free the array, let the array free the elements
+        CFRelease(certs_array);
+    }else{
+        // free the elements we created before failing
+        for(CFIndex i = 0; i < ncerts; i++){
+            if(certs[i] == NULL) break;
+            CFRelease(certs[i]);
+        }
+    }
+    return ok;
+}
+
+derr_t ssl_context_load_from_os(ssl_context_t *ctx){
     derr_t e = E_OK;
-    // start building a certificate store
-    X509_STORE* store = X509_STORE_new();
-    if(!store){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "X509_STORE_new failed");
-    }
 
-    // open SystemRoot keychain
-    SecKeychainRef kc_sysroot;
-    char* srpath = "/System/Library/Keychains/SystemRootCertificates.keychain";
-    OSStatus osret = SecKeychainOpen(srpath, &kc_sysroot);
-    if(osret != errSecSuccess){
-        sec_perror(&e, osret);
-        TRACE(&e, "keychain: %x\n", FS(srpath));
-        ORIG_GO(&e, E_OS, "unable to open keychain", cu_store);
-    }
-
-    // open System keychain
-    SecKeychainRef kc_sys;
-    char* spath = "/Library/Keychains/System.keychain";
-    osret = SecKeychainOpen(spath, &kc_sys);
-    if(osret != errSecSuccess){
-        sec_perror(&e, osret);
-        TRACE(&e, "keychain: %x\n", FS(spath));
-        ORIG_GO(&e, E_OS, "unable to open keychain", cu_kc_sysroot);
-    }
-
-    // create an array of all the keychains we want to search
-    const void* kcs[] = {kc_sysroot, kc_sys};
-    CFArrayRef keychains = CFArrayCreate(NULL, kcs,
-                                         sizeof(kcs)/sizeof(*kcs),
-                                         NULL);
-    if(!keychains){
-        ORIG_GO(&e, E_NOMEM, "unable to create array of keychains", cu_kc_sys);
-    }
-
-    // prep the search
-    /* we want:
-        - only get certificates (kSecClass = Certificate)
-        - return the actual SecCertificateRef (kSecReturnRef = True)
-        - we want all the certs (kSecMatchLimit = All)
-        - only trusted certificates (kSecMatchTrustedOnly = True)
-        - no user authentication required (kSecUseAuthenticationUI = Skip)
-        - search specified keychains (kSecMatchSearchList = CFArray)
-    */
-    CFDictionaryRef query;
-    const void* keys[] = {
-                          kSecClass,
-                          kSecReturnRef,
-                          kSecMatchLimit,
-                          kSecMatchTrustedOnly,
-                          kSecUseAuthenticationUI,
-                          kSecMatchSearchList,
-                         };
-    const void* vals[] = {
-                          kSecClassCertificate,
-                          kCFBooleanTrue,
-                          kSecMatchLimitAll,
-                          kCFBooleanTrue,
-                          kSecUseAuthenticationUISkip,
-                          keychains,
-                         };
-    query = CFDictionaryCreate(NULL, (const void**)keys, (const void**)vals,
-                               sizeof(keys)/sizeof(*keys), NULL, NULL);
-    if(!query){
-        ORIG_GO(&e, E_NOMEM, "unable to create search query", cu_keychains);
-    }
-
-    // do the search
-    CFArrayRef results;
-    osret = SecItemCopyMatching(query, (CFTypeRef*)&results);
-    if(osret != errSecSuccess){
-        sec_perror(&e, osret);
-        ORIG_GO(&e, E_OS, "failure executing search", cu_dict);
-    }
-
-    // get count
-    CFIndex count = CFArrayGetCount(results);
-    // LOG_DEBUG("count %x\n", FI(count));
-
-    // add each cert in keychain to certificate store
-    for(long i = 0; i < count; i++){
-        // get the cert
-        // --- this line throws a compiler warning, but not sure how to fix it:
-        // const SecCertificateRef cert = CFArrayGetValueAtIndex(results, i);
-        // --- this fixes the compiler warning, using some non-public type:
-        const struct OpaqueSecCertificateRef *cert =
-                                         CFArrayGetValueAtIndex(results, i);
-
-        // // get the subject summary
-        // CFStringRef summary = SecCertificateCopySubjectSummary(cert);
-        // if(!summary){
-        //     ORIG_GO(&e, E_OS, "failure copying subject summary", cu_results);
-        // }
-        // // copy the summary to a buffer
-        // const char* buffer = CFStringGetCStringPtr(summary, kCFStringEncodingUTF8);
-        // printf("%s\n", buffer);
-        // // free the summary
-        // CFRelease(summary);
-
-        // export this key to der-encoded X509 format
-        CFDataRef exported;
-        SecExternalFormat format = kSecFormatX509Cert;
-        SecItemImportExportFlags flags = 0;
-        // we are only exporting certificate items, not key items
-        SecItemImportExportKeyParameters *keyparams = NULL;
-        // do the export
-        osret = SecItemExport(cert, format, flags, keyparams, &exported);
-        if(osret != errSecSuccess){
-            sec_perror(&e, osret);
-            ORIG_GO(&e, E_OS, "failure in export", cu_results);
-        }
-
-        // get pointer and len
-        // (we need to use a separate pointer because d2i_X509 changes it)
-        const unsigned char* ptr = CFDataGetBytePtr(exported);
-        long len = CFDataGetLength(exported);
-
-        // create OpenSSL key from der-encoding
-        X509* x = d2i_X509(NULL, &ptr, len);
-        if(x == NULL){
-            trace_ssl_errors(&e);
-            ORIG_GO(&e, E_SSL, "failed to convert system cert to SSL cert", cu_results);
-        }
-
-        // add cert to the store
-        int ret = X509_STORE_add_cert(store, x);
-        if(ret != 1){
-            ORIG_GO(&e, E_SSL, "Unable to add certificate to store", cu_x);
-        }
-        // LOG_DEBUG("Added to store!\n");
-
-    cu_x:
-        X509_free(x);
-        if(is_error(e)) goto cu_results;
-    }
-
-    // now add store to the context
-    //SSL_CTX_set0_verify_cert_store(ctx->ctx, store);
-    SSL_CTX_set_cert_store(ctx->ctx, store);
-    // no errors possible with this function
-
-cu_results:
-    // for(long i = 0; i < count; i++){
-    //     CFRelease(CFArrayGetValueAtIndex(results, i));
-    // }
-    // This pukes if I try to free whats in the array and also free this:
-    CFRelease(results);
-cu_dict:
-    CFRelease(query);
-cu_keychains:
-    CFRelease(keychains);
-cu_kc_sys:
-    CFRelease(kc_sys);
-cu_kc_sysroot:
-    CFRelease(kc_sysroot);
-
-cu_store:
-    // don't cleanup cu_store, it will be cleaned up automatically later
-    if(is_error(e)) X509_STORE_free(store);
+    SSL_CTX_set_verify_depth(ctx->ctx, MAX_DEPTH);
+    SSL_CTX_set_verify(ctx->ctx, SSL_VERIFY_PEER, &macos_verify_callback);
 
     return e;
 }
