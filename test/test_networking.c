@@ -12,7 +12,8 @@
 // forward declaration of function only exposed to tests
 derr_t ssl_context_load_from_os(ssl_context_t* ctx);
 
-#include "test_utils.h"
+#include "test/test_utils.h"
+#include "test/bioconn.h"
 
 #define NOSSL2  SSL_OP_NO_SSLv2
 #define NOSSL3  SSL_OP_NO_SSLv3

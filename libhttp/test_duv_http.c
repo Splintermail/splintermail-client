@@ -3,6 +3,7 @@
 #include "libhttp/libhttp.h"
 
 #include "test/test_utils.h"
+#include "test/bioconn.h"
 
 static const char* g_test_files;
 

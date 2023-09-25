@@ -3,6 +3,7 @@
 #include "libduvtls/libduvtls.h"
 
 #include "test/test_utils.h"
+#include "test/bioconn.h"
 
 // path to where the test files can be found
 static const char* g_test_files;

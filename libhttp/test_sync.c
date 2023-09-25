@@ -3,6 +3,7 @@
 #include "libhttp/libhttp.h"
 
 #include "test/test_utils.h"
+#include "test/bioconn.h"
 
 typedef struct {
     http_method_e method;

@@ -4,8 +4,9 @@
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>
 
-#include "test_utils.h"
-#include "fake_api_server.h"
+#include "test/test_utils.h"
+#include "test/fake_api_server.h"
+#include "test/bioconn.h"
 
 LIST_HEADERS(int)
 LIST_FUNCTIONS(int)

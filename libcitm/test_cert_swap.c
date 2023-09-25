@@ -1,6 +1,7 @@
 #include "libcitm/libcitm.h"
 
 #include "test/test_utils.h"
+#include "test/bioconn.h"
 #include "test/certs.h"
 
 #define UPSTREAM_PORT 4567
