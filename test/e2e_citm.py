@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
 import argparse
+import base64
 import codecs
 import contextlib
+import json
 import os
 import queue
 import random
@@ -11,6 +13,7 @@ import selectors
 import shutil
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -19,6 +22,8 @@ import threading
 import time
 import traceback
 import urllib.parse
+import urllib.request
+
 
 HERE = os.path.dirname(__file__)
 test_files = os.path.join(HERE, "files")
@@ -36,6 +41,10 @@ TIMEOUT = 1
 USER="test@splintermail.com"
 PASS="passwordpassword"
 
+# USER2 is for configuring an installation
+USER2="test2@splintermail.com"
+PASS2="passwordpassword2"
+
 MYKEY = """-----BEGIN RSA PRIVATE KEY-----
 MIICXQIBAAKBgQCU9j/irie2dpd2gaiVpEh7LKg6fI2OMab/tBcoZqYvsQkQX1dg
 i8s9bFXpibycxzuyy4S3DyeVP2Vx8jhNHkTa9BLPBmPmhk7U6qgE2rV9jTdwOaAo
@@ -52,6 +61,26 @@ SIKaxa0Q84r+2+oyKtECQQC0mreZ3jup6aLKIs4ztCNLmemB8wLRnFV36o0eq+iY
 dRWR9AsEh8gFtNqDvVLMx6OSqMTRLZr6XGIDeQbUcjaZ
 -----END RSA PRIVATE KEY-----
 """
+
+PEBBLE_CA = """-----BEGIN CERTIFICATE-----
+MIIDCTCCAfGgAwIBAgIIJOLbes8sTr4wDQYJKoZIhvcNAQELBQAwIDEeMBwGA1UE
+AxMVbWluaWNhIHJvb3QgY2EgMjRlMmRiMCAXDTE3MTIwNjE5NDIxMFoYDzIxMTcx
+MjA2MTk0MjEwWjAgMR4wHAYDVQQDExVtaW5pY2Egcm9vdCBjYSAyNGUyZGIwggEi
+MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC5WgZNoVJandj43kkLyU50vzCZ
+alozvdRo3OFiKoDtmqKPNWRNO2hC9AUNxTDJco51Yc42u/WV3fPbbhSznTiOOVtn
+Ajm6iq4I5nZYltGGZetGDOQWr78y2gWY+SG078MuOO2hyDIiKtVc3xiXYA+8Hluu
+9F8KbqSS1h55yxZ9b87eKR+B0zu2ahzBCIHKmKWgc6N13l7aDxxY3D6uq8gtJRU0
+toumyLbdzGcupVvjbjDP11nl07RESDWBLG1/g3ktJvqIa4BWgU2HMh4rND6y8OD3
+Hy3H8MY6CElL+MOCbFJjWqhtOxeFyZZV9q3kYnk9CAuQJKMEGuN4GU6tzhW1AgMB
+AAGjRTBDMA4GA1UdDwEB/wQEAwIChDAdBgNVHSUEFjAUBggrBgEFBQcDAQYIKwYB
+BQUHAwIwEgYDVR0TAQH/BAgwBgEB/wIBADANBgkqhkiG9w0BAQsFAAOCAQEAF85v
+d40HK1ouDAtWeO1PbnWfGEmC5Xa478s9ddOd9Clvp2McYzNlAFfM7kdcj6xeiNhF
+WPIfaGAi/QdURSL/6C1KsVDqlFBlTs9zYfh2g0UXGvJtj1maeih7zxFLvet+fqll
+xseM4P9EVJaQxwuK/F78YBt0tCNfivC6JNZMgxKF59h0FBpH70ytUSHXdz7FKwix
+Mfn3qEb9BXSk0Q3prNV5sOV3vgjEtB4THfDxSz9z3+DepVnW3vbbqwEbkXdk3j82
+2muVldgOUgTwK8eT+XdofVdntzU/kzygSAtAQwLJfn51fS1GvEcYGBc1bDryIqmF
+p9BI7gVKtWSZYegicA==
+-----END CERTIFICATE-----"""
 
 def as_bytes(msg):
     if isinstance(msg, bytes):
@@ -575,12 +604,12 @@ def fmt_failure(reader):
     print("(end of log)", file=sys.stderr)
 
 
-def wait_for_listener(q):
+def wait_for_msg(q, msg):
     while True:
         line = q.get()
         if line is None:
-            raise EOFError("did not find \"all listeners ready\" message")
-        if b"all listeners ready" in line:
+            raise EOFError(f"did not find \"{msg}\" message")
+        if msg in line:
             break
 
 
@@ -646,7 +675,7 @@ class Subproc:
 
         self.started = True
 
-        wait_for_listener(self.out_q)
+        wait_for_msg(self.out_q, b"all listeners ready")
 
     def inject_message(self, msg, end=b"\n"):
         self.reader.inject_message(msg, end)
@@ -2928,6 +2957,67 @@ def test_idle(cmd, maildir_root, remote):
             rw1.wait_for_resp("3", "OK")
 
 
+def override_server_hostname(context, override_name):
+
+    class ServerHostnameContext:
+        def wrap_socket(self, *args, server_hostname=None, **kwargs):
+            # inject our preset server_hostname
+            return context.wrap_socket(
+                *args, server_hostname=override_name, **kwargs
+            )
+
+        def __getattr__(self, name, default=None):
+            return getattr(context, name, default)
+
+    return ServerHostnameContext()
+
+
+@register_test
+def test_acme(cmd, maildir_root, remote):
+    # manually create an installation
+    host = remote.split("/")[-1].split(":")[0]
+    req = urllib.request.Request(
+        f"http://{host}:8000/api/add_installation", method="POST"
+    )
+    basic = base64.b64encode(f"{USER2}:{PASS2}".encode("utf8")).decode("utf8")
+    req.add_header("Authorization", f"Basic {basic}")
+    with urllib.request.urlopen(req) as f:
+        resp = json.loads(f.read())
+    assert resp["status"] == "success", resp
+    subdomain = resp["contents"]["subdomain"]
+    hostname = f"{subdomain}.user.splintermail.com"
+
+    # write the installation to file
+    inst = os.path.join(maildir_root, "../acme/installation.json")
+    with open(inst, "w") as f:
+        json.dump(resp["contents"], f)
+
+    # fetch the root certificate from pebble; it's regenerated each run
+    ctx = ssl.create_default_context()
+    # trust the PEBBLE_CA so https succeeds
+    ctx.load_verify_locations(cadata=PEBBLE_CA)
+    req = urllib.request.Request(f"https://{host}:15000/roots/0")
+    # override hostname verification in this one request
+    xctx = override_server_hostname(ctx, "pebble")
+    with urllib.request.urlopen(req, context=xctx) as f:
+        root = f.read().decode('utf8')
+    # trust the CA pebble generated, so imaps works
+    ctx = ssl.create_default_context()
+    ctx.load_verify_locations(cadata=root)
+
+    # start citm with a tls listener
+    with Subproc(cmd + ["--listen", "tls://127.0.0.1:2994"]) as subproc:
+        # wait for acme to be successful
+        wait_for_msg(subproc.out_q, b"obtained new ACME cert")
+
+        # connect with tls, and expect valid certs
+        with socket.socket() as s:
+            s.connect(("127.0.0.1", 2994))
+            s = ctx.wrap_socket(s, server_hostname=hostname)
+            greeting = s.recv(4096)
+            assert b"greetings, friend!" in greeting, greeting
+
+
 def append_messages(rw, count, box="INBOX"):
     for n in range(count):
         rw.put(b"PRE%d APPEND %s {13}\r\n"%(n, as_bytes(box)))
@@ -2957,6 +3047,8 @@ def temp_sm_dir():
     tempdir = tempfile.mkdtemp(prefix="e2e_citm-")
     try:
         # prepopulate mykey.pem to shave about a second of startup time
+        acmedir = os.path.join(tempdir, "acme")
+        os.makedirs(acmedir, exist_ok=True)
         keys = os.path.join(tempdir, "citm", USER, "keys")
         os.makedirs(keys, exist_ok=True)
         with open(os.path.join(keys, "mykey.pem"), "w") as f:
@@ -2967,42 +3059,27 @@ def temp_sm_dir():
 
 
 @contextlib.contextmanager
-def dovecot_setup(imap_port=None):
-    # when running server for somebody else, expose dovecot to the world
-    bind_addr = "0.0.0.0" if imap_port else "127.0.0.1"
-
-
-    import mariadb
-    import dovecot
-
-    pysm_path = "server/pysm"
-    sys.path.append(pysm_path)
+def cluster_setup(pebble):
+    import cluster
     import pysm
 
-    migrations = os.path.join(HERE, "..", "server", "migrations")
-    migmysql_path = os.path.join("server", "migmysql")
-    plugin_path = os.path.join("server", "xkey")
-    with mariadb.mariadb(
-        migrations=migrations, migmysql_path=migmysql_path
-    ) as runner:
+    plugin_path = "server/xkey"
+    with cluster.Cluster(pebble=pebble, imap_port=16000) as cluster:
         # inject the test user
-        with pysm.SMSQL(sock=runner.sockpath) as smsql:
+        with pysm.SMSQL(sock=cluster.db.sqlsock) as smsql:
+            # USER will have an md5 password for fast test logins
             smsql.create_account(USER, PASS)
-        with dovecot.tempdir() as basedir:
-            # change the password hash to md5 to shave a second per test
-            # md5 hash generated with mysql:
-            #     SELECT ENCRYPT("passwordpassword", "$1$zxcv");
-            pwd = "$1$zxcv$MH.Z6XWR.xMAZfsmnc08/0"
-            runner.run(f'update accounts set password="{pwd}"', "splintermail")
-            with dovecot.Dovecot(
-                basedir=basedir,
-                sql_sock=runner.sockpath,
-                bind_addr=bind_addr,
-                imap_port=imap_port,
-                plugin_path=plugin_path,
-            ) as imap_port:
-                print(f"dovecot ready! ({imap_port})")
-                yield f"insecure://{bind_addr}:{imap_port}"
+            # USER2 needs a non-md5 password for libsmsql to function
+            smsql.create_account(USER2, PASS2)
+        # change the USER password hash to md5 to shave a second per test
+        # md5 hash generated with mysql:
+        #     SELECT ENCRYPT("passwordpassword", "$1$zxcv");
+        pwd = "$1$zxcv$MH.Z6XWR.xMAZfsmnc08/0"
+        cluster.db.runner.run(
+            f'update accounts set password="{pwd}" where email = "{USER}"',
+            "splintermail",
+        )
+        yield "localhost"
 
 
 if __name__ == "__main__":
@@ -3010,13 +3087,18 @@ if __name__ == "__main__":
     parser.add_argument("patterns", nargs="*")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--remote")
+    parser.add_argument("--pebble")
     parser.add_argument("--test-server", action="store_true")
     parser.add_argument("--no-extra-subproc", action="store_true")
     args = parser.parse_args()
 
+    if not args.pebble and not args.remote:
+        raise ValueError("either --remote or --pebble must be provided")
+
+
     if args.test_server:
-        with dovecot_setup(1234) as remote:
-            print(f"--remote {remote}")
+        with cluster_setup(args.pebble):
+            print("e2e test cluster ready")
             try:
                 while True:
                     time.sleep(1000)
@@ -3061,9 +3143,10 @@ if __name__ == "__main__":
             yield args.remote
         dovecot_ctx_mgr = externally_managed()
     else:
-        dovecot_ctx_mgr = dovecot_setup()
+        dovecot_ctx_mgr = cluster_setup(args.pebble)
 
     with dovecot_ctx_mgr as remote:
+
         with temp_sm_dir() as sm_dir:
             for test in tests:
                 # clean up the mail before each test, but leave the keys alone
@@ -3076,15 +3159,16 @@ if __name__ == "__main__":
 
                 cmd = [
                     "libcitm/citm",
-                    "--listen",
-                    "insecure://127.0.0.1:2993",
-                    "--remote",
-                    remote,
+                    "--listen", "insecure://127.0.0.1:2993",
+                    "--remote", f"insecure://{remote}:16000",
+                    "--rest", f"http://{remote}:8000",
+                    "--acme", f"https://{remote}:14000/dir",
+                    "--pebble",
                     "--splintermail-dir",
                     sm_dir,
                 ]
                 try:
-                    test(cmd, maildir_root, remote)
+                    test(cmd, maildir_root, f"insecure://{remote}:16000")
                     print("PASS")
                 except:
                     print(f"FAIL ({test.__name__})")

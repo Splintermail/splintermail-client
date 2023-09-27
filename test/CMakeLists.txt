@@ -34,7 +34,10 @@ sm_test(test_log_file.c DEPS dstr imaildir test_utils)
 set(e2e_test_cmd "${PYTHON_3_CMD}" "${PROJECT_SOURCE_DIR}/test/e2e_citm.py")
 if(USE_TEST_SERVER)
     # let some linux machine run dovecot and mysql for us
-    list(APPEND e2e_test_cmd "--remote" "insecure://${USE_TEST_SERVER}:1234")
+    list(APPEND e2e_test_cmd "--remote" "${USE_TEST_SERVER}")
+elseif(PEBBLE_ROOT)
+    # we are the linux machine; we need the pebble directory though
+    list(APPEND e2e_test_cmd "--pebble" "${PEBBLE_ROOT}")
 endif()
 sm_test(e2e_citm ${e2e_test_cmd} CWD "${PROJECT_BINARY_DIR}")
 
