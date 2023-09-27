@@ -609,18 +609,17 @@ static int macos_verify_callback(int preverify_ok, X509_STORE_CTX *ctx){
        we explicitly trusted the CA in the application.  It could also happen
        if we're looking at an intermediate or leaf certificate that is valid,
        given a root certificate that we've overridden to be trusted. */
-    fprintf(stderr, "preverify_ok: %d\n", preverify_ok);
     if(preverify_ok) return preverify_ok;
 
     int ok = 0;
 
-    int err = X509_STORE_CTX_get_error(ctx);
-    int depth = X509_STORE_CTX_get_error_depth(ctx);
-    fprintf(stderr, "err = %d, depth = %d, ntrusted = %d, ntotal = %d\n",
-            err, depth,
-            (int)sk_X509_num(X509_STORE_CTX_get0_chain(ctx)),
-            (int)sk_X509_num(X509_STORE_CTX_get0_untrusted(ctx))
-    );
+    // int err = X509_STORE_CTX_get_error(ctx);
+    // int depth = X509_STORE_CTX_get_error_depth(ctx);
+    // fprintf(stderr, "err = %d, depth = %d, ntrusted = %d, ntotal = %d\n",
+    //         err, depth,
+    //         (int)sk_X509_num(X509_STORE_CTX_get0_chain(ctx)),
+    //         (int)sk_X509_num(X509_STORE_CTX_get0_untrusted(ctx))
+    // );
 
     /* prepare to pass a CFArrayRef of SecCertificateRef objects, starting
        with the leaf-most certificate, to SecTrustCreateWithCertificates */
