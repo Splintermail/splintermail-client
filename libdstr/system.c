@@ -256,18 +256,33 @@ derr_t dlocaltime(time_t t, struct tm *tm){
     _ensure_tzset();
     struct tm *tret = localtime_r(&t, tm);
     if(tret == NULL){
-        TRACE(&e, "localtime_r(%x): %x\n", FI(t), FE(errno));
-        ORIG(&e, E_OS, "localtime_r failed");
+        ORIG(&e, E_OS, "localtime_r(%x) failed: %x", FI(t), FE(errno));
     }
     return e;
 #else
     derr_t e = E_OK;
     _ensure_tzset();
     int ret = localtime_s(tm, &t);
-    if(ret){
-        TRACE(&e, "localtime_s(%x): %x\n", FI(t), FE(ret));
-        ORIG(&e, E_OS, "localtime_s failed");
+    if(ret) ORIG(&e, E_OS, "localtime_s(%x) failed: %x", FI(t), FE(ret));
+    return e;
+#endif
+}
+
+// gmtime_r in unix or gmtime_s in windows
+derr_t dgmtime(time_t t, struct tm *tm){
+#ifndef _WIN32 // UNIX
+    derr_t e = E_OK;
+    _ensure_tzset();
+    struct tm *tret = gmtime_r(&t, tm);
+    if(tret == NULL){
+        ORIG(&e, E_OS, "gmtime_r(%x) failed: %x\n", FI(t), FE(errno));
     }
+    return e;
+#else
+    derr_t e = E_OK;
+    _ensure_tzset();
+    int ret = gmtime_s(tm, &t);
+    if(ret) ORIG(&e, E_OS, "gmtime_s(%x) failed: %x\n", FI(t), FE(ret));
     return e;
 #endif
 }

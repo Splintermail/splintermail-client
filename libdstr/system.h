@@ -21,6 +21,9 @@ derr_t dtimezone(long int *tz);
 // localtime_r in unix or localtime_s in windows
 derr_t dlocaltime(time_t t, struct tm *tm);
 
+// gmtime_r in unix or gmtime_s in windows
+derr_t dgmtime(time_t t, struct tm *tm);
+
 // like struct tm but with human numbers (1900 is year=1900, jan is month=1)
 typedef struct {
     int year;
