@@ -890,6 +890,34 @@ derr_t jwk_thumbprint(key_i *k, dstr_t *out){
     return e;
 }
 
+// for dns01 challenges: b64url(sha256(token + "." + b64url(thumbprint(key))))
+derr_t dns01_key_authz_string(const dstr_t token, key_i *k, dstr_t *out){
+    derr_t e = E_OK;
+
+    DSTR_VAR(thumb_bin, SHA256_DIGEST_LENGTH);
+    DSTR_VAR(thumb_b64, 2*SHA256_DIGEST_LENGTH);
+    DSTR_VAR(prehash, SHA256_DIGEST_LENGTH + 2*SHA256_DIGEST_LENGTH);
+    DSTR_VAR(binhash, SHA256_DIGEST_LENGTH + 2*SHA256_DIGEST_LENGTH);
+
+    PROP(&e, jwk_thumbprint(k, &thumb_bin) );
+    PROP(&e, bin2b64url(thumb_bin, &thumb_b64) );
+    PROP(&e, FMT(&prehash, "%x.%x", FD(token), FD(thumb_b64)) );
+
+    unsigned char *uret = SHA256(
+        (const unsigned char*)prehash.data,
+        prehash.len,
+        (unsigned char*)binhash.data
+    );
+    if(!uret){
+        ORIG(&e, E_SSL, "SHA256 failed: %x", FSSL);
+    }
+    binhash.len = SHA256_DIGEST_LENGTH;
+
+    PROP(&e, bin2b64url(binhash, out) );
+
+    return e;
+}
+
 // signatures
 
 derr_t _sign_key(void *data, const dstr_t in, dstr_t *out){

@@ -7,6 +7,7 @@
 DSTR_STATIC(d_listen, "insecure://[::1]:1993");
 DSTR_STATIC(d_remote, "tls://splintermail.com:993");
 DSTR_STATIC(d_sm_dir, "/tmp/sm_dir");
+DSTR_STATIC(d_rest, "https://splintermail.com");
 
 static void print_help(FILE *f){
     FFMT_QUIET(f,
@@ -20,12 +21,14 @@ static void print_help(FILE *f){
         "  -c, --cert ARG      (default: none)\n"
         "  -d, --sm-dir ARG    (default: %x)\n"
         "  -a, --acme ARG      (default: " LETSENCRYPT ")\n"
+        "      --rest ARG      (default: %x)\n"
         "      --ca ARG        (deault: none)\n"
         "  -p, --pebble        trust pebble's certificate, and change\n"
         "                      default --acme to localhost:14000\n",
         FD(d_listen),
         FD(d_remote),
-        FD(d_sm_dir)
+        FD(d_sm_dir),
+        FD(d_rest)
     );
 }
 
@@ -85,6 +88,7 @@ int main(int argc, char **argv){
     opt_spec_t o_cert     = {'c', "cert",    true};
     opt_spec_t o_sm_dir   = {'d', "splintermail-dir", true};
     opt_spec_t o_acme     = {'a', "acme",    true};
+    opt_spec_t o_rest     = {'\0',"rest",    true};
     opt_spec_t o_ca       = {'\0',"ca",      true};
     opt_spec_t o_pebble   = {'p', "pebble",  false};
 
@@ -96,6 +100,7 @@ int main(int argc, char **argv){
         &o_cert,
         &o_sm_dir,
         &o_acme,
+        &o_rest,
         &o_ca,
         &o_pebble,
     };
@@ -146,7 +151,7 @@ int main(int argc, char **argv){
     const char *key = o_key.found ? o_key.val.data : NULL;
     const char *cert = o_cert.found ? o_cert.val.data : NULL;
     string_builder_t sm_dir = SBD(o_sm_dir.found ? o_sm_dir.val : d_sm_dir);
-    dstr_t sm_baseurl = DSTR_LIT("https://splintermail.com");
+    dstr_t sm_baseurl = o_rest.found ? o_rest.val : d_rest;
 
     PROP_GO(&e,
          uv_citm(

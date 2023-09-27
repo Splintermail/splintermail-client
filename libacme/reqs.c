@@ -128,7 +128,7 @@ typedef struct {
     dstr_t domain;
     dstr_t expires;
     dstr_t challenge;
-    dstr_t token_thumb;
+    dstr_t dns01_token;
     time_t retry_after;
 } acme_get_authz_state_t;
 
@@ -987,8 +987,42 @@ done:
     return;
 }
 
+static derr_t mkrfc3339(time_t epoch, dstr_t *out){
+    derr_t e = E_OK;
+
+    struct tm tm;
+    PROP(&e, dgmtime(epoch, &tm) );
+    dtm_t dtm = dtm_from_tm(tm);
+
+    char buf[32];
+    int len = snprintf(
+        buf, sizeof(buf),
+        "%.4d-%.2d-%.2dT%.2d:%.2d:%.2dZ",
+        dtm.year,
+        dtm.month,
+        dtm.day,
+        dtm.hour,
+        dtm.min,
+        dtm.sec
+    );
+    if(len < 0) LOG_FATAL("mkrfc3339 snprintf failed!\n");
+    if((size_t)len >= sizeof(buf)) LOG_FATAL("mkrfc3339 snprintf overflow!\n");
+
+    dstr_t temp = dstr_from_cstrn(buf, (size_t)len, true);
+
+    PROP(&e, dstr_append(out, &temp) );
+
+    return e;
+}
+
 static derr_t new_order_body(acme_t *acme, acme_account_t acct, dstr_t domain){
     derr_t e = E_OK;
+
+    // request a notBefore of yesterday, to handle clock skew between machines
+    time_t now;
+    PROP(&e, dtime(&now) );
+    DSTR_VAR(not_before, 32);
+    PROP(&e, mkrfc3339(now - 86400, &not_before) );
 
     // build the outer jws
     DSTR_VAR(protected, 4096);
@@ -1007,6 +1041,7 @@ static derr_t new_order_body(acme_t *acme, acme_account_t acct, dstr_t domain){
         DKEY("identifiers", DARR(
             DOBJ(DKEY("type", DS("dns")), DKEY("value", DD(domain)))
         )),
+        DKEY("notBefore", DD(not_before)),
     );
     PROP(&e, jdump(jpayload, WD(&payload), 0) );
 
@@ -1435,6 +1470,8 @@ static void list_orders_free_state(acme_t *acme){
         dstr_free(&state->orders.data[i]);
     }
     LIST_FREE(dstr_t, &state->orders);
+    dstr_free(&state->current);
+    dstr_free(&state->next);
     *state = (acme_list_orders_state_t){0};
 }
 
@@ -1478,8 +1515,8 @@ static derr_t jlist_challenges(jctx_t *ctx, size_t index, void *data){
     // challenge objects may have type-specific extensions
     jspec_t *spec = JOBJ(true,
         JKEYOPT("error", &have_error, JOBJ(true,
-            JKEYOPT("type", &have_errtype, JDREF(&challenge.errtype)),
             JKEYOPT("detail", &have_errdetail, JDREF(&challenge.errdetail)),
+            JKEYOPT("type", &have_errtype, JDREF(&challenge.errtype)),
         )),
         JKEY("status", JASTAT(&challenge.status)),
         JKEYOPT("token", &have_token, JDREF(&challenge.token)),
@@ -1551,12 +1588,9 @@ static void get_authz_reader_cb(stream_reader_t *reader, derr_t err){
         ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
     }
 
-    // token_thumb is: token + '.' + b64url(thumbprint)
-    DSTR_VAR(bin, SHA256_DIGEST_LENGTH);
-    PROP_GO(&e, jwk_thumbprint(state->acct.key, &bin), done);
     PROP_GO(&e,
-        FMT(&state->token_thumb,
-            "%x.%x", FD(challenge.token), FB64URL(bin)
+        dns01_key_authz_string(
+            challenge.token, state->acct.key, &state->dns01_token
         ),
     done);
 
@@ -1578,7 +1612,7 @@ static void get_authz_advance_state(acme_t *acme, derr_t err){
     dstr_t domain = {0};
     dstr_t expires = {0};
     dstr_t challenge = {0};
-    dstr_t token_thumb = {0};
+    dstr_t dns01_token = {0};
     time_t retry_after = 0;
 
     // check for errors
@@ -1610,7 +1644,7 @@ done:
         domain = STEAL(dstr_t, &state->domain);
         expires = STEAL(dstr_t, &state->expires);
         challenge = STEAL(dstr_t, &state->challenge);
-        token_thumb = STEAL(dstr_t, &state->token_thumb);
+        dns01_token = STEAL(dstr_t, &state->dns01_token);
         status = state->status;
         challenge_status = state->challenge_status;
         retry_after = state->retry_after;
@@ -1628,7 +1662,7 @@ done:
         domain,
         expires,
         challenge,
-        token_thumb,
+        dns01_token,
         retry_after
     );
 }
@@ -1638,7 +1672,7 @@ static void get_authz_free_state(acme_t *acme){
     dstr_free(&state->domain);
     dstr_free(&state->expires);
     dstr_free(&state->challenge);
-    dstr_free(&state->token_thumb);
+    dstr_free(&state->dns01_token);
     *state = (acme_get_authz_state_t){0};
 }
 

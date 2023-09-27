@@ -118,7 +118,7 @@ typedef void (*acme_get_authz_cb)(
     dstr_t domain,
     dstr_t expires,
     dstr_t challenge,   // only the dns challenge is returned
-    dstr_t token_thumb, // only the dns challenge is returned, with thumprint
+    dstr_t dns01_token, // only the dns challenge is returned
     time_t retry_after  // might be zero
 );
 

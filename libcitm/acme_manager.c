@@ -97,21 +97,27 @@ static derr_t jwk_gen_or_load(string_builder_t path, key_i **out){
     FILE *f = NULL;
     key_i *key = NULL;
 
+    // does the jwk file even exist? (avoid printing frivolous errors)
+    bool ok;
+    PROP_GO(&e, exists_path2(path, &ok), gen_after_fail);
+    if(!ok) goto gen_after_noexist;
+
     // try to read an existing file
     DSTR_VAR(buf, 1024);
-    PROP_GO(&e, dstr_read_path(&path, &buf), gen);
-    PROP_GO(&e, json_to_key(buf, out), gen);
+    PROP_GO(&e, dstr_read_path(&path, &buf), gen_after_fail);
+    PROP_GO(&e, json_to_key(buf, out), gen_after_fail);
 
     // successfully loaded existing key
     dstr_zeroize(&buf);
 
     return e;
 
-gen:
+gen_after_fail:
     // if loading fails, generate a new key
     LOG_DEBUG("loading jwk failed:\n%x----\n", FD(e.msg));
     DROP_VAR(&e);
 
+gen_after_noexist:
     LOG_ERROR("generating a new jwk for a new ACME account\n");
     PROP_GO(&e, gen_es256(&key), fail);
 
@@ -487,7 +493,7 @@ void am_get_authz_done(
     dstr_t domain,
     dstr_t expires,
     dstr_t challenge,   // only the dns challenge is returned
-    dstr_t token,       // only the dns challenge is returned
+    dstr_t dns01_token, // only the dns challenge is returned
     time_t retry_after  // might be zero
 ){
     new_cert_t *nc = &am->new_cert;
@@ -498,7 +504,7 @@ void am_get_authz_done(
     dstr_free(&domain);
     dstr_free(&expires);
     freesteal(&nc->challenge, &challenge);
-    freesteal(&nc->proof, &token);
+    freesteal(&nc->proof, &dns01_token);
     nc->retry_after = retry_after;
 
     nc->get_authz_resp = true;
@@ -947,7 +953,7 @@ void am_advance_state(acme_manager_t *am){
         }else PROP_VAR_GO(&e, &e2, fail);
         if(!ok) return;
 
-        // we have a fresh cert
+        LOG_ERROR("obtained new ACME cert\n");
         am->want_cert = false;
         am->failures = 0;
 

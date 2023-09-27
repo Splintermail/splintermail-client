@@ -36,6 +36,9 @@ derr_t json_to_key(const dstr_t text, key_i **out);
 // not base64url-encoded
 derr_t jwk_thumbprint(key_i *k, dstr_t *out);
 
+// for dns01 challenges: sha256(token + "." + b64url(thumbprint(key)))
+derr_t dns01_key_authz_string(const dstr_t token, key_i *k, dstr_t *out);
+
 // signatures
 
 derr_t _sign_key(void *data, const dstr_t in, dstr_t *out);

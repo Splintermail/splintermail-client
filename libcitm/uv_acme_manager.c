@@ -405,6 +405,20 @@ static void timer_close_after_fail_i(uv_handle_t *handle){
     duv_timer_close(&uvam->timer_backoff, timer_close_after_fail_ii);
 }
 
+static void uvam_done_cb(void *data, derr_t err){
+    uv_acme_manager_t *uvam = data;
+    // remember that am_close() is no longer safe to call
+    uvam->uv_acme_manager_closed = true;
+    // pass the callback forward
+    uvam->done_cb(uvam->cb_data, err);
+}
+
+static void uvam_update_cb(void *data, SSL_CTX *ctx){
+    // blindly pass this forward with the right cb_data
+    uv_acme_manager_t *uvam = data;
+    uvam->update_cb(uvam->cb_data, ctx);
+}
+
 // if this fails, you won't see a done_cb but you must still drain the loop
 derr_t uv_acme_manager_init(
     uv_acme_manager_t *uvam,
@@ -447,6 +461,9 @@ derr_t uv_acme_manager_init(
         },
         .loop = loop,
         .scheduler = &scheduler->iface,
+        .update_cb = update_cb,
+        .done_cb = done_cb,
+        .cb_data = cb_data,
     };
 
     schedulable_prep(&uvam->schedulable, scheduled);
@@ -480,9 +497,9 @@ derr_t uv_acme_manager_init(
             &uvam->am,
             &uvam->iface,
             acme_dir,
-            update_cb,
-            done_cb,
-            cb_data,
+            uvam_update_cb,
+            uvam_done_cb,
+            uvam, // cb_data
             initial_ctx
         ),
     fail);

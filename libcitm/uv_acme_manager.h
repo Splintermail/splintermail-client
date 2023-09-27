@@ -26,6 +26,15 @@ typedef struct {
     derr_t keygen_err;
     EVP_PKEY *pkey;
 
+    /* we need to intercept the done_cb, because to make uv_acme_manager_close
+       idempotent, we need to know if the acme_manager_t failed prior to us
+       being closed; it won't be safe to call am_close() otherwise */
+    acme_manager_done_cb done_cb;
+    /* that means we also need to intercept the update_cb, but only because we
+       need to inject our own cb_data */
+    acme_manager_update_cb update_cb;
+    void *cb_data;
+
     bool started;
     bool closed;
     bool close_needs_keygen_cb;
