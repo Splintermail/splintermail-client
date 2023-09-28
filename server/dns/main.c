@@ -361,11 +361,7 @@ static derr_t udp_bind_addrspec(uv_udp_t *udp, const addrspec_t spec){
             ORIG_GO(&e, E_OS, "socket(): %x", fail, FE(errno));
         }
 
-        int on = 1;
-        ret = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
-        if(ret){
-            ORIG_GO(&e, E_OS, "unable to set REUSEADDR: %x", fail, FE(errno));
-        }
+        // note: don't set SO_REUSEADDR on udp addresses
 
         ret = bind(fd, ai->ai_addr, ai->ai_addrlen);
         if(ret){
