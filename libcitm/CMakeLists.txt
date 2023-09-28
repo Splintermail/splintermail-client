@@ -20,7 +20,7 @@ sm_lib(
     DEPS dstr crypto web duv duvtls imap imaildir acme api_client
 )
 
-sm_exe(citm main.c DEPS libcitm certs)
+sm_exe(citm main.c DEPS libcitm certs TEST)
 
 sm_lib(fake_citm.c DEPS libcitm TEST)
 
