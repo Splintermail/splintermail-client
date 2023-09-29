@@ -613,9 +613,9 @@ def wait_for_msg(q, msg):
             break
 
 
-# SIGINT is weird in windows.  When we send it to our subproces, we also get it
-# ourselves some time later.  Just count expected ones and raise an error if
-# we detect the user sent one to us.
+# SIGINT is weird in windows.  When we send it to our subprocess, we also get
+# it ourselves some time later.  Just count expected ones and raise an error if
+# we detect the develper actually typed ctrl+c.
 if sys.platform == "win32":
 
     _expect_sigints = 0
@@ -694,6 +694,7 @@ class Subproc:
 
             try:
                 self.p.wait(TIMEOUT)
+                self.reader.join()
                 if self.p.poll() != 0:
                     raise ValueError("cmd exited %d"%self.p.poll())
                 if success_logs:
@@ -712,6 +713,7 @@ class Subproc:
             print(f"sent second sigint at t={time.time()-start}")
             try:
                 self.p.wait(TIMEOUT)
+                self.reader.join()
                 raise ValueError("cmd failed to exit after first SIGINT")
             except subprocess.TimeoutExpired:
                 pass
@@ -727,6 +729,7 @@ class Subproc:
                 self.p.send_signal(signal.SIGKILL)
                 print(f"sent sigkill at t={time.time()-start}")
             self.p.wait()
+            self.reader.join()
             raise ValueError("cmd hung, required sent SIGKILL")
         finally:
             self.reader.close()
