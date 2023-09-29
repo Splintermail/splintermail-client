@@ -507,20 +507,14 @@ add_subdirectory(libimap)
 add_subdirectory(libimaildir)
 add_subdirectory(libcitm)
 
-set(print_help_in "${PROJECT_SOURCE_DIR}/print_help.h.in")
-set(print_help_out "${PROJECT_BINARY_DIR}/print_help.h")
-qwwq("${print_help_in}" "${print_help_out}")
-define_file_logname_for_source("${print_help_in}" "${print_help_out}")
-
 sm_lib(api_client.c DEPS crypto http)
-sm_lib(console_input.c)
-sm_lib(ui_harness.c DEPS api_client)
-sm_lib(ui.c "${print_help_out}" DEPS http libcitm)
 
-sm_exe(splintermail.c DEPS api_client ui ui_harness console_input)
+add_subdirectory(libcli)
+
 sm_exe(encrypt_msg.c DEPS crypto)
 sm_exe(decrypt_msg.c DEPS crypto)
 sm_exe(inject_local_msg.c DEPS imaildir crypto TEST)
+sm_exe(splintermail.c DEPS cli)
 
 # decide if we are building server code
 if(BUILD_SERVER_CODE)
@@ -541,8 +535,6 @@ elseif(WIN32)
         "${PROJECT_BINARY_DIR}/version.rc")
     # add versioning to splintermail.exe
     target_sources(splintermail INTERFACE "${PROJECT_BINARY_DIR}/version.rc")
-    # additional dependencies for windows
-    target_link_libraries(ui PUBLIC shlwapi)
 else()
     message(FATAL_ERROR "OS not detected")
 endif()

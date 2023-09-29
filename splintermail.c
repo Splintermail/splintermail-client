@@ -1,11 +1,9 @@
-#include "libdstr/libdstr.h"
-#include "ui.h"
-#include "libcitm/libcitm.h"
+#include "libcli/libcli.h"
 
 #ifndef _WIN32
 
 int main(int argc, char* argv[]){
-    return do_main(argc, argv, false);
+    return do_main(default_ui_harness(), argc, argv, false);
 }
 
 #else // _WIN32
@@ -49,7 +47,7 @@ static VOID WINAPI SvcMain(int argc, char* argv[]){
     ReportSvcStatus(SERVICE_START_PENDING, NO_ERROR, 3000);
 
     // when ditm_loop gets launched, it will set SERVICE_RUNNING
-    do_main_ret = do_main(argc, argv, true);
+    do_main_ret = do_main(default_ui_harness(), argc, argv, true);
 
     // the SERVICE_STOPPED announcment MUST come before SvcMain exists, apparently
     // TODO: we should find a way to report any errors
@@ -65,7 +63,7 @@ int main(int argc, char* argv[]){
 
     if(!StartServiceCtrlDispatcher( DispatchTable )){
         // if running as a service failed, we are probably just a CLI program
-        return do_main(argc, argv, false);
+        return do_main(default_ui_harness(), argc, argv, false);
     }
     return do_main_ret;
 }

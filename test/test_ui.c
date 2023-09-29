@@ -1,7 +1,6 @@
 #include <errno.h>
 
-#include <libdstr/libdstr.h>
-#include <ui.h>
+#include <libcli/libcli.h>
 
 #include "dummy_ui_harness.h"
 #include "test_utils.h"
@@ -140,7 +139,7 @@ static derr_t run_test_case(struct test_case_t test){
     // start the async_reader
     PROP(&e, start_async_reader(&fds[0]) );
     // run the test
-    int main_ret = do_main(argc, local_argv, false);
+    int main_ret = do_main(dummy_ui_harness(), argc, local_argv, false);
     // capture stdout (and stop_async_reader)
     fflush(stdout);
     compat_close(1);

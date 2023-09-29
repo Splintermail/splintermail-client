@@ -1,9 +1,7 @@
 #ifndef DUMMY_UI_HARNESS_C
 #define DUMMY_UI_HARNESS_C
 
-#include <libdstr/libdstr.h>
-#include <libcitm/libcitm.h>
-#include <api_client.h>
+#include <libcli/libcli.h>
 
 // Shitty MSVC preprocessor won't let us stack __VA_ARGS__ macros
 #define UH_OH(fstr, ...) do { \
@@ -85,5 +83,7 @@ extern bool api_token_called;
 // console_input.h
 extern char** passwords;
 extern char** strings;
+
+ui_i dummy_ui_harness(void);
 
 #endif // DUMMY_UI_HARNESS_C

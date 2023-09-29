@@ -6,9 +6,6 @@
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>
 
-#include <console_input.h>
-#include <ui_harness.h>
-
 #include "test/test_utils.h"
 
 bool looked_good;
@@ -31,7 +28,7 @@ static const char *strend(const char *s, const char *ending){
 // libcitm/citm.h
 citm_args_t *citm_args;
 bool citm_called;
-derr_t uv_citm(
+static derr_t fake_uv_citm(
     const addrspec_t *lspecs,
     size_t nlspecs,
     const addrspec_t remote,
@@ -172,11 +169,6 @@ cu:
     return e;
 }
 
-static derr_t fake_dir_r_access_path(
-    const string_builder_t *sb, bool create, bool *ret
-){
-    return fake_access_path(sb, create ? AM_CREATE : AM_ACCESS, ret);
-}
 static derr_t fake_dir_w_access_path(
     const string_builder_t *sb, bool create, bool *ret
 ){
@@ -238,28 +230,12 @@ static void fake_ssl_library_close(void){
     return;
 }
 
-// intercept all calls
-ui_harness_t harness = {
-    .dir_r_access_path = fake_dir_r_access_path,
-    .dir_w_access_path = fake_dir_w_access_path,
-    .dir_rw_access_path = fake_dir_rw_access_path,
-    .file_r_access_path = fake_file_r_access_path,
-    .file_w_access_path = fake_file_w_access_path,
-    .file_rw_access_path = fake_file_rw_access_path,
-    .exists_path = fake_exists_path,
-    .for_each_file_in_dir = fake_for_each_file_in_dir,
-    .ssl_library_init = fake_ssl_library_init,
-    .ssl_library_close = fake_ssl_library_close,
-};
-
 // api_client.h
-REGISTER_ERROR_TYPE(E_TOKEN, "TOKEN", "invalid api token");
-REGISTER_ERROR_TYPE(E_PASSWORD, "PASSWORD", "incorrect password");
 
 api_token_t* token_to_read;
 derr_t read_token_error = {0};
 bool read_token_notok = false;
-derr_t api_token_read_increment_write_path(
+static derr_t fake_api_token_read_increment_write_path(
     const string_builder_t *sb, api_token_t *token, bool *ok
 ){
     (void)sb;
@@ -279,13 +255,13 @@ derr_t api_token_read_increment_write_path(
     };
     return e;
 }
-void api_token_free0(api_token_t *token){
+static void fake_api_token_free0(api_token_t *token){
     *token = (api_token_t){0};
 }
 
 struct register_token_args_t* register_token_args;
 bool register_token_called;
-derr_t register_api_token_sync(
+static derr_t fake_register_api_token_sync(
     http_sync_t *sync,
     const dstr_t baseurl,
     const dstr_t user,
@@ -311,7 +287,7 @@ derr_t register_api_token_sync(
     return RTA->to_return;
 }
 
-derr_t register_api_token_path_sync(
+static derr_t fake_register_api_token_path_sync(
     http_sync_t *sync,
     const dstr_t baseurl,
     const dstr_t user,
@@ -325,7 +301,7 @@ derr_t register_api_token_path_sync(
     PROP(&e, sb_expand(sb, &stack, &heap, &path) );
 
     PROP_GO(&e,
-        register_api_token_sync(sync, baseurl, user, pass, path->data),
+        fake_register_api_token_sync(sync, baseurl, user, pass, path->data),
     cu);
 
 cu:
@@ -335,7 +311,7 @@ cu:
 
 struct api_password_args_t* api_password_args;
 bool api_password_called;
-derr_t api_pass_sync(
+static derr_t fake_api_pass_sync(
     http_sync_t *sync,
     const dstr_t baseurl,
     const dstr_t path,
@@ -371,7 +347,7 @@ derr_t api_pass_sync(
 
 struct api_token_args_t* api_token_args;
 bool api_token_called;
-derr_t api_token_sync(
+static derr_t fake_api_token_sync(
     http_sync_t *sync,
     const dstr_t baseurl,
     const dstr_t path,
@@ -409,7 +385,7 @@ derr_t api_token_sync(
 
 // console_input.h
 char** passwords;
-derr_t get_password(dstr_t* password){
+static derr_t fake_get_password(dstr_t* password){
     derr_t e = E_OK;
     password->len = 0;
     if(passwords == NULL || passwords[0] == NULL){
@@ -426,7 +402,7 @@ derr_t get_password(dstr_t* password){
 }
 
 char** strings;
-derr_t get_string(dstr_t* input){
+static derr_t fake_get_string(dstr_t* input){
     derr_t e = E_OK;
     input->len = 0;
     if(strings == NULL || strings[0] == NULL){
@@ -441,4 +417,27 @@ derr_t get_string(dstr_t* input){
         *i = *(i+1);
     }
     return e;
+}
+
+ui_i dummy_ui_harness(void){
+    return (ui_i){
+        .dir_w_access_path = fake_dir_w_access_path,
+        .dir_rw_access_path = fake_dir_rw_access_path,
+        .file_r_access_path = fake_file_r_access_path,
+        .file_w_access_path = fake_file_w_access_path,
+        .file_rw_access_path = fake_file_rw_access_path,
+        .exists_path = fake_exists_path,
+        .for_each_file_in_dir = fake_for_each_file_in_dir,
+        .ssl_library_init = fake_ssl_library_init,
+        .ssl_library_close = fake_ssl_library_close,
+        .api_token_read_increment_write_path =
+            fake_api_token_read_increment_write_path,
+        .api_token_free0 = fake_api_token_free0,
+        .register_api_token_path_sync = fake_register_api_token_path_sync,
+        .api_pass_sync = fake_api_pass_sync,
+        .api_token_sync = fake_api_token_sync,
+        .get_password = fake_get_password,
+        .get_string = fake_get_string,
+        .uv_citm = fake_uv_citm,
+    };
 }
