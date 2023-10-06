@@ -1534,3 +1534,100 @@ cu:
 derr_t dstr_write_path2(const dstr_t dstr, const string_builder_t sb){
     return dstr_write_path(&sb, &dstr);
 }
+
+#ifdef _WIN32 // WINDOWS
+derr_t dflock(flock_t *fl, const char *path, bool *ok){
+    derr_t e = E_OK;
+    *fl = (flock_t){0};
+    // open with sharing so other people can open in order to block on the lock
+    /* https://learn.microsoft.com/en-us/windows/win32/api/fileapi/
+           nf-fileapi-createfilea */
+    // OPEN_ALWAYS to create file if it doesn't exist
+    fl->h = CreateFileA(
+        path, // lpFileName
+        GENERIC_READ | GENERIC_WRITE, // dwDesiredAccess
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, // dwShareMode
+        NULL, // lpSecurityAttributes
+        OPEN_ALWAYS, // dwCreationDisposition
+        0, // dwFlagsAndAttributes
+        NULL // hTemplateFile
+    );
+    if(fl->h == INVALID_HANDLE_VALUE){
+        ORIG(&e,
+            E_OS, "failed to open file (%x): %x\n", FS(path), FWINERR
+        );
+    }
+    /* https://learn.microsoft.com/en-us/windows/win32/api/fileapi/
+           nf-fileapi-lockfileex */
+    bool okret = LockFileEx(
+            fl->h,
+            LOCKFILE_EXCLUSIVE_LOCK | (!!ok * LOCKFILE_FAIL_IMMEDIATELY),
+            0, // reserved
+            1, // low 32-bits of number of bytes to lock
+            0, // high 32-bits of number of bytes to lock
+            NULL // overlapped
+    );
+    if(!okret){
+        if(ok && GetLastError() == ERROR_IO_PENDING){
+            // nonblocking lock failed
+            goto cu;
+        }
+        ORIG_GO(&e, E_OS, "LockFileEx failed: %x", cu, FWINERR);
+    }
+    // succeeded
+    fl->locked = true;
+    if(ok) *ok = true;
+cu:
+    if(is_error(e) || (ok && !*ok)) CloseHandle(fl->h);
+    return e;
+}
+#else // UNIX
+#include <sys/file.h>
+derr_t dflock(flock_t *fl, const char *path, bool *ok){
+    derr_t e = E_OK;
+    *fl = (flock_t){0};
+    if(ok) *ok = false;
+    PROP(&e, dopen(path, O_RDWR|O_CREAT, 0666, &fl->fd) );
+    int ret = flock(fl->fd, LOCK_EX | (!!ok * LOCK_NB));
+    if(ret){
+        if(ok && errno == EWOULDBLOCK){
+            // nonblocking lock failed
+            goto cu;
+        }
+        ORIG_GO(&e, E_OS, "flock failed: %x\n", cu, FE(errno));
+    }
+    // succeeded
+    fl->locked = true;
+    if(ok) *ok = true;
+cu:
+    if(is_error(e) || (ok && !*ok)) close(fl->fd);
+    return e;
+}
+#endif
+
+derr_t dflock_path(flock_t *fl, string_builder_t sb, bool *ok){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(&sb, &stack, &heap, &path) );
+
+    PROP_GO(&e, dflock(fl, path->data, ok), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+// release lock
+void dflock_release(flock_t *fl){
+    if(!fl->locked) return;
+#ifdef _WIN32 // WINDOWS
+    UnlockFileEx(fl->h, 0, 1, 0, NULL);
+    CloseHandle(fl->h);
+#else // UNIX
+    flock(fl->fd, LOCK_UN);
+    close(fl->fd);
+#endif
+    *fl = (flock_t){0};
+}

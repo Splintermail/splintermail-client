@@ -197,3 +197,19 @@ derr_t dstr_write_file2(const dstr_t dstr, const char* filename);
 
 derr_t dstr_write_path(const string_builder_t* sb, const dstr_t* buffer);
 derr_t dstr_write_path2(const dstr_t dstr, const string_builder_t sb);
+
+typedef struct {
+    #ifdef _WIN32 // WINDOWS
+    HANDLE h;
+    #else // UNIX
+    int fd;
+    #endif
+    bool locked;
+} flock_t;
+
+// blocks if *ok is NULL, otherwise ok indicates if you got the lock
+derr_t dflock(flock_t *fl, const char *path, bool *ok);
+derr_t dflock_path(flock_t *fl, string_builder_t sb, bool *ok);
+
+// release lock
+void dflock_release(flock_t *fl);
