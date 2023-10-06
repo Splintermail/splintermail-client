@@ -588,6 +588,7 @@ reparse:
                     // require a second utf16-escape to have a valid string
                     p->state = S8;
                 }else{
+                    // stray second surrgoate pair
                     char *x = p->cpbytes;
                     size_t ii = p->cpcount;
                     ORIG(&e,
