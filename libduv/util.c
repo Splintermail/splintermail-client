@@ -218,8 +218,8 @@ derr_t duv_tcp_read_start(
     UV_CALL(uv_read_start, (uv_stream_t*)tcp, alloc_cb, read_cb);
 }
 
-derr_t duv_tcp_read_stop(uv_tcp_t *tcp){
-    UV_CALL(uv_read_stop, (uv_stream_t*)tcp);
+int duv_tcp_read_stop(uv_tcp_t *tcp){
+    return uv_read_stop((uv_stream_t*)tcp);
 }
 
 derr_t duv_tcp_write(
@@ -392,8 +392,8 @@ derr_t duv_pipe_read_start(
     UV_CALL(uv_read_start, (uv_stream_t*)pipe, alloc_cb, read_cb);
 }
 
-derr_t duv_pipe_read_stop(uv_pipe_t *pipe){
-    UV_CALL(uv_read_stop, (uv_stream_t*)pipe);
+int duv_pipe_read_stop(uv_pipe_t *pipe){
+    return uv_read_stop((uv_stream_t*)pipe);
 }
 
 derr_t duv_pipe_write(

@@ -156,7 +156,7 @@ static void _do_read_cb(duv_passthru_t *p, ssize_t nread, const uv_buf_t *buf){
     if(failing(p) || !link_list_isempty(&p->reads)) return;
 
     // ok, time to call read_stop
-    // libuv documents the return value may be ignored
+    // libuv documents the return value should be ignored
     uv_read_stop(p->uvstream);
     p->reading = false;
 }

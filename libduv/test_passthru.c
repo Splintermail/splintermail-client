@@ -510,7 +510,7 @@ static void peer_read_final(
     }
 
     // we only read this once
-    PROP_GO(&E, duv_tcp_read_stop(&peer), fail);
+    duv_tcp_read_stop(&peer);
     // then we expect UV_EOF
     PROP_GO(&E,
         duv_tcp_read_start(&peer, peer_alloc_cb, peer_read_eof),
@@ -648,7 +648,7 @@ static void peer_read_cb_phase1(
     }
 
     // all writes successful!
-    PROP_GO(&E, duv_tcp_read_stop(&peer), fail);
+    duv_tcp_read_stop(&peer);
 
     // BEGIN PHASE 2 "read several times"
     uv_buf_t wbuf = { .base = bytes, .len = sizeof(bytes)-1 };

@@ -190,7 +190,7 @@ static void uv_subscriber_read_cb(
         return;
     }
     // done reading
-    PROP_GO(&e, duv_pipe_read_stop(&uv_sub->pipe), fail);
+    duv_pipe_read_stop(&uv_sub->pipe);
 
     // handle what was sent
     dstr_t rbuf = dstr_from_cstrn(uv_sub->rbuf, uv_sub->rlen, false);

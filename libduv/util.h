@@ -131,7 +131,8 @@ derr_t duv_tcp_accept(uv_tcp_t *tcp, uv_tcp_t *client);
 derr_t duv_tcp_read_start(
     uv_tcp_t *tcp, uv_alloc_cb alloc_cb, uv_read_cb read_cb
 );
-derr_t duv_tcp_read_stop(uv_tcp_t *tcp);
+// does not fail, but its return value has meaning in some obscure case
+int duv_tcp_read_stop(uv_tcp_t *tcp);
 derr_t duv_tcp_write(
     uv_write_t *req,
     uv_tcp_t *tcp,
@@ -181,7 +182,8 @@ derr_t duv_pipe_accept(uv_pipe_t *pipe, uv_pipe_t *client);
 derr_t duv_pipe_read_start(
     uv_pipe_t *pipe, uv_alloc_cb alloc_cb, uv_read_cb read_cb
 );
-derr_t duv_pipe_read_stop(uv_pipe_t *pipe);
+// does not fail, but its return value has meaning in some obscure case
+int duv_pipe_read_stop(uv_pipe_t *pipe);
 derr_t duv_pipe_write(
     uv_write_t *req,
     uv_pipe_t *pipe,
