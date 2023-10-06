@@ -1,8 +1,3 @@
-#ifndef UI_C
-#define UI_C
-
-#include "libdstr/libdstr.h"
-
 #ifdef _WIN32
 // stuff for windows service to work
 #define SVCNAME "splintermail"
@@ -72,6 +67,7 @@ typedef struct {
         dstr_t acme_dirurl,
         char *acme_verify_name,
         dstr_t sm_baseurl,
+        string_builder_t sockpath,
         SSL_CTX *client_ctx,
         string_builder_t sm_dir,
         void (*indicate_ready)(void*, uv_citm_t*),
@@ -86,5 +82,3 @@ ui_i default_ui_harness(void);
 derr_t trim_logfile(const char *path, long maxlen);
 
 int do_main(const ui_i ui, int argc, char* argv[], bool windows_service);
-
-#endif // UI_C

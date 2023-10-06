@@ -3160,6 +3160,13 @@ if __name__ == "__main__":
 
                 print(test.__name__ + "... ", end="", flush="true")
 
+                if sys.platform == "win32":
+                    rando = codecs.encode(os.urandom(5), "hex_codec")
+                    randostr = rando.decode("utf8")
+                    sockpath = fr"\\.\pipe\splintermail-e2e-citm-{randostr}"
+                else:
+                    sockpath = os.path.join(sm_dir, "status.sock")
+
                 cmd = [
                     "libcitm/citm",
                     "--listen", "insecure://127.0.0.1:2993",
@@ -3167,8 +3174,8 @@ if __name__ == "__main__":
                     "--rest", f"http://{remote}:8000",
                     "--acme", f"https://{remote}:14000/dir",
                     "--pebble",
-                    "--splintermail-dir",
-                    sm_dir,
+                    "--splintermail-dir", sm_dir,
+                    "--socket", sockpath,
                 ]
                 try:
                     test(cmd, maildir_root, f"insecure://{remote}:16000")

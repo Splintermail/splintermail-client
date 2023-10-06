@@ -18,7 +18,7 @@ static void read_cb(stream_i *stream, stream_read_t *req, dstr_t buf){
     s->read_done = true;
     s->rbuf.len = buf.len;
     if(buf.len == 0 && !s->logged_out && !is_error(s->e)){
-        TRACE_ORIG(&s->e, E_RESPONSE, "unexpected EOF from imap client");
+        TRACE_ORIG(&s->e, E_CONN, "unexpected EOF from imap client");
     }
     schedule(s);
 }

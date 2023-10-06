@@ -314,6 +314,12 @@ fail:
     return;
 }
 
+static bool is_broken_conn(derr_t e){
+    return e.type == E_UV_ECONNRESET
+        || e.type == E_UV_EPIPE
+        || e.type == E_CONN;
+}
+
 // completed preusers transition to new users
 static void citm_preuser_cb(
     void *data,
@@ -325,6 +331,14 @@ static void citm_preuser_cb(
     imap_client_t *xc
 ){
     citm_t *citm = data;
+
+    if(e.type == E_CANCELED) goto free;
+
+    // don't pollute logs with broken connections
+    if(is_broken_conn(e)){
+        DUMP_DEBUG(e);
+        goto free;
+    }
 
     if(is_error(e)) goto fail;
 
@@ -371,6 +385,14 @@ static void citm_anon_cb(
 ){
     citm_t *citm = data;
     keydir_i *kd = NULL;
+
+    if(e.type == E_CANCELED) goto free;
+
+    // don't pollute logs with broken connections
+    if(is_broken_conn(e)){
+        DUMP_DEBUG(e);
+        goto free;
+    }
 
     if(is_error(e)) goto fail;
 
@@ -425,9 +447,9 @@ static void citm_anon_cb(
 
 fail:
     DUMP(e);
-    DROP_VAR(&e);
 
 free:
+    DROP_VAR(&e);
     citm_close_server(citm, s);
     citm_close_client(citm, c);
     if(kd) kd->free(kd);
@@ -447,6 +469,14 @@ static void citm_io_pair_cb(
     imap_server_t *s = NULL;
 
     citm_t *citm = data;
+
+    if(e.type == E_CANCELED) goto free;
+
+    // don't pollute logs with broken connections
+    if(is_broken_conn(e)){
+        DUMP_DEBUG(e);
+        goto free;
+    }
 
     if(is_error(e)) goto fail;
 

@@ -413,6 +413,14 @@ static void uvam_done_cb(void *data, derr_t err){
     uvam->done_cb(uvam->cb_data, err);
 }
 
+static void uvam_status_cb(
+    void *data, status_maj_e maj, status_min_e min, dstr_t fulldomain
+){
+    // blindly pass this forward with the right cb_data
+    uv_acme_manager_t *uvam = data;
+    uvam->status_cb(uvam->cb_data, maj, min, fulldomain);
+}
+
 static void uvam_update_cb(void *data, SSL_CTX *ctx){
     // blindly pass this forward with the right cb_data
     uv_acme_manager_t *uvam = data;
@@ -429,14 +437,17 @@ derr_t uv_acme_manager_init(
     char *acme_verify_name,
     dstr_t sm_baseurl,
     SSL_CTX *client_ctx,
+    acme_manager_status_cb status_cb,
     acme_manager_update_cb update_cb,
     acme_manager_done_cb done_cb,
     void *cb_data,
-    SSL_CTX **initial_ctx
+    // initial status return values
+    SSL_CTX **ctx,
+    status_maj_e *maj,
+    status_min_e *min,
+    dstr_t *fulldomain
 ){
     derr_t e = E_OK;
-
-    *initial_ctx = NULL;
 
     *uvam = (uv_acme_manager_t){
         .iface = (acme_manager_i){
@@ -461,6 +472,7 @@ derr_t uv_acme_manager_init(
         },
         .loop = loop,
         .scheduler = &scheduler->iface,
+        .status_cb = status_cb,
         .update_cb = update_cb,
         .done_cb = done_cb,
         .cb_data = cb_data,
@@ -497,10 +509,14 @@ derr_t uv_acme_manager_init(
             &uvam->am,
             &uvam->iface,
             acme_dir,
+            uvam_status_cb,
             uvam_update_cb,
             uvam_done_cb,
             uvam, // cb_data
-            initial_ctx
+            ctx,
+            maj,
+            min,
+            fulldomain
         ),
     fail);
     schedule(uvam);
@@ -512,7 +528,17 @@ derr_t uv_acme_manager_init(
 fail:
     api_client_free(&uvam->apic);
     duv_timer_close(&uvam->timer_unprepare, timer_close_after_fail_i);
+    *ctx = NULL;
+    *maj = 0;
+    *min = 0;
+    *fulldomain = (dstr_t){0};
     return e;
+}
+
+void uv_acme_manager_check(uv_acme_manager_t *uvam){
+    if(!uvam->started || uvam->uv_acme_manager_closed) return;
+    am_check(&uvam->am);
+    schedule(uvam);
 }
 
 void uv_acme_manager_close(uv_acme_manager_t *uvam){

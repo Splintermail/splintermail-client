@@ -401,6 +401,7 @@ static void onthread_cancel(uv_citm_t *uv_citm){
     }
     uv_citm->nlisteners = 0;
     if(uv_citm->uvam) uv_acme_manager_close(uv_citm->uvam);
+    status_server_close(&uv_citm->ss);
     // close the asyncs too
     if(uv_citm->async_cancel.data){
         duv_async_close(&uv_citm->async_cancel, noop_close_cb);
@@ -464,6 +465,13 @@ void citm_stop_service(void){
     _stop_citm();
 }
 
+static void am_status_cb(
+    void *data, status_maj_e maj, status_min_e min, dstr_t fulldomain
+){
+    // acme manager has updated its status, let the status_server know
+    uv_citm_t *uv_citm = data;
+    status_server_update(&uv_citm->ss, maj, min, fulldomain);
+}
 
 // this function made linkable, only for testing
 void uv_citm_update_cb(void *data, SSL_CTX *ctx);
@@ -492,6 +500,20 @@ static void am_done_cb(void *data, derr_t err){
     onthread_cancel(uv_citm);
 }
 
+static void ss_check_cb(void *data){
+    // the status server was told to check, we pass that to the acme_manager
+    uv_citm_t *uv_citm = data;
+    if(uv_citm->uvam) uv_acme_manager_check(uv_citm->uvam);
+}
+
+static void ss_done_cb(void *data, derr_t err){
+    // status server crashed, or we canceled it
+    uv_citm_t *uv_citm = data;
+    if(err.type == E_CANCELED) DROP_VAR(&err);
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&uv_citm->e, &err);
+    onthread_cancel(uv_citm);
+}
+
 derr_t uv_citm(
     const addrspec_t *lspecs,
     size_t nlspecs,
@@ -501,6 +523,7 @@ derr_t uv_citm(
     dstr_t acme_dirurl,
     char *acme_verify_name,  // may be "pebble" in some test scenarios
     dstr_t sm_baseurl,
+    string_builder_t sockpath,
     SSL_CTX *client_ctx,
     string_builder_t sm_dir,
     // function pointers, mainly for instrumenting tests:
@@ -586,6 +609,9 @@ derr_t uv_citm(
         ),
     cu);
 
+    status_maj_e maj = STATUS_MAJ_NO_TLS;
+    status_min_e min = STATUS_MIN_NONE;
+    dstr_t fulldomain = {0};
     if(use_acme){
         // startup the acme engine, which may load an existing cert
         PROP_GO(&e,
@@ -597,10 +623,14 @@ derr_t uv_citm(
                 acme_verify_name,
                 sm_baseurl,
                 client_ctx,
+                am_status_cb,
                 uv_citm_update_cb,
                 am_done_cb,
                 &uv_citm,
-                &server_ctx
+                &server_ctx,
+                &maj,
+                &min,
+                &fulldomain
             ),
         cu);
         uv_citm.uvam = &uvam;
@@ -609,6 +639,7 @@ derr_t uv_citm(
         ssl_context_t ctx;
         PROP_GO(&e, ssl_context_new_server(&ctx, cert, key), cu);
         server_ctx = ctx.ctx;
+        maj = STATUS_MAJ_MANUAL_CERT;
     }
 
     // initialize all the listeners
@@ -634,6 +665,22 @@ derr_t uv_citm(
         }
     }
 
+    PROP_GO(&e,
+        status_server_init(
+            &uv_citm.ss,
+            &uv_citm.loop,
+            &uv_citm.scheduler.iface,
+            sockpath,
+            maj,
+            min,
+            fulldomain,
+            ss_check_cb,
+            ss_done_cb,
+            &uv_citm
+        ),
+    cu);
+    LOG_DEBUG("listening on %x\n", FSB(sockpath));
+
     // install signal handlers
     global_uv_citm = &uv_citm;
     signal(SIGINT, handle_sigint);
@@ -655,6 +702,8 @@ derr_t uv_citm(
     PROP_GO(&e, duv_run(&uv_citm.loop), cu);
 
 cu:
+    status_server_close(&uv_citm.ss);
+
     uv_acme_manager_close(&uvam);
 
     // cleanup all the listeners

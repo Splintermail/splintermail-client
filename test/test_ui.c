@@ -9,6 +9,16 @@
 
 #define SM "splintermail"
 
+#ifdef _WIN32
+// windows
+static char *default_status_sock = "\\\\.\\pipe\\splintermail-citm";
+static char *default_sm_dir = "C:/ProgramData/splintermail";
+#else
+// unix
+static char *default_status_sock = "/var/run/splintermail/citm.sock";
+static char *default_sm_dir = "/var/lib/splintermail";
+#endif
+
 // read from our process's dup'd stdout asynchronously:
 static dthread_t ar_thread;
 static dstr_t ar_buffer;
@@ -294,7 +304,8 @@ static derr_t run_all_cases(char *tmpconf){
                 .key = NULL,
                 .cert = NULL,
                 .remote = "tls://splintermail.com:993",
-                .sm_dir = "splintermail",
+                .status_sock = default_status_sock,
+                .sm_dir = default_sm_dir,
                 .to_return = E_OK,
             },
         };
@@ -367,6 +378,14 @@ static derr_t run_all_cases(char *tmpconf){
         test_case.citm_args.cert = "some_cert";
         test_case.argv = (char*[]){
             SM, "citm", "--key", "some_key", "--cert", "some_cert", NULL
+        };
+        PROP(&e, run_test_case(test_case) );
+
+        test_case = base_case;
+        test_case.test_name = "citm customized status sock";
+        test_case.citm_args.status_sock = "customsock";
+        test_case.argv = (char*[]){
+            SM, "citm", "--socket", "customsock", NULL
         };
         PROP(&e, run_test_case(test_case) );
     }

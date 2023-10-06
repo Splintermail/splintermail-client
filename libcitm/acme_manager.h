@@ -34,6 +34,10 @@ derr_t keygen_or_load(string_builder_t path, EVP_PKEY **out);
 struct acme_manager_i;
 typedef struct acme_manager_i acme_manager_i;
 
+// acme manager still owns fulldomain
+typedef void (*acme_manager_status_cb)(
+    void*, status_maj_e maj, status_min_e min, dstr_t fulldomain
+);
 // callback owns the ctx
 typedef void (*acme_manager_update_cb)(void*, SSL_CTX*);
 typedef void (*acme_manager_done_cb)(void*, derr_t);
@@ -82,6 +86,7 @@ typedef struct {
 typedef struct {
     acme_manager_i *ami;
     string_builder_t acme_dir;
+    acme_manager_status_cb status_cb;
     acme_manager_update_cb update_cb;
     acme_manager_done_cb done_cb;
     void *cb_data;
@@ -89,7 +94,9 @@ typedef struct {
     acme_account_t acct;
     installation_t inst;
 
-    dstr_t fulldomain; // configured after installation
+    status_maj_e maj;
+    status_min_e min;
+    dstr_t fulldomain; // defined after successfully loading installation.json
 
     // state
     derr_t e;
@@ -121,10 +128,15 @@ derr_t acme_manager_init(
     acme_manager_t *am,
     acme_manager_i *ami,
     string_builder_t acme_dir,
+    acme_manager_status_cb status_cb,
     acme_manager_update_cb update_cb,
     acme_manager_done_cb done_cb,
     void *cb_data,
-    SSL_CTX **initial_ctx
+    // initial status return values
+    SSL_CTX **ctx,
+    status_maj_e *maj,
+    status_min_e *min,
+    dstr_t *fulldomain
 );
 
 // doesn't schedule and mostly for testing.  Prefer uv_acme_manager_close().
@@ -203,6 +215,8 @@ struct acme_manager_i {
 };
 
 // event sources (in addition to the callbacks built-into the event sinks)
+
+void am_check(acme_manager_t *am);
 
 void am_prepare_done(acme_manager_t *am, derr_t err, json_t *json);
 void am_unprepare_done(acme_manager_t *am, derr_t err, json_t *json);

@@ -28,7 +28,8 @@ typedef struct {
     const char *key;
     const char *cert;
     char *remote;
-    const char *sm_dir;
+    char *status_sock;
+    char *sm_dir;
     derr_t to_return;
 } citm_args_t;
 extern citm_args_t* citm_args;

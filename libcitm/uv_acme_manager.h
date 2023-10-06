@@ -30,8 +30,9 @@ typedef struct {
        idempotent, we need to know if the acme_manager_t failed prior to us
        being closed; it won't be safe to call am_close() otherwise */
     acme_manager_done_cb done_cb;
-    /* that means we also need to intercept the update_cb, but only because we
-       need to inject our own cb_data */
+    /* that means we also need to intercept the status_cb and update_cb, but
+       only because we need to inject our own cb_data */
+    acme_manager_status_cb status_cb;
     acme_manager_update_cb update_cb;
     void *cb_data;
 
@@ -52,11 +53,18 @@ derr_t uv_acme_manager_init(
     char *acme_verify_name,
     dstr_t sm_baseurl,
     SSL_CTX *client_ctx,
+    acme_manager_status_cb status_cb,
     acme_manager_update_cb update_cb,
     acme_manager_done_cb done_cb,
     void *cb_data,
-    SSL_CTX **initial_ctx
+    // initial status return values
+    SSL_CTX **ctx,
+    status_maj_e *maj,
+    status_min_e *min,
+    dstr_t *fulldomain
 );
+
+void uv_acme_manager_check(uv_acme_manager_t *uvam);
 
 // will result in a call to done_cb (if init succeeded)
 void uv_acme_manager_close(uv_acme_manager_t *uvam);

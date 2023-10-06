@@ -37,6 +37,7 @@ static derr_t fake_uv_citm(
     dstr_t acme_dirurl,
     char *acme_verify_name,  // may be "pebble" in some test scenarios
     dstr_t sm_baseurl,
+    string_builder_t status_sock,
     SSL_CTX *client_ctx,
     string_builder_t sm_dir,
     // function pointers, mainly for instrumenting tests:
@@ -55,11 +56,8 @@ static derr_t fake_uv_citm(
     EXPECT_S(&e, "key", strend(key, citm_args->key), citm_args->key);
     EXPECT_S(&e, "cert", strend(cert, citm_args->cert), citm_args->cert);
     EXPECT_ADDR(&e, "remote", remote, citm_args->remote);
-    DSTR_VAR(buf, 128);
-    PROP(&e, FMT(&buf, "%x", FSB(sm_dir)) );
-    EXPECT_S(&e,
-        "sm_dir", strend(buf.data, citm_args->sm_dir), citm_args->sm_dir
-    );
+    EXPECT_SBS(&e, "status_sock", status_sock, citm_args->status_sock);
+    EXPECT_SBS(&e, "sm_dir", sm_dir, citm_args->sm_dir);
     EXPECT_B(&e, "citm_called", citm_called, false);
 
     // hardcoded args; never configured by the cli

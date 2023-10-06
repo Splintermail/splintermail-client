@@ -13,6 +13,9 @@ sm_lib(
     xkey.c
     responses.c
     citm.c
+    status.c
+    status_server.c
+    status_client.c
     stub.c
     acme_manager.c
     uv_acme_manager.c
@@ -32,3 +35,5 @@ sm_test(test_preuser.c DEPS fakestream fake_citm)
 sm_test(test_keydir.c DEPS fakestream fake_citm test_utils)
 sm_test(test_acme_manager.c DEPS libcitm test_utils)
 sm_test(test_cert_swap.c DEPS libcitm test_utils certs bioconn)
+sm_test(test_status_server.c DEPS libcitm test_utils)
+sm_test(test_status_client.c DEPS libcitm test_utils)

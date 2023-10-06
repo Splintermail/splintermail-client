@@ -272,6 +272,13 @@ static bool in_backoff(acme_manager_t *am){
     return ami->now(ami) < am->backoff_until;
 }
 
+void am_check(acme_manager_t *am){
+    // ignore if already configured
+    if(am->configured) return;
+    // clear the backoff timer and run again
+    am->backoff_until = 0;
+}
+
 void am_prepare_done(acme_manager_t *am, derr_t err, json_t *json){
     new_cert_t *nc = &am->new_cert;
 
@@ -633,7 +640,6 @@ static derr_t advance_new_cert(acme_manager_t *am, bool *new_cert_ready){
         if(!nc->checked_existing_orders){
             advance_check_existing_orders(am, &ok);
             if(!ok) return e;
-            nc->checked_existing_orders = true;
             // jump ahead to pick up where the last attempt left off
             if(nc->best == ACME_PENDING){
                 // skip to get_authz
@@ -645,7 +651,11 @@ static derr_t advance_new_cert(acme_manager_t *am, bool *new_cert_ready){
                 nc->prepare_done = true;
                 nc->challenge_done = true;
             }else if(nc->best == ACME_PROCESSING){
+                // need a key before we can finalize
+                am->min = STATUS_MIN_GENERATE_KEY;
+                if(!nc->keygen_done) return e;
                 // skip to acme_finalize_from_processing
+                am->min = STATUS_MIN_FINALIZE_ORDER;
                 ami->finalize_from_processing(
                     ami, am->acct, nc->order, nc->retry_after
                 );
@@ -657,6 +667,9 @@ static derr_t advance_new_cert(acme_manager_t *am, bool *new_cert_ready){
                 nc->finalize_sent = true;
             }else if(nc->best == ACME_VALID){
                 // we had an order with status=valid
+                am->min = STATUS_MIN_GENERATE_KEY;
+                if(!nc->keygen_done) return e;
+                am->min = STATUS_MIN_FINALIZE_ORDER;
                 ami->finalize_from_valid(ami, am->acct, nc->certurl);
                 // skip steps
                 nc->new_order_done = true;
@@ -665,6 +678,7 @@ static derr_t advance_new_cert(acme_manager_t *am, bool *new_cert_ready){
                 nc->challenge_done = true;
                 nc->finalize_sent = true;
             }
+            nc->checked_existing_orders = true;
         }
         am->reloaded = true;
     }
@@ -672,6 +686,7 @@ static derr_t advance_new_cert(acme_manager_t *am, bool *new_cert_ready){
     // create a new order
     if(!nc->new_order_done){
         ONCE(nc->new_order_sent){
+            am->min = STATUS_MIN_CREATE_ORDER;
             ami->new_order(ami, am->acct, am->fulldomain);
         }
         return e;
@@ -679,6 +694,7 @@ static derr_t advance_new_cert(acme_manager_t *am, bool *new_cert_ready){
 
     if(!nc->get_authz_done){
         ONCE(nc->get_authz_sent){
+            am->min = STATUS_MIN_GET_AUTHZ;
             ami->get_authz(ami, am->acct, nc->authz);
         }
         if(!nc->get_authz_resp) return e;
@@ -686,6 +702,7 @@ static derr_t advance_new_cert(acme_manager_t *am, bool *new_cert_ready){
             // proceed to prepare (noop)
         }else if(nc->challenge_status == ACME_PROCESSING){
             // we already submitted the challenge, wait for it to complete
+            am->min = STATUS_MIN_COMPLETE_CHALLENGE;
             ami->challenge_finish(ami, am->acct, nc->authz, nc->retry_after);
             // skip some steps
             nc->prepare_done = true;
@@ -711,6 +728,7 @@ static derr_t advance_new_cert(acme_manager_t *am, bool *new_cert_ready){
     if(!nc->prepare_done){
         ONCE(nc->prepare_sent){
             PROP_GO(&e, pre_apic_call(am), cu);
+            am->min = STATUS_MIN_PREPARE_CHALLENGE;
             ami->prepare(ami, am->inst.token, &am->json, nc->proof);
             // clear our unprepare status
             am->unprepare_sent = false;
@@ -722,13 +740,17 @@ static derr_t advance_new_cert(acme_manager_t *am, bool *new_cert_ready){
 
     if(!nc->challenge_done){
         ONCE(nc->challenge_sent){
+            am->min = STATUS_MIN_COMPLETE_CHALLENGE;
             ami->challenge(ami, am->acct, nc->authz, nc->challenge);
         }
         return e;
     }
 
     // wait for the keygen thread to finish; it will populate nc->pkey
-    if(!nc->keygen_done) return e;
+    if(!nc->keygen_done){
+        am->min = STATUS_MIN_GENERATE_KEY;
+        return e;
+    }
 
     /* poll for order status=ready?  I want to believe the acme server is smart
        enough that it is always in the right state; I'll omit that wait until
@@ -736,6 +758,7 @@ static derr_t advance_new_cert(acme_manager_t *am, bool *new_cert_ready){
 
     if(!nc->finalize_done){
         ONCE(nc->finalize_sent){
+            am->min = STATUS_MIN_FINALIZE_ORDER;
             ami->finalize(
                 ami,
                 am->acct,
@@ -781,7 +804,7 @@ static derr_t load_installation(acme_manager_t *am, bool *ok){
 
     // check if the file exists
     bool exists;
-    PROP(&e, exists_path(&inst, &exists) );
+    PROP(&e, exists_path2(inst, &exists) );
     if(!exists) return e;
 
     // read the file
@@ -843,44 +866,48 @@ static derr_t load_account(acme_manager_t *am, bool *ok){
     return e;
 }
 
-void am_advance_state(acme_manager_t *am){
-    acme_manager_i *ami = am->ami;
-
-    if(is_error(am->e)) goto cu;
-
+static derr_t am_advance_good(acme_manager_t *am){
     derr_t e = E_OK;
+
+    acme_manager_i *ami = am->ami;
 
     // waiting to be configured still?
     if(!am->configured){
-        if(in_backoff(am)) return;
+        if(in_backoff(am)) return e;
         bool ok;
-        PROP_GO(&e, load_installation(am, &ok), fail);
+        PROP(&e, load_installation(am, &ok) );
         if(!ok){
             // still not configured, check again later
             backoff(am, 5);
-            return;
+            return e;
         }
         LOG_INFO("installation is now configured\n");
         am->configured = true;
         am->want_cert = true;
+        am->maj = STATUS_MAJ_TLS_FIRST;
+        am->min = STATUS_MIN_CREATE_ACCOUNT;
     }
 
     // creating a new account?
     if(!am->accounted){
         // are we in retry backoff?
-        if(in_backoff(am)) return;
+        if(in_backoff(am)) return e;
         // retry forever; should only need to finish once per installation
         ONCE(am->new_acct_sent){
             // generate or load a key from file
             key_i *key;
-            PROP_GO(&e, jwk_gen_or_load(am_jwk(am), &key), fail);
+            PROP(&e, jwk_gen_or_load(am_jwk(am), &key) );
             // use the key to request an account
             ami->new_account(ami, &key, am->inst.email);
         }
-        if(!am->new_acct_done) return;
+        if(!am->new_acct_done) return e;
         // persist to file
-        PROP_GO(&e, acme_account_to_path(am->acct, am_acct(am)), fail);
+        PROP(&e, acme_account_to_path(am->acct, am_acct(am)) );
         am->accounted = true;
+        // since we just created a new account, we can skip reload logic
+        am->reloaded = true;
+        am->maj = STATUS_MAJ_TLS_FIRST;
+        am->min = STATUS_MIN_CREATE_ORDER;
     }
 
     // did the cert just expire?
@@ -888,24 +915,36 @@ void am_advance_state(acme_manager_t *am){
         // cert just expired
         am->update_cb(am->cb_data, NULL);
         am->cert_active = false;
-        am->want_cert = true;
+        /* only configure am->min if somehow we arrived here but weren't
+           already wanting the cert */
+        if(!am->want_cert){
+            am->want_cert = true;
+            if(am->reloaded){
+                am->min = STATUS_MIN_CREATE_ORDER;
+            }else{
+                am->min = STATUS_MIN_RELOAD;
+            }
+        }
+        am->maj = STATUS_MAJ_TLS_EXPIRED;
         // did the caller close us?
-        if(is_error(am->e)) goto cu;
+        if(is_error(am->e)) return (derr_t){ .type = E_CANCELED };
     }
 
     // is it now time to renew?
     if(!am->want_cert && ami->now(ami) >= am->renewal){
         am->want_cert = true;
         ami->deadline_cert(ami, am->expiry);
+        am->maj = STATUS_MAJ_TLS_RENEW;
+        if(!am->reloaded) am->min = STATUS_MIN_RELOAD;
     }
 
     // do we need a new cert?
     if(am->want_cert){
         // wait for an in-flight unprepare to finish
-        if(am->unprepare_sent && !am->unprepare_done) return;
+        if(am->unprepare_sent && !am->unprepare_done) return e;
 
         // are we backing off still?
-        if(in_backoff(am)) return;
+        if(in_backoff(am)) return e;
 
         /* advance_new_cert() does not do any retries on its own.
 
@@ -947,32 +986,32 @@ void am_advance_state(acme_manager_t *am){
             LOG_ERROR("trying again in %x %x...\n", FI(display), FS(unit));
             // we'll re-enter the reload logic, since we had a failure
             am->reloaded = false;
-            return;
-        }else PROP_VAR_GO(&e, &e2, fail);
-        if(!ok) return;
+            am->min = STATUS_MIN_RELOAD;
+            return e;
+        }else PROP_VAR(&e, &e2);
+        if(!ok) return e;
 
         LOG_ERROR("obtained new ACME cert\n");
         am->want_cert = false;
         am->failures = 0;
+        am->maj = STATUS_MAJ_TLS_GOOD;
+        am->min = STATUS_MIN_NONE;
 
         // report the new certificate
         ssl_context_t ctx;
-        PROP_GO(&e,
-            ssl_context_new_server_path(&ctx, am_cert(am), am_key(am)),
-        fail);
+        PROP(&e, ssl_context_new_server_path(&ctx, am_cert(am), am_key(am)) );
         am->update_cb(am->cb_data, ctx.ctx);
         am->cert_active = true;
         // did the caller close us?
-        if(is_error(am->e)) goto cu;
+        if(is_error(am->e)) return (derr_t){ .type = E_CANCELED };
 
         // configure our timer to wake us up when the cert expires
-        PROP_GO(&e, check_expiry(am_cert(am), &am->expiry), fail);
+        PROP(&e, check_expiry(am_cert(am), &am->expiry));
         am->renewal = get_renewal(am->expiry);
         if(ami->now(ami) >= am->renewal){
-            ORIG_GO(&e,
+            ORIG(&e,
                 E_INTERNAL,
-                "have fresh cert with expiry time in < 15 days",
-                fail
+                "have fresh cert with expiry time in < 15 days"
             );
         }
         ami->deadline_cert(ami, am->renewal);
@@ -980,18 +1019,41 @@ void am_advance_state(acme_manager_t *am){
 
     // have we cleaned up after the last prepare?  (even from an old process?)
     if(!am->unprepare_done){
-        if(ami->now(ami) < am->unprepare_after) return;
+        if(ami->now(ami) < am->unprepare_after) return e;
         ONCE(am->unprepare_sent){
-            PROP_GO(&e, pre_apic_call(am), fail);
+            PROP(&e, pre_apic_call(am) );
             ami->unprepare(ami, am->inst.token, &am->json);
         }
-        return;
+        return e;
+    }
+
+    return e;
+}
+
+void am_advance_state(acme_manager_t *am){
+    acme_manager_i *ami = am->ami;
+
+    if(is_error(am->e)) goto cu;
+
+    derr_t e = E_OK;
+
+    // remember status before advancing
+    status_maj_e oldmaj = am->maj;
+    status_min_e oldmin = am->min;
+
+    PROP_GO(&e, am_advance_good(am), fail);
+
+    // report differences in status after advancing
+    if(oldmaj != am->maj || oldmin != am->min){
+        am->status_cb(am->cb_data, am->maj, am->min, am->fulldomain);
+        // did we get canceled?
+        if(is_error(am->e)) goto cu;
     }
 
     return;
 
 fail:
-    TRACE_PROP_VAR(&am->e, &e);
+    MULTIPROP_VAR_GO(&am->e, cu, &e);
 
 cu:
     // close our resources and cancel inflight requests
@@ -1016,16 +1078,25 @@ derr_t acme_manager_init(
     acme_manager_t *am,
     acme_manager_i *ami,
     string_builder_t acme_dir,
+    acme_manager_status_cb status_cb,
     acme_manager_update_cb update_cb,
     acme_manager_done_cb done_cb,
     void *cb_data,
-    SSL_CTX **initial_ctx
+    // initial status return values
+    SSL_CTX **ctx,
+    status_maj_e *maj,
+    status_min_e *min,
+    dstr_t *fulldomain
 ){
     derr_t e = E_OK;
+
+    *ctx = NULL;
+    *fulldomain = (dstr_t){0};
 
     *am = (acme_manager_t){
         .ami = ami,
         .acme_dir = acme_dir,
+        .status_cb = status_cb,
         .update_cb = update_cb,
         .done_cb = done_cb,
         .cb_data = cb_data,
@@ -1038,15 +1109,20 @@ derr_t acme_manager_init(
         // configure for filesystem polling
         LOG_INFO("installation is not configured, cannot generate tls cert\n");
         backoff(am, 5);
-        return e;
+        am->maj = STATUS_MAJ_NEED_CONF;
+        am->min = STATUS_MIN_NONE;
+        goto done;
     }
 
     am->configured = true;
+    *fulldomain = am->fulldomain;
 
     // do we have an acme account yet?
     PROP_GO(&e, load_account(am, &ok), fail);
     if(!ok){
-        return e;
+        am->maj = STATUS_MAJ_TLS_FIRST;
+        am->min = STATUS_MIN_CREATE_ACCOUNT;
+        goto done;
     }
 
     am->accounted = true;
@@ -1057,42 +1133,64 @@ derr_t acme_manager_init(
     // do we have cert and key yet?
     string_builder_t cert = am_cert(am);
     string_builder_t key = am_key(am);
-    PROP_GO(&e, exists_path(&cert, &ok), fail);
-    if(!ok) goto want_cert;
-    PROP_GO(&e, exists_path(&key, &ok), fail);
-    if(!ok) goto want_cert;
+    bool cert_ok, key_ok;
+    PROP_GO(&e, exists_path(&cert, &cert_ok), fail);
+    PROP_GO(&e, exists_path(&key, &key_ok), fail);
+    if(!cert_ok || !key_ok){
+        am->maj = STATUS_MAJ_TLS_FIRST;
+        am->min = STATUS_MIN_RELOAD;
+        am->want_cert = true;
+        goto done;
+    }
 
     // check the expiration on the cert
     bool ours;
     PROP_GO(&e, check_cert(cert, &am->expiry, am->fulldomain, &ours), fail);
-    if(!ours) goto want_cert;
+    if(!ours){
+        am->maj = STATUS_MAJ_TLS_FIRST;
+        am->min = STATUS_MIN_RELOAD;
+        am->want_cert = true;
+        goto done;
+    }
     am->renewal = get_renewal(am->expiry);
     // certificate already expired?
-    if(ami->now(ami) >= am->expiry) goto want_cert;
+    if(ami->now(ami) >= am->expiry){
+        am->maj = STATUS_MAJ_TLS_EXPIRED;
+        am->min = STATUS_MIN_RELOAD;
+        am->want_cert = true;
+        goto done;
+    }
 
     // certificate is valid, load initial cert and key
-    ssl_context_t ctx;
-    PROP_GO(&e, ssl_context_new_server_path(&ctx, cert, key), fail);
-    *initial_ctx = ctx.ctx;
+    ssl_context_t ssl_ctx;
+    PROP_GO(&e, ssl_context_new_server_path(&ssl_ctx, cert, key), fail);
+    *ctx = ssl_ctx.ctx;
     am->cert_active = true;
 
     // is our cert due for renewal?
     if(ami->now(ami) >= am->renewal){
         // start renewal process, as well as expiry timer
         ami->deadline_cert(ami, am->expiry);
-        goto want_cert;
+        am->maj = STATUS_MAJ_TLS_RENEW;
+        am->min = STATUS_MIN_RELOAD;
+        am->want_cert = true;
+        goto done;
     }
 
     // configure our timer to wake us up when we should renew
     ami->deadline_cert(ami, am->renewal);
+    am->maj = STATUS_MAJ_TLS_GOOD;
+    am->min = STATUS_MIN_NONE;
 
-    return e;
-
-want_cert:
-    am->want_cert = true;
+done:
+    *maj = am->maj;
+    *min = am->min;
     return e;
 
 fail:
+    *maj = 0;
+    *min = 0;
+    *fulldomain = (dstr_t){0};
     am_free(am);
     return e;
 }

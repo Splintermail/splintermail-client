@@ -9,11 +9,13 @@
 #include <signal.h>
 #include <errno.h>
 
-// default splintermail directory
+// os-specific defaults
 #ifndef _WIN32
 DSTR_STATIC(os_default_sm_dir, "/var/lib/splintermail");
+DSTR_STATIC(os_default_sock, "/var/run/splintermail/citm.sock");
 #else
 DSTR_STATIC(os_default_sm_dir, "C:/ProgramData/splintermail");
+DSTR_STATIC(os_default_sock, "\\\\.\\pipe\\splintermail-citm");
 #endif
 
 // pass all calls to the real thing
@@ -578,7 +580,9 @@ static derr_t citm_main(
     const opt_spec_t o_key,
     listener_list_t listeners,
     const string_builder_t sm_dir_path,
+    const string_builder_t status_sock,
     const dstr_t baseurl,
+    const dstr_t acmeurl,
     int *retval
 ){
     derr_t e = E_OK;
@@ -627,9 +631,10 @@ static derr_t citm_main(
             remote,
             key.data,
             cert.data,
-            DSTR_LIT(LETSENCRYPT),  // acme_dirurl
+            acmeurl,
             NULL,  // acme_verify_name
             baseurl,  // sm_baseurl
+            status_sock,
             NULL,  // client_ctx
             sm_dir_path,
             NULL, // indicate_ready
@@ -1053,12 +1058,9 @@ static void fdump_opt(opt_spec_t *spec, FILE *f){
 int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
     dstr_t config_text = {0};
     dstr_t logfile_path = {0};
-    dstr_t local_host = {0};
-    dstr_t local_svc = {0};
-    dstr_t sm_dir = {0};
 
     derr_t e = E_OK;
-    int retval = 0;
+    int retval = 98;
     // ignore SIGPIPE, required to work with OpenSSL
     // see https://mta.openssl.org/pipermail/openssl-users/2017-May/005776.html
     // (but SIGPIPE doesnt exist in windows)
@@ -1120,20 +1122,20 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
     // set up the main parse
     // common options
     opt_spec_t o_debug      = {'D',  "debug",      false};
-    // citm options
+    opt_spec_t o_sock       = {'s',  "socket",     true};
     opt_spec_t o_sm_dir     = {'d',  "splintermail-dir", true};
     opt_spec_t o_logfile    = {'l',  "logfile",    true};
     opt_spec_t o_no_logfile = {'L',  "no-logfile", false};
     opt_spec_t o_listen     = {'\0', "listen", true, listener_cb, &listeners};
     opt_spec_t o_cert       = {'\0', "cert",       true};
     opt_spec_t o_key        = {'\0', "key",        true};
-    // options specific to the api_client
     opt_spec_t o_user       = {'u',  "user",       true};
     opt_spec_t o_account_dir= {'a',  "account-dir",true};
 
     opt_spec_t* spec[] = {
     //  option               citm   api_client
         &o_debug,         // y      y
+        &o_sock,          // y      n
         &o_sm_dir,        // y      n
         &o_logfile,       // y      n
         &o_no_logfile,    // y      n
@@ -1215,6 +1217,7 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
     if((newargc > 1 && strcmp("citm", argv[1]) == 0)){
         opt_spec_t *ok_opts[] = {
             &o_debug,
+            &o_sock,
             &o_sm_dir,
             &o_logfile,
             &o_no_logfile,
@@ -1254,15 +1257,18 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
     // always print to stderr
     logger_add_fileptr(log_level, stderr);
 
+    // --socket option
+    dstr_t socket = o_sock.found ? o_sock.val : os_default_sock;
+    string_builder_t status_sock = SBD(socket);
+
     // --splintermail-dir option
-    if(o_sm_dir.found){
-        PROP_GO(&e, FMT(&sm_dir, "%x", FD(o_sm_dir.val)), cu);
-    }else{
-        PROP_GO(&e, FMT(&sm_dir, "%x", FD(os_default_sm_dir)), cu);
-    }
+    dstr_t sm_dir = o_sm_dir.found ? o_sm_dir.val : os_default_sm_dir;
     string_builder_t sm_dir_path = SBD(sm_dir);
 
     DSTR_STATIC(baseurl, "https://splintermail.com");
+    DSTR_STATIC(acmeurl, LETSENCRYPT);
+
+    // pick a subcommand-main and run it
 
     if(windows_service || strcmp("citm", argv[1]) == 0){
         /* configure logfile here, because logfile_path will be read during the
@@ -1290,7 +1296,9 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
                 o_key,
                 listeners,
                 sm_dir_path,
+                status_sock,
                 baseurl,
+                acmeurl,
                 &retval
             ),
         cu);
@@ -1317,9 +1325,6 @@ fail:
     // free memory after DUMP, since logfile_path will be read during DUMP
     dstr_free(&config_text);
     dstr_free(&logfile_path);
-    dstr_free(&local_host);
-    dstr_free(&local_svc);
-    dstr_free(&sm_dir);
 
     return retval;
 }

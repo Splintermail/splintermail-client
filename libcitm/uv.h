@@ -29,6 +29,7 @@ struct uv_citm_t {
     size_t nlisteners;
     link_t stubs;  // stub_t->link
     uv_acme_manager_t *uvam;  // NULL if acme not in use
+    status_server_t ss;
 };
 
 derr_t uv_citm(
@@ -40,6 +41,7 @@ derr_t uv_citm(
     dstr_t acme_dirurl,
     char *acme_verify_name,  // may be "pebble" in some test scenarios
     dstr_t sm_baseurl,
+    string_builder_t sockpath,
     SSL_CTX *client_ctx,
     string_builder_t sm_dir,
     // function pointers, mainly for instrumenting tests:

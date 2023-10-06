@@ -176,6 +176,13 @@ static void *run_uv_citm(void *arg){
     dmutex_unlock(&g->mutex);
     if(g->done) goto cu;
 
+    #ifdef _WIN32
+    // windows
+    string_builder_t sockpath = SBS("\\\\.\\pipe\\splintermail-cert-swap");
+    #else
+    string_builder_t sockpath = sb_append(&g->tmp, SBS("status.sock"));
+    #endif
+
     PROP_GO(&e,
         uv_citm(
             lspecs,
@@ -186,6 +193,7 @@ static void *run_uv_citm(void *arg){
             acme_dirurl,
             NULL, // acme_verify_name
             sm_baseurl,
+            sockpath,
             NULL, // client_ctx
             g->tmp,
             globals_indicate_ready,

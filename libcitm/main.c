@@ -7,6 +7,7 @@
 DSTR_STATIC(d_listen, "insecure://[::1]:1993");
 DSTR_STATIC(d_remote, "tls://splintermail.com:993");
 DSTR_STATIC(d_sm_dir, "/tmp/sm_dir");
+DSTR_STATIC(d_socket, "/tmp/sm.sock");
 DSTR_STATIC(d_rest, "https://splintermail.com");
 
 static void print_help(FILE *f){
@@ -20,6 +21,7 @@ static void print_help(FILE *f){
         "  -k, --key ARG       (default: none)\n"
         "  -c, --cert ARG      (default: none)\n"
         "  -d, --sm-dir ARG    (default: %x)\n"
+        "  -s, --socket ARG    (default: %x)\n"
         "  -a, --acme ARG      (default: " LETSENCRYPT ")\n"
         "      --rest ARG      (default: %x)\n"
         "      --ca ARG        (deault: none)\n"
@@ -28,6 +30,7 @@ static void print_help(FILE *f){
         FD(d_listen),
         FD(d_remote),
         FD(d_sm_dir),
+        FD(d_socket),
         FD(d_rest)
     );
 }
@@ -87,6 +90,7 @@ int main(int argc, char **argv){
     opt_spec_t o_key      = {'k', "key",     true};
     opt_spec_t o_cert     = {'c', "cert",    true};
     opt_spec_t o_sm_dir   = {'d', "splintermail-dir", true};
+    opt_spec_t o_sock     = {'s', "socket",  true};
     opt_spec_t o_acme     = {'a', "acme",    true};
     opt_spec_t o_rest     = {'\0',"rest",    true};
     opt_spec_t o_ca       = {'\0',"ca",      true};
@@ -99,6 +103,7 @@ int main(int argc, char **argv){
         &o_key,
         &o_cert,
         &o_sm_dir,
+        &o_sock,
         &o_acme,
         &o_rest,
         &o_ca,
@@ -153,6 +158,8 @@ int main(int argc, char **argv){
     string_builder_t sm_dir = SBD(o_sm_dir.found ? o_sm_dir.val : d_sm_dir);
     dstr_t sm_baseurl = o_rest.found ? o_rest.val : d_rest;
 
+    string_builder_t sockpath  = SBD(o_sock.found ? o_sock.val : d_socket);
+
     PROP_GO(&e,
          uv_citm(
             listeners.specs,
@@ -163,6 +170,7 @@ int main(int argc, char **argv){
             acme_dirurl,
             acme_verify_name,
             sm_baseurl,
+            sockpath,
             ssl_ctx.ctx,
             sm_dir,
             indicate_ready,
