@@ -162,6 +162,7 @@ derr_t duv_udp_send(
 );
 derr_t duv_async_init(uv_loop_t *loop, uv_async_t *async, uv_async_cb cb);
 derr_t duv_pipe_init(uv_loop_t *loop, uv_pipe_t *pipe, int ipc);
+derr_t duv_pipe_open(uv_pipe_t *pipe, uv_file file);
 derr_t duv_pipe_bind(uv_pipe_t *pipe, const char *name);
 derr_t duv_pipe_bind_path(uv_pipe_t *pipe, string_builder_t sb);
 #ifndef _WIN32
@@ -179,6 +180,10 @@ void duv_unlock_fd(int fd);
 #endif
 derr_t duv_pipe_listen(uv_pipe_t *pipe, int backlog, uv_connection_cb cb);
 derr_t duv_pipe_accept(uv_pipe_t *pipe, uv_pipe_t *client);
+// note that uv_pipe_connect returns void; this is just for string_builder_t's
+derr_t duv_pipe_connect_path(
+    uv_connect_t *req, uv_pipe_t *pipe, string_builder_t sb, uv_connect_cb cb
+);
 derr_t duv_pipe_read_start(
     uv_pipe_t *pipe, uv_alloc_cb alloc_cb, uv_read_cb read_cb
 );

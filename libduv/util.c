@@ -281,6 +281,10 @@ derr_t duv_pipe_init(uv_loop_t *loop, uv_pipe_t *pipe, int ipc){
     UV_CALL(uv_pipe_init, loop, pipe, ipc);
 }
 
+derr_t duv_pipe_open(uv_pipe_t *pipe, uv_file file){
+    UV_CALL(uv_pipe_open, pipe, file);
+}
+
 derr_t duv_pipe_bind(uv_pipe_t *pipe, const char *name){
     UV_CALL(uv_pipe_bind, pipe, name);
 }
@@ -384,6 +388,24 @@ derr_t duv_pipe_listen(uv_pipe_t *pipe, int backlog, uv_connection_cb cb){
 
 derr_t duv_pipe_accept(uv_pipe_t *pipe, uv_pipe_t *client){
     UV_CALL(uv_accept, (uv_stream_t*)pipe, (uv_stream_t*)client);
+}
+
+// note that uv_pipe_connect returns void; this is just for string_builder_t's
+derr_t duv_pipe_connect_path(
+    uv_connect_t *req, uv_pipe_t *pipe, string_builder_t sb, uv_connect_cb cb
+){
+    derr_t e = E_OK;
+
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t *path;
+
+    PROP(&e, sb_expand(&sb, &stack, &heap, &path) );
+
+    uv_pipe_connect(req, pipe, path->data, cb);
+
+    dstr_free(&heap);
+    return e;
 }
 
 derr_t duv_pipe_read_start(
