@@ -216,6 +216,7 @@ DEF_CONTAINER_OF(_fmt_cstr_t, iface, fmt_i)
 DEF_CONTAINER_OF(_fmt_cstrn_t, iface, fmt_i)
 DEF_CONTAINER_OF(_fmt_dstr_t, iface, fmt_i)
 DEF_CONTAINER_OF(_fmt_errno_t, iface, fmt_i)
+DEF_CONTAINER_OF(_fmt_etype_t, iface, fmt_i)
 
 derr_type_t _fmt_true(const fmt_i *iface, writer_i *out){
     (void)iface;
@@ -334,6 +335,22 @@ derr_type_t _fmt_errno(const fmt_i *iface, writer_i *out){
     size_t len = strnlen(buf, sizeof(buf));
 
     return out->w->puts(out, buf, len);
+}
+
+derr_type_t _fmt_ename(const fmt_i *iface, writer_i *out){
+    derr_type_t etype = CONTAINER_OF(iface, _fmt_etype_t, iface)->etype;
+    if(!etype){
+        return out->w->puts(out, "E_NONE", 6);
+    }
+    return out->w->puts(out, etype->name->data, etype->name->len);
+}
+
+derr_type_t _fmt_emsg(const fmt_i *iface, writer_i *out){
+    derr_type_t etype = CONTAINER_OF(iface, _fmt_etype_t, iface)->etype;
+    if(!etype){
+        return out->w->puts(out, "Success", 7);
+    }
+    return out->w->puts(out, etype->msg->data, etype->msg->len);
 }
 
 

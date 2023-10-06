@@ -159,6 +159,11 @@ typedef struct {
     int err;
 } _fmt_errno_t;
 
+typedef struct {
+    fmt_i iface;
+    derr_type_t etype;
+} _fmt_etype_t;
+
 derr_type_t _fmt_true(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_false(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_int(const fmt_i *iface, writer_i *out);
@@ -174,6 +179,8 @@ derr_type_t _fmt_dstr(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_dstr_dbg(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_dstr_hex(const fmt_i *iface, writer_i *out);
 derr_type_t _fmt_errno(const fmt_i *iface, writer_i *out);
+derr_type_t _fmt_ename(const fmt_i *iface, writer_i *out);
+derr_type_t _fmt_emsg(const fmt_i *iface, writer_i *out);
 
 #define FB(b) (&(fmt_i){ (b) ? _fmt_true : _fmt_false })
 #define FI(i) (&(_fmt_int_t){ {_fmt_int}, i }.iface)
@@ -189,6 +196,8 @@ derr_type_t _fmt_errno(const fmt_i *iface, writer_i *out);
 #define FD_DBG(d) (&(_fmt_dstr_t){ {_fmt_dstr_dbg}, d }.iface)
 #define FX(d) (&(_fmt_dstr_t){ {_fmt_dstr_hex}, d }.iface)
 #define FE(e) (&(_fmt_errno_t){ {_fmt_errno}, e }.iface)
+#define FENAME(e) (&(_fmt_etype_t){ {_fmt_ename}, e }.iface)
+#define FEMSG(e) (&(_fmt_etype_t){ {_fmt_emsg}, e }.iface)
 
 // for use by other fmt extensions
 derr_type_t fmt_strn_dbg(const char *s, size_t n, writer_i *out);
