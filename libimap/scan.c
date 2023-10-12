@@ -273,7 +273,7 @@ std_mode:
         "]"                     { type = IMAP_RSQUARE; goto done; }
         "{"                     { type = IMAP_LBRACE; goto done; }
         "}"                     { type = IMAP_RBRACE; goto done; }
-        "@"                     { type = IMAP_ARUBA; goto done; }
+        "@"                     { type = IMAP_ARROBA; goto done; }
         ","                     { type = IMAP_COMMA; goto done; }
         ";"                     { type = IMAP_SEMI; goto done; }
         ":"                     { type = IMAP_COLON; goto done; }

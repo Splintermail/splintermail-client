@@ -107,7 +107,7 @@ LANGLE;
 EQ;
 RANGLE;
 QUESTION;
-ARUBA;
+ARROBA;
 LBRACKET;
 BACKSLASH;
 RBRACKET;
@@ -179,7 +179,7 @@ vchar =
 | EQ
 | RANGLE
 | QUESTION
-| ARUBA
+| ARROBA
 | LBRACKET
 | BACKSLASH
 | RBRACKET
@@ -221,7 +221,7 @@ tchar =
 # | EQ
 # | RANGLE
 # | QUESTION
-# | ARUBA
+# | ARROBA
 # | LBRACKET
 # | BACKSLASH
 # | RBRACKET
@@ -263,7 +263,7 @@ qdtext =
 | EQ
 | RANGLE
 | QUESTION
-| ARUBA
+| ARROBA
 | LBRACKET
 # | BACKSLASH
 | RBRACKET
@@ -601,7 +601,7 @@ authority:url =
     precolon_0:pre
     maybe_postcolon:post
     (
-      | ARUBA host_0:host maybe_port:port
+      | ARROBA host_0:host maybe_port:port
         # have explicit host and port
         {{ $$.user = @pre;
            $$.pass = @post;
@@ -645,7 +645,7 @@ relpath_0 = [pchar *(pchar | SLASH)];
 path_after_auth = [SLASH *(pchar | SLASH)];
 
 pchar = pchar_nocolon | COLON;
-pchar_nocolon = unreserved | pct_encoded | sub_delims | ARUBA;
+pchar_nocolon = unreserved | pct_encoded | sub_delims | ARROBA;
 
 port_0 = *DIGIT;
 
@@ -679,7 +679,7 @@ scheme_or_path:bool =
       | (ALPHA | DIGIT | PLUS | DASH | DOT)
         # still don't know for sure what it is...
 
-      | (UNDER | TILDE | pct_encoded | sub_delims_noplus | ARUBA)
+      | (UNDER | TILDE | pct_encoded | sub_delims_noplus | ARROBA)
         # it must be a path, but still no colon is allowed
         *pchar_nocolon
         %return
@@ -687,7 +687,7 @@ scheme_or_path:bool =
       # this is the only codepath where it might be a scheme
       { $$ = true; }
 
-  | (DIGIT|DASH|DOT|UNDER|TILDE|pct_encoded|sub_delims|ARUBA)
+  | (DIGIT|DASH|DOT|UNDER|TILDE|pct_encoded|sub_delims|ARROBA)
     # it must be a path, but still no colon is allowed
     *pchar_nocolon
 ;

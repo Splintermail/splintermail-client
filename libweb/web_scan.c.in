@@ -86,7 +86,7 @@ web_scanned_t web_scanner_next(web_scanner_t *s, bool hexmode){
         "="          { token = WEB_EQ; goto done; }
         ">"          { token = WEB_RANGLE; goto done; }
         "?"          { token = WEB_QUESTION; goto done; }
-        "@"          { token = WEB_ARUBA; goto done; }
+        "@"          { token = WEB_ARROBA; goto done; }
         "["          { token = WEB_LBRACKET; goto done; }
         "\\"         { token = WEB_BACKSLASH; goto done; }
         "]"          { token = WEB_RBRACKET; goto done; }

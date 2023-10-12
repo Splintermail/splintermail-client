@@ -130,7 +130,7 @@ derr_t imf_scan(
         ">"          { *type = IMF_RANGLE; goto done; }
         "["          { *type = IMF_LBRACKET; goto done; }
         "]"          { *type = IMF_RBRACKET; goto done; }
-        "@"          { *type = IMF_ARUBA; goto done; }
+        "@"          { *type = IMF_ARROBA; goto done; }
         ","          { *type = IMF_COMMA; goto done; }
         ";"          { *type = IMF_SEMI; goto done; }
         ":"          { *type = IMF_COLON; goto done; }

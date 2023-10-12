@@ -114,7 +114,7 @@ LANGLE;
 RANGLE;
 LBRACKET;
 RBRACKET;
-ARUBA;
+ARROBA;
 COMMA;
 SEMI;
 COLON;
@@ -201,7 +201,7 @@ field_name = 1*(
 | RANGLE
 | LBRACKET
 | RBRACKET
-| ARUBA
+| ARROBA
 | COMMA
 | SEMI
 # | COLON
@@ -235,7 +235,7 @@ unstruct =
 | RANGLE
 | LBRACKET
 | RBRACKET
-| ARUBA
+| ARROBA
 | COMMA
 | SEMI
 | COLON
@@ -325,7 +325,7 @@ ctext =
 | RANGLE
 | LBRACKET
 | RBRACKET
-| ARUBA
+| ARROBA
 | COMMA
 | SEMI
 | COLON
@@ -365,7 +365,7 @@ atom_base =
 # | RANGLE
 # | LBRACKET
 # | RBRACKET
-# | ARUBA
+# | ARROBA
 # | COMMA
 # | SEMI
 # | COLON
@@ -415,7 +415,7 @@ _qtext =
 | RANGLE
 | LBRACKET
 | RBRACKET
-| ARUBA
+| ARROBA
 | COMMA
 | SEMI
 | COLON
@@ -457,7 +457,7 @@ escapable =
 | RANGLE
 | LBRACKET
 | RBRACKET
-| ARUBA
+| ARROBA
 | COMMA
 | SEMI
 | COLON
@@ -578,7 +578,7 @@ dtext = 1*(
 | RANGLE
 # | LBRACKET
 # | RBRACKET
-| ARUBA
+| ARROBA
 | COMMA
 | SEMI
 | COLON
@@ -633,12 +633,12 @@ domain_xbr:dstr =
 ;
 
 # addr_spec: always use local_part_xbr (skipping spaces)
-ign_addr_spec_xbr = local_part_xbr ARUBA xbr domain_xbr;
+ign_addr_spec_xbr = local_part_xbr ARROBA xbr domain_xbr;
 addr_spec_xbr:addr = local_part_xbr:l _addr_spec_xbr!(l):a
     {{ $$ = STEAL(ie_addr_t, &$a); }}
 ;
 # _addr_spec_xbr: for when you've already parsed the local_part_or_phrase
-_addr_spec_xbr(l:dstr):addr = ARUBA xbr domain_xbr:d
+_addr_spec_xbr(l:dstr):addr = ARROBA xbr domain_xbr:d
     {{  $$ = ie_addr_new(E,
             NULL,                   // name
             STEAL(ie_dstr_t, &$l),  // mailbox
@@ -653,9 +653,9 @@ obs_route =
     # any number of leading commas
     *(COMMA xbr)
     # at least one domain
-    ARUBA xbr domain_xbr
+    ARROBA xbr domain_xbr
     # followed by more commas, possibly with more domains
-    *(COMMA xbr [ARUBA xbr domain_xbr])
+    *(COMMA xbr [ARROBA xbr domain_xbr])
     # terminating in a colon
     COLON
 ;
@@ -827,7 +827,7 @@ date_field:time = xbr date_time:x xbr EOF        {$$ = $x; };
 # - id_right is DOT-joined ATOMS again, or a no-fold domain literal ("[...]")
 #   obs-right is just domain
 msg_id:dstr =
-    LANGLE xbr local_part_xbr:l ARUBA xbr domain_xbr:d RANGLE
+    LANGLE xbr local_part_xbr:l ARROBA xbr domain_xbr:d RANGLE
     {{  $$ = ie_dstr_new2(E, DSTR_LIT("<"));
         $$ = ie_dstr_concat(E, $$, STEAL(ie_dstr_t, &$l));
         $$ = ie_dstr_append2(E, $$, DSTR_LIT("@"));
@@ -869,7 +869,7 @@ token = 1*(
 # | RANGLE
 # | LBRACKET
 # | RBRACKET
-# | ARUBA
+# | ARROBA
 # | COMMA
 # | SEMI
 # | COLON
@@ -1028,7 +1028,7 @@ uri_base = 1*(
 | RANGLE
 | LBRACKET
 | RBRACKET
-| ARUBA
+| ARROBA
 | COMMA
 | SEMI
 | COLON
