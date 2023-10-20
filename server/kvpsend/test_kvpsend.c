@@ -652,8 +652,8 @@ static derr_t test_kvpsend(void){
     EXPECT_SENDER_SEND_PKT(1, &p1_ins1);
     ACK_GO(&e, 1, p1_start, now, cu);
 
-    EXPECT_INSERT(p0_ins1, "sd-1", "ch-1");
-    EXPECT_INSERT(p1_ins1, "sd-1", "ch-1");
+    EXPECT_INSERT(p0_ins1, "sd-0", "ch-0");
+    EXPECT_INSERT(p1_ins1, "sd-0", "ch-0");
     EXPECT_OK_EXPIRY(p0_ins1, 0);
     EXPECT_OK_EXPIRY(p1_ins1, 0);
 
@@ -665,8 +665,8 @@ static derr_t test_kvpsend(void){
     EXPECT_SENDER_SEND_PKT(1, &p1_ins2);
     SEND_CB_GO(&e, 1, now, cu);
 
-    EXPECT_INSERT(p0_ins2, "sd-0", "ch-0");
-    EXPECT_INSERT(p1_ins2, "sd-0", "ch-0");
+    EXPECT_INSERT(p0_ins2, "sd-1", "ch-1");
+    EXPECT_INSERT(p1_ins2, "sd-1", "ch-1");
     EXPECT_OK_EXPIRY(p0_ins2, 0);
     EXPECT_OK_EXPIRY(p1_ins2, 0);
     xtime_t p1_ins2_send_time = now;

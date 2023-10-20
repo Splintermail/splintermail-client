@@ -151,18 +151,18 @@ static derr_t test_send_sync_points(void){
     //
     now += 100*MILLISECOND;
     result = kvpsync_send_run(&s, now);
-    EXPECT_INSERT(&e, "ack-after-start:2", "D", "ddd", 3, 0, 0);
+    EXPECT_INSERT(&e, "ack-after-start:2", "B", "bbb", 3, 0, 0);
     kvp_ack_t ack3 = ACK_FOR(result.pkt);
     //
     now += 100*MILLISECOND;
+    xtime_t ack4_deadline = now + 1*SECOND;
     result = kvpsync_send_run(&s, now);
-    EXPECT_INSERT(&e, "ack-after-start:3", "B", "bbb", 4, 0, 0);
+    EXPECT_INSERT(&e, "ack-after-start:3", "C", "---", 4, 0, 0);
     kvp_ack_t ack4 = ACK_FOR(result.pkt);
     //
     now += 100*MILLISECOND;
-    xtime_t ack5_deadline = now + 1*SECOND;
     result = kvpsync_send_run(&s, now);
-    EXPECT_INSERT(&e, "ack-after-start:4", "C", "---", 5, 0, ack2_deadline);
+    EXPECT_INSERT(&e, "ack-after-start:4", "D", "ddd", 5, 0, ack2_deadline);
     kvp_ack_t ack5 = ACK_FOR(result.pkt);
 
     // no more packets
@@ -174,7 +174,7 @@ static derr_t test_send_sync_points(void){
     now += 100*MILLISECOND;
     ADD_KEY("C", "c", &c_cb_3);
     result = kvpsync_send_run(&s, now);
-    EXPECT_DELETE(&e, "modify-after-insert:1", "C", 5, 6, 0, 0);
+    EXPECT_DELETE(&e, "modify-after-insert:1", "C", 4, 6, 0, 0);
     kvp_ack_t ack6 = ACK_FOR(result.pkt);
     //
     result = kvpsync_send_run(&s, now);
@@ -196,11 +196,11 @@ static derr_t test_send_sync_points(void){
     EXPECT_B_GO(&e, "a_cb", a_cb, true, cu);
     kvpsync_send_handle_ack(&s, ack2, now);
     kvpsync_send_handle_ack(&s, ack3, now);
-    EXPECT_B_GO(&e, "d_cb", d_cb, true, cu);
-    kvpsync_send_handle_ack(&s, ack3, now);
-    kvpsync_send_handle_ack(&s, ack4, now);
     EXPECT_B_GO(&e, "b_cb", b_cb, true, cu);
-    kvpsync_send_handle_ack(&s, ack4, now);
+    kvpsync_send_handle_ack(&s, ack3, now);
+    kvpsync_send_handle_ack(&s, ack5, now);
+    EXPECT_B_GO(&e, "d_cb", d_cb, true, cu);
+    kvpsync_send_handle_ack(&s, ack5, now);
     kvpsync_send_handle_ack(&s, ack6, now);
     kvpsync_send_handle_ack(&s, ack7, now);
     EXPECT_B_GO(&e, "c_cb_3", c_cb_3, true, cu);
@@ -210,15 +210,15 @@ static derr_t test_send_sync_points(void){
     EXPECT_B_GO(&e, "c_cb_1", c_cb_1, false, cu);
     EXPECT_B_GO(&e, "c_cb_2", c_cb_2, false, cu);
     result = kvpsync_send_run(&s, now);
-    EXPECT_NO_PKT(&e, "miss-one-ack", ack5_deadline);
+    EXPECT_NO_PKT(&e, "miss-one-ack", ack4_deadline);
 
     // the final ack exposes the flush, and finally gives an ok_expiry
     now += 100*MILLISECOND;
     xtime_t ok_expiry = now + MIN_RESPONSE;
     xtime_t flush_deadline = now + 1*SECOND;
-    kvpsync_send_handle_ack(&s, ack5, now);
+    kvpsync_send_handle_ack(&s, ack4, now);
     EXPECT_B_GO(&e, "c_cb_2", c_cb_2, true, cu);
-    kvpsync_send_handle_ack(&s, ack5, now);
+    kvpsync_send_handle_ack(&s, ack4, now);
     // c_cb_1 is forever left behind
     EXPECT_B_GO(&e, "c_cb_1", c_cb_1, false, cu);
     result = kvpsync_send_run(&s, now);
@@ -230,7 +230,7 @@ static derr_t test_send_sync_points(void){
     xtime_t del_b_deadline = now + 1*SECOND;
     DEL_KEY("B");
     result = kvpsync_send_run(&s, now);
-    EXPECT_DELETE(&e, "del_b:1", "B", 4, 9, ok_expiry, flush_deadline);
+    EXPECT_DELETE(&e, "del_b:1", "B", 3, 9, ok_expiry, flush_deadline);
     kvp_ack_t ack9 = ACK_FOR(result.pkt);
     //
     result = kvpsync_send_run(&s, now);
@@ -279,26 +279,26 @@ static derr_t test_send_sync_points(void){
     EXPECT_INSERT(&e, "ack-after-start:1", "A", "aaa", 2, 0, 0);
     ack2 = ACK_FOR(result.pkt);
     result = kvpsync_send_run(&s, now);
-    EXPECT_INSERT(&e, "ack-after-start:2", "D", "ddd", 3, 0, 0);
+    EXPECT_INSERT(&e, "ack-after-start:2", "C", "c", 3, 0, 0);
     ack3 = ACK_FOR(result.pkt);
 
     // duplicate resync affects nothing
     kvpsync_send_handle_ack(&s, ACK(777, 0), now);
 
     result = kvpsync_send_run(&s, now);
-    EXPECT_INSERT(&e, "ack-after-start:3", "E", "eee", 4, 0, 0);
+    EXPECT_INSERT(&e, "ack-after-start:3", "D", "ddd", 4, 0, 0);
     ack4 = ACK_FOR(result.pkt);
     result = kvpsync_send_run(&s, now);
-    EXPECT_INSERT(&e, "ack-after-start:4", "C", "c", 5, 0, now + 1*SECOND);
+    EXPECT_INSERT(&e, "ack-after-start:4", "E", "eee", 5, 0, now + 1*SECOND);
     ack5 = ACK_FOR(result.pkt);
 
     kvpsync_send_handle_ack(&s, ack2, now);
     kvpsync_send_handle_ack(&s, ack3, now);
-    EXPECT_B_GO(&e, "e_cb", e_cb, false, cu);
     kvpsync_send_handle_ack(&s, ack4, now);
+    EXPECT_B_GO(&e, "e_cb", e_cb, false, cu);
+    kvpsync_send_handle_ack(&s, ack5, now);
     // e_cb is still honored after resync
     EXPECT_B_GO(&e, "e_cb", e_cb, true, cu);
-    kvpsync_send_handle_ack(&s, ack5, now);
 
 cu:
     kvpsync_send_free(&s);
