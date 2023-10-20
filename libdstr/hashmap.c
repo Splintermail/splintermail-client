@@ -3,7 +3,7 @@
 #include "libdstr.h"
 
 #define INIT_NUM_BUCKETS 32 /* power of 2 */
-#define MAX_LOAD_FACTOR 5
+#define MAX_LOAD_FACTOR 1
 
 
 /* code below came from Elliot Bach, though he cites other people.  It has been
