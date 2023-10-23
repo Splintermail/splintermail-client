@@ -131,7 +131,7 @@ LIST_FUNCTIONS(size_t)
 LIST_FUNCTIONS(bool)
 
 dstr_t dstr_from_cstr(char *cstr){
-    size_t len = strlen(cstr);
+    size_t len = cstr ? strlen(cstr) : 0;
     return (dstr_t){
         .data = cstr,
         .len = len,

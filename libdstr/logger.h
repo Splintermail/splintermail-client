@@ -69,6 +69,8 @@ static inline void DROP_VAR(derr_t *error){
 }
 
 void DUMP(derr_t e);
+// for things like broken connections which don't belong in normal logs
+void DUMP_DEBUG(derr_t e);
 
 // TRACE() and friends are best-effort append-to-derr_t.msg functions
 derr_type_t pvt_trace_quiet(

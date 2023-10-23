@@ -154,13 +154,20 @@ void pvt_do_log_fatal(const char* fstr, const fmt_i **args, size_t nargs){
     abort();
 }
 
-void DUMP(derr_t e){
-    if(is_error(e)){
-        LOG_ERROR("error trace (%x):\n", FD(error_to_dstr(e.type)));
-        if(e.msg.len > 0){
-            LOG_ERROR("%x", FD((e).msg));
-        }
+static void do_dump(derr_t e, log_level_t lvl){
+    if(!is_error(e)) return;
+    LOG_AS(lvl, "error trace (%x):\n", FD(error_to_dstr(e.type)));
+    if(e.msg.len > 0){
+        LOG_AS(lvl, "%x", FD((e).msg));
     }
+}
+
+void DUMP(derr_t e){
+    do_dump(e, LOG_LVL_ERROR);
+}
+
+void DUMP_DEBUG(derr_t e){
+    do_dump(e, LOG_LVL_DEBUG);
 }
 
 // TRACE() and friends are best-effort append-to-derr_t.msg functions
