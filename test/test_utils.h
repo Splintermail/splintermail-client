@@ -304,6 +304,25 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_D_GO(e, name, got, exp, label) \
     _EXPECT_D(e, name, got, exp, goto label)
 
+// compare a dstr_t against a cstring
+#define EXPECT_DS(e, name, got, exp) \
+    _EXPECT_D(e, name, got, dstr_from_cstr(exp), return *(e))
+#define EXPECT_DS_GO(e, name, got, exp, label) \
+    _EXPECT_D(e, name, got, dstr_from_cstr(exp), goto label)
+
+// compare a string_builder_t to a cstring
+#define _EXPECT_SBS(e, name, got, exp, action) do { \
+    const string_builder_t _got = (got); \
+    DSTR_VAR(_buf, 4096); \
+    FMT_QUIET(&_buf, "%x", FSB(_got)); \
+    _EXPECT_D(e, name, _buf, dstr_from_cstr(exp), action); \
+} while (0)
+
+#define EXPECT_SBS(e, name, got, exp) \
+    _EXPECT_SBS(e, name, got, exp, return *(e))
+#define EXPECT_SBS_GO(e, name, got, exp, label) \
+    _EXPECT_SBS(e, name, got, exp, goto label)
+
 // triple line output for mid-length strings
 #define _EXPECT_D3(e, name, got, exp, action) do { \
     const dstr_t _got = (got); \
