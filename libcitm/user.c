@@ -144,8 +144,6 @@ cu:
     return e;
 }
 
-#define ONCE(x) if(!x && (x = true))
-
 static void cread_cb(
     imap_client_t *c, imap_client_read_t *req, imap_resp_t *resp
 ){

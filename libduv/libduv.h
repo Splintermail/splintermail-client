@@ -14,5 +14,7 @@
 #include "dstr_stream.h"
 #include "reader.h"
 #include "concat.h"
+#include "advancer.h"
+#include "root.h"
 
 #endif // UVTHREAD_T

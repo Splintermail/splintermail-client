@@ -181,8 +181,6 @@ cu:
     return e;
 }
 
-#define ONCE(x) if(!x && (x = true))
-
 static void sread_cb(
     imap_server_t *s, imap_server_read_t *req, imap_cmd_t *cmd
 ){

@@ -149,8 +149,6 @@ static void cwrite_cb(imap_client_t *c, imap_client_write_t *req){
     schedule(p);
 }
 
-#define ONCE(x) if(!x && (x = true))
-
 // returns bool ok
 static bool advance_writes(preuser_t *p){
     // have we finished the last write?

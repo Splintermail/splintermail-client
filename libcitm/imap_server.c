@@ -67,8 +67,6 @@ static void await_cb(
     schedule(s);
 }
 
-#define ONCE(x) if(!x && (x = true))
-
 // try to read at least one command from the wire
 // in the starttls case, leave remaining text in read_buf
 static derr_t advance_reads(imap_server_t *s, bool starttls, bool *ok){

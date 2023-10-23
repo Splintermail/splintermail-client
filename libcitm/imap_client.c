@@ -62,8 +62,6 @@ static void await_cb(
     schedule(c);
 }
 
-#define ONCE(x) if(!x && (x = true))
-
 // try to read at least one response from the wire
 static derr_t advance_reads(imap_client_t *c, bool *ok){
     derr_t e = E_OK;

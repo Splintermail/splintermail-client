@@ -19,6 +19,8 @@ sm_lib(
     dstr_stream.c
     reader.c
     concat.c
+    advancer.c
+    root.c
     DEPS dstr
     NOASAN libs
 )

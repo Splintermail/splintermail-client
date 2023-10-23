@@ -6,8 +6,6 @@
 
 #define DAY 86400
 
-#define ONCE(x) if(!x && (x = true))
-
 // some paths
 static string_builder_t am_cert(acme_manager_t *am){
     return sb_append(&am->acme_dir, SBS("cert.pem"));

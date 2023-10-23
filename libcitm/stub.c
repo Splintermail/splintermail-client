@@ -108,8 +108,6 @@ static void shutdown_cb(stream_i *stream){
     schedule(stub);
 }
 
-#define ONCE(x) if(!x && (x = true))
-
 static void advance_state(stub_t *stub){
     stream_i *stream = stub->conn ? stub->conn->stream : NULL;
 

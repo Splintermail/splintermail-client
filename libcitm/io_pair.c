@@ -135,8 +135,6 @@ static void shutdown_cb(stream_i *stream){
     schedule(io_pair);
 }
 
-#define ONCE(x) if(!x && (x = true))
-
 // advance_state is only called after a connection attempt has failed
 static void advance_state(io_pair_t *io_pair){
     stream_i *stream = io_pair->conn_dn ? io_pair->conn_dn->stream : NULL;
