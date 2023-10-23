@@ -77,16 +77,24 @@ derr_t nonce_read_increment_write_path(string_builder_t *sb, uint64_t *nonce);
 // zeroizes and frees secret
 void installation_free0(installation_t *inst);
 
-// note that inst must be zeroized or freed before calling this
-derr_t installation_read(const char *path, installation_t *inst);
-derr_t installation_read_path(
-    const string_builder_t *sb, installation_t *inst
-);
+typedef struct {
+    jspec_t jspec;
+    installation_t *inst;
+} jspec_inst_t;
 
-derr_t installation_write(installation_t token, const char *path);
-derr_t installation_write_path(
-    installation_t inst, const string_builder_t *sb
-);
+// JINST reads an installation out of json
+/* installation_t must be zeroed before and cleaned up afterwards, even if
+   jspec_read() fails */
+derr_t jspec_inst_read(jspec_t *jspec, jctx_t *ctx);
+#define JINST(inst) (&(jspec_inst_t){{jspec_inst_read}, (inst) }.jspec)
+
+// note that inst must be zeroized or freed before calling this
+derr_t installation_read_dstr(dstr_t dstr, installation_t *inst);
+derr_t installation_read_file(const char *path, installation_t *inst);
+derr_t installation_read_path(const string_builder_t sb, installation_t *inst);
+
+derr_t installation_write(installation_t inst, const char *path);
+derr_t installation_write_path(installation_t inst, const string_builder_t sb);
 
 typedef struct {
     jspec_t jspec;
@@ -96,7 +104,7 @@ typedef struct {
 /* JAPI auto-dereferences the outer layer of json:
         {"status": "...", "content": ...} */
 derr_t jspec_api_read(jspec_t *jspec, jctx_t *ctx);
-#define JAPI(content) &((jspec_api_t){{jspec_api_read}, (content) }.jspec)
+#define JAPI(content) (&(jspec_api_t){{jspec_api_read}, (content) }.jspec)
 
 derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
                          dstr_t* arg, const dstr_t* username,

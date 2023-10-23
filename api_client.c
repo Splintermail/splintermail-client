@@ -238,15 +238,62 @@ void installation_free0(installation_t *inst){
     *inst = (installation_t){0};
 }
 
+DEF_CONTAINER_OF(jspec_inst_t, jspec, jspec_t)
+
+derr_t jspec_inst_read(jspec_t *jspec, jctx_t *ctx){
+    derr_t e = E_OK;
+
+    installation_t *inst = CONTAINER_OF(jspec, jspec_inst_t, jspec)->inst;
+
+    jspec_t *j = JOBJ(false,
+        JKEY("email", JDCPY(&inst->email)),
+        JKEY("secret", JDCPY(&inst->token.secret)),
+        JKEY("subdomain", JDCPY(&inst->subdomain)),
+        JKEY("token", JU(&inst->token.key)),
+    );
+
+    /* note: there's no point in catching errors here and free0-ing inst,
+       because there could could be errors above we can't catch, so the caller
+       must catch errors themselves */
+    PROP(&e, jctx_read(ctx, j) );
+
+    return e;
+}
+
 // note that api_token should be zeroized or freed before calling this
-derr_t installation_read(const char *path, installation_t *inst){
+derr_t installation_read_dstr(dstr_t dstr, installation_t *inst){
+    derr_t e = E_OK;
+    derr_t e2;
+
+    DSTR_VAR(jmem, 1024);
+    json_node_t jnodes[32];
+    size_t njnodes = sizeof(jnodes) / sizeof(*jnodes);
+
+    // parse json
+    json_t json;
+    json_prep_preallocated(&json, &jmem, jnodes, njnodes, true);
+    e2 = json_parse(dstr, &json);
+    // if we got a fixedsize error it is not a valid file
+    CATCH(&e2, E_FIXEDSIZE){
+        LOG_WARN("installation file contains way too much json\n");
+        RETHROW_GO(&e, &e2, E_PARAM, cu);
+    }else PROP_VAR_GO(&e, &e2, cu);
+
+    // read the json
+    PROP_GO(&e, jspec_read(JINST(inst), json.root), cu);
+
+cu:
+    dstr_zeroize(&jmem);
+    if(is_error(e)) installation_free0(inst);
+
+    return e;
+}
+
+derr_t installation_read_file(const char *path, installation_t *inst){
     derr_t e = E_OK;
     derr_t e2;
 
     DSTR_VAR(creds, 1024);
-    DSTR_VAR(jmem, 1024);
-    json_node_t jnodes[32];
-    size_t njnodes = sizeof(jnodes) / sizeof(*jnodes);
 
     // read the file into memory
     e2 = dstr_read_file(path, &creds);
@@ -256,43 +303,23 @@ derr_t installation_read(const char *path, installation_t *inst){
         RETHROW_GO(&e, &e2, E_PARAM, cu);
     }else PROP_VAR_GO(&e, &e2, cu);
 
-    // parse json
-    json_t json;
-    json_prep_preallocated(&json, &jmem, jnodes, njnodes, true);
-    e2 = json_parse(creds, &json);
-    // if we got a fixedsize error it is not a valid file
-    CATCH(&e2, E_FIXEDSIZE){
-        LOG_WARN("installation file contains way too much json\n");
-        RETHROW_GO(&e, &e2, E_PARAM, cu);
-    }else PROP_VAR_GO(&e, &e2, cu);
-
-    // read the json
-    jspec_t *jspec = JOBJ(false,
-        JKEY("email", JDCPY(&inst->email)),
-        JKEY("secret", JDCPY(&inst->token.secret)),
-        JKEY("subdomain", JDCPY(&inst->subdomain)),
-        JKEY("token", JU(&inst->token.key)),
-    );
-    PROP_GO(&e, jspec_read(jspec, json.root), cu);
+    PROP_GO(&e, installation_read_dstr(creds, inst), cu);
 
 cu:
     dstr_zeroize(&creds);
-    dstr_zeroize(&jmem);
     if(is_error(e)) installation_free0(inst);
 
     return e;
 }
 
-derr_t installation_read_path(
-    const string_builder_t *sb, installation_t *inst
-){
+derr_t installation_read_path(const string_builder_t sb, installation_t *inst){
     derr_t e = E_OK;
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
+    PROP(&e, sb_expand(&sb, &stack, &heap, &path) );
 
-    PROP_GO(&e, installation_read(path->data, inst), cu);
+    PROP_GO(&e, installation_read_file(path->data, inst), cu);
 
 cu:
     dstr_free(&heap);
@@ -338,14 +365,12 @@ cu:
     dstr_free(&tempheap);
     return e;
 }
-derr_t installation_write_path(
-    installation_t inst, const string_builder_t *sb
-){
+derr_t installation_write_path(installation_t inst, const string_builder_t sb){
     derr_t e = E_OK;
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(&e, sb_expand(sb, &stack, &heap, &path) );
+    PROP(&e, sb_expand(&sb, &stack, &heap, &path) );
 
     PROP_GO(&e, installation_write(inst, path->data), cu);
 

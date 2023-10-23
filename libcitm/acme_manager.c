@@ -787,7 +787,7 @@ static derr_t load_installation(acme_manager_t *am, bool *ok){
     if(!exists) return e;
 
     // read the file
-    derr_t e2 = installation_read_path(&inst, &am->inst);
+    derr_t e2 = installation_read_path(inst, &am->inst);
     CATCH(&e2, E_PARAM){
         LOG_ERROR(
             "corrupted installation file @%x:\n%x", FSB(inst), FD(e2.msg)
