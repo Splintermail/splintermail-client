@@ -70,7 +70,11 @@ struct test_case_t {
     char* test_name;
     char** argv;
     bool call_citm_loop;
+    bool call_status_main;
+    bool call_configure_main;
     citm_args_t citm_args;
+    status_args_t status_args;
+    configure_args_t configure_args;
     char** users;
     derr_t read_token_error;
     bool read_token_notok;
@@ -96,11 +100,15 @@ static derr_t run_test_case(struct test_case_t test){
     looked_good = true;
     reason_log.len = 0;
     citm_called = false;
+    status_called = false;
+    configure_called = false;
     register_token_called = false;
     api_token_called = false;
     api_password_called = false;
     // copy some values
     citm_args = &test.citm_args;
+    status_args = &test.status_args;
+    configure_args = &test.configure_args;
     register_token_args = &test.register_token_args;
     api_password_args = &test.api_password_args;
     api_token_args = &test.api_token_args;
@@ -171,6 +179,12 @@ static derr_t run_test_case(struct test_case_t test){
     if(test.call_citm_loop != citm_called)
         UH_OH("run_test_case citm_called exp %x but got %x\n",
               FB(test.call_citm_loop), FB(citm_called));
+    if(test.call_status_main != status_called)
+        UH_OH("run_test_case status_called exp %x but got %x\n",
+              FB(test.call_status_main), FB(status_called));
+    if(test.call_configure_main != configure_called)
+        UH_OH("run_test_case configure_called exp %x but got %x\n",
+              FB(test.call_configure_main), FB(configure_called));
     if(test.call_register_token != register_token_called)
         UH_OH("run_test_case register_token_called exp %x but got %x\n",
               FB(test.call_register_token), FB(register_token_called));
@@ -387,6 +401,70 @@ static derr_t run_all_cases(char *tmpconf){
         test_case.argv = (char*[]){
             SM, "citm", "--socket", "customsock", NULL
         };
+        PROP(&e, run_test_case(test_case) );
+    }
+
+    // test status args
+    {
+        struct test_case_t test_case, base_case = {
+            .call_status_main = true,
+            .status_args = {
+                .status_sock = default_status_sock,
+                .follow = false,
+            },
+        };
+
+        test_case = base_case;
+        test_case.test_name = "status basic test";
+        test_case.argv = (char*[]){SM, "status", NULL};
+        PROP(&e, run_test_case(test_case) );
+
+        test_case = base_case;
+        test_case.test_name = "status custom socket test";
+        test_case.status_args.status_sock = "custom";
+        test_case.argv = (char*[]){SM, "status", "--socket", "custom",  NULL};
+        PROP(&e, run_test_case(test_case) );
+
+        test_case = base_case;
+        test_case.test_name = "status follow test";
+        test_case.status_args.follow = true;
+        test_case.argv = (char*[]){SM, "status", "--follow",  NULL};
+        PROP(&e, run_test_case(test_case) );
+    }
+
+    // test configure args
+    {
+        struct test_case_t test_case, base_case = {
+            .call_configure_main = true,
+            .configure_args = {
+                .status_sock = default_status_sock,
+                .smdir = default_sm_dir,
+                .user = "",
+                .force = false,
+            },
+        };
+
+        test_case = base_case;
+        test_case.test_name = "configure basic test";
+        test_case.argv = (char*[]){SM, "configure", NULL};
+        PROP(&e, run_test_case(test_case) );
+
+        test_case = base_case;
+        test_case.test_name = "configure custom socket test";
+        test_case.configure_args.status_sock = "cstm";
+        test_case.argv = (char*[]){SM, "configure", "--socket", "cstm",  NULL};
+        PROP(&e, run_test_case(test_case) );
+
+        test_case = base_case;
+        test_case.test_name = "configure user test";
+        test_case.configure_args.user = "joe";
+        test_case.argv = (char*[]){SM, "configure", "--user", "joe", NULL};
+        PROP(&e, run_test_case(test_case) );
+
+        test_case = base_case;
+        test_case.test_name = "configure force test";
+        test_case.configure_args.force = true;
+        test_case.argv = (char*[]){SM, "configure", "--force", NULL};
         PROP(&e, run_test_case(test_case) );
     }
 

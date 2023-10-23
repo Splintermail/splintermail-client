@@ -383,37 +383,58 @@ static derr_t fake_api_token_sync(
 
 // console_input.h
 char** passwords;
-static derr_t fake_get_password(dstr_t* password){
+char** strings;
+static derr_t fake_user_prompt(dstr_t prompt, dstr_t *resp, bool hide){
     derr_t e = E_OK;
-    password->len = 0;
-    if(passwords == NULL || passwords[0] == NULL){
-        UH_OH("unexpected call to get_password\n");
-        ORIG(&e, E_INTERNAL, "unexpected call to get_password");
+    (void)prompt;
+    resp->len = 0;
+    char **xs = hide ? passwords : strings;
+    if(xs == NULL || xs[0] == NULL){
+        UH_OH("unexpected call to user_prompt\n");
+        PROP(&e, FMT(resp, "FAIL") );
+        ORIG(&e, E_INTERNAL, "unexpected call to user_prompt");
     }
     // return the first password
-    PROP(&e, FMT(password, "%x", FS(passwords[0])) );
+    PROP(&e, FMT(resp, "%x", FS(xs[0])) );
     // leftshift
-    for(char** p = passwords; *p != NULL; p++){
-        *p = *(p+1);
+    for(char **x = xs; *x != NULL; x++){
+        *x = *(x+1);
     }
     return e;
 }
 
-char** strings;
-static derr_t fake_get_string(dstr_t* input){
+// status.h
+status_args_t* status_args;
+bool status_called;
+static derr_t fake_status_main(const string_builder_t status_sock, bool follow){
     derr_t e = E_OK;
-    input->len = 0;
-    if(strings == NULL || strings[0] == NULL){
-        UH_OH("unexpected call to get_string\n");
-        PROP(&e, FMT(input, "FAIL") );
-        ORIG(&e, E_INTERNAL, "unexpected call to get_string");
-    }
-    // return the first input
-    PROP(&e, FMT(input, "%x", FS(strings[0])) );
-    // leftshift
-    for(char** i = strings; *i != NULL; i++){
-        *i = *(i+1);
-    }
+    EXPECT_SBS(&e, "status_sock", status_sock, status_args->status_sock);
+    EXPECT_B(&e, "follow", follow, status_args->follow);
+    status_called = true;
+    return e;
+}
+
+// configure.h
+configure_args_t* configure_args;
+bool configure_called;
+static derr_t fake_configure_main(
+    const dstr_t baseurl,
+    const dstr_t acmeurl,
+    const string_builder_t status_sock,
+    const string_builder_t smdir,
+    const dstr_t user,
+    bool force,
+    int *retval
+){
+    derr_t e = E_OK;
+    EXPECT_DS(&e, "baseurl", baseurl, "https://splintermail.com");
+    EXPECT_DS(&e, "acmeurl", acmeurl, LETSENCRYPT);
+    EXPECT_SBS(&e, "status_sock", status_sock, configure_args->status_sock);
+    EXPECT_SBS(&e, "smdir", smdir, configure_args->smdir);
+    EXPECT_DS(&e, "user", user, configure_args->user);
+    EXPECT_B(&e, "force", force, configure_args->force);
+    *retval = 0;
+    configure_called = true;
     return e;
 }
 
@@ -434,8 +455,9 @@ ui_i dummy_ui_harness(void){
         .register_api_token_path_sync = fake_register_api_token_path_sync,
         .api_pass_sync = fake_api_pass_sync,
         .api_token_sync = fake_api_token_sync,
-        .get_password = fake_get_password,
-        .get_string = fake_get_string,
+        .user_prompt = fake_user_prompt,
+        .status_main = fake_status_main,
+        .configure_main = fake_configure_main,
         .uv_citm = fake_uv_citm,
     };
 }

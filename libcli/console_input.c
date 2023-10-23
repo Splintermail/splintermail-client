@@ -117,8 +117,48 @@ derr_t get_string(dstr_t* out){
     if(s != buf.data){
         ORIG(&e, E_OS, "fgets failed");
     }
-    buf.len = strlen(buf.data) - 1;
+    buf.len = strnlen(buf.data, sizeof(buf));
+    buf = dstr_rstrip_chars(buf, '\r', '\n');
     PROP(&e, dstr_copy(&buf, out) );
     PROP(&e, dstr_null_terminate(out) );
     return e;
+}
+
+derr_t user_prompt(dstr_t prompt, dstr_t *resp, bool hide){
+    derr_t e = E_OK;
+
+    PROP(&e, FFMT(stderr, "%x", FD(prompt)) );
+    fflush(stderr);
+
+    if(hide){
+        PROP(&e, get_password(resp) );
+    }else{
+        PROP(&e, get_string(resp) );
+    }
+
+    return e;
+}
+
+// multi-choice prompt, will enforce a valid response
+derr_t prompt_one_of(
+    user_prompt_fn upf, dstr_t prompt, const char* opts, size_t* ret
+){
+    derr_t e = E_OK;
+
+    size_t n = strlen(opts);
+
+    DSTR_VAR(temp, 256);
+    while(true){
+        PROP(&e, upf(prompt, &temp, false) );
+        if(temp.len == 1){
+            // check if the character we got in response is a valid option
+            char c = temp.data[0];
+            for(size_t i = 0 ; i < n; i++){
+                if(c != opts[i]) continue;
+                *ret = i;
+                return e;
+            }
+        }
+        PROP(&e, FFMT(stderr, "Response must be one of [%x]\n", FS(opts)) );
+    }
 }

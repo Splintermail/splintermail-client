@@ -36,8 +36,9 @@ ui_i default_ui_harness(void){
         .register_api_token_path_sync = register_api_token_path_sync,
         .api_pass_sync = api_pass_sync,
         .api_token_sync = api_token_sync,
-        .get_password = get_password,
-        .get_string = get_string,
+        .user_prompt = user_prompt,
+        .status_main = status_main,
+        .configure_main = uv_configure_main,
         .uv_citm = uv_citm,
     };
 }
@@ -249,8 +250,8 @@ static derr_t get_os_default_account_path(
 }
 
 struct user_search_data_t {
-    int* nfolders;
     dstr_t* user;
+    int nfolders;
 };
 
 static derr_t user_search_hook(
@@ -268,56 +269,34 @@ static derr_t user_search_hook(
     DSTR_STATIC(arroba, "@");
     if(dstr_count(file, &arroba) != 1) return e;
     // store the name of the folder
-    if(*search_data->nfolders == 0){
+    if(search_data->nfolders == 0){
         PROP(&e, dstr_copy(file, search_data->user) );
     }
     // this will be an error indication if we reach this more than once
-    *search_data->nfolders += 1;
+    search_data->nfolders += 1;
     return e;
 }
 
-static derr_t user_prompt(
-    ui_i ui, const char* prompt, dstr_t* resp, bool hide
+static derr_t guess_user(
+    ui_i ui, const string_builder_t account_path, dstr_t *user
 ){
     derr_t e = E_OK;
-    PROP(&e, FFMT(stderr, prompt) );
-    fflush(stderr);
-    if(hide){
-        PROP(&e, ui.get_password(resp) );
-    }else{
-        PROP(&e, ui.get_string(resp) );
-        // ignore the newline at the end of the string
-        while(resp->len && (resp->data[resp->len-1] == '\r'
-                            || resp->data[resp->len-1] == '\n'))
-            resp->len -= 1;
+
+    DSTR_VAR(temp, 128);
+    struct user_search_data_t search_data = { &temp };
+    PROP(&e,
+        ui.for_each_file_in_dir(
+            &account_path, user_search_hook, (void*)&search_data
+        )
+    );
+    // make sure we got a valid result
+    if(search_data.nfolders == 1){
+        PROP(&e, dstr_copy(&temp, user) );
     }
+
     return e;
 }
 
-// multi-choice prompt, will enforce a valid response
-static derr_t prompt_one_of(
-    ui_i ui, const char* prompt, char* opts, size_t* ret
-){
-    derr_t e = E_OK;
-    dstr_t dopts;
-    DSTR_WRAP(dopts, opts, strlen(opts), true);
-    DSTR_VAR(temp, 256);
-    while(true){
-        PROP(&e, user_prompt(ui, prompt, &temp, false) );
-        if(temp.len == 1){
-            // check if the character we got in response is a valid option
-            LIST_VAR(dstr_t, patterns, 1);
-            LIST_APPEND(dstr_t, &patterns, temp);
-            char* pos = dstr_find(&dopts, &patterns, NULL, NULL);
-            if(pos){
-                *ret = (uintptr_t)pos - (uintptr_t)dopts.data;
-                break;
-            }
-        }
-        PROP(&e, FFMT(stderr, "Response must be one of [%x]\n", FS(opts)) );
-    }
-    return e;
-}
 
 static derr_t check_api_token_register(
     const ui_i ui,
@@ -340,11 +319,12 @@ static derr_t check_api_token_register(
         return e;
     }
     // prompt user for what to do
-    static const char* prompt =
+    DSTR_STATIC(prompt,
         "Register an API token for this device (for password-free access)?\n"
-        "[y (yes) / n (not now) / e (not ever)]:";
+        "[y (yes) / n (not now) / e (not ever)]:"
+    );
     size_t ret = 99;
-    PROP(&e, prompt_one_of(ui, prompt, "yne", &ret) );
+    PROP(&e, prompt_one_of(ui.user_prompt, prompt, "yne", &ret) );
     switch(ret){
         // "yes"
         case 0:
@@ -705,27 +685,12 @@ static derr_t api_command_main(
     }
 
     // figure out who our user is
-    bool user_found = false;
     if(o_user.found){
         PROP_GO(&e, FMT(&user, "%x", FD(o_user.val)), cu);
-        user_found = true;
     }else if(account_dir_access){
-        // verify that we can auto-decide who the user is
-        int nfolders = 0;
-        // wrap "user" and "nfolders" in struct for the "for_each_file" hook
-        struct user_search_data_t search_data = {&nfolders, &user};
-        // loop through files in the folder in a platform-independent way
-        PROP_GO(&e,
-            ui.for_each_file_in_dir(
-                &account_path, user_search_hook, (void*)&search_data
-            ),
-        cu);
-        // make sure we got a username
-        if(nfolders == 1){
-            user_found = true;
-        }
+        PROP_GO(&e, guess_user(ui, account_path, &user), cu);
     }
-    if(!user_found){
+    if(!user.len){
         fprintf(stderr, "Unable to determine user and --user not specified\n");
         fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
         *retval = 5;
@@ -836,13 +801,19 @@ static derr_t api_command_main(
         need_password = true;
         // prompt for passwords
         PROP_GO(&e,
-            user_prompt(
-                ui, "Old Splintermail.com Account Password:", &password, true
+            ui.user_prompt(
+                DSTR_LIT("Old Splintermail.com Account Password:"),
+                &password,
+                true
             ),
         cu);
-        PROP_GO(&e, user_prompt(ui, "New Password:", &new_password, true), cu);
         PROP_GO(&e,
-            user_prompt(ui, "Confirm Password:", &confirm_password, true),
+            ui.user_prompt(DSTR_LIT("New Password:"), &new_password, true),
+        cu);
+        PROP_GO(&e,
+            ui.user_prompt(
+                DSTR_LIT("Confirm Password:"), &confirm_password, true
+            ),
         cu);
         // make sure confirmation was valid
         if(dstr_cmp(&new_password, &confirm_password) != 0){
@@ -854,8 +825,8 @@ static derr_t api_command_main(
         apiarg = new_password;
     }else if(need_password){
         PROP_GO(&e,
-            user_prompt(
-                ui, "Splintermail.com Account Password:", &password, true
+            ui.user_prompt(
+                DSTR_LIT("Splintermail.com Account Password:"), &password, true
             ),
         cu);
     }
@@ -890,12 +861,18 @@ static derr_t api_command_main(
     if(need_confirmation){
         // prompt for confirmation
         DSTR_STATIC(confirmation, "I really want to do this");
-        FFMT_QUIET(stderr,
-            "`%x` needs confirmation. Type the following text:\n"
-             "%x\n", FD(command), FD(confirmation));
+        DSTR_VAR(prompt, 256);
+        PROP_GO(&e,
+            FMT(&prompt,
+                "`%x` needs confirmation. Type the following text:\n"
+                 "%x\n",
+                 FD(command),
+                 FD(confirmation)
+            ),
+        cu);
         // get confirmation
         DSTR_VAR(temp, 256);
-        PROP_GO(&e, ui.get_string(&temp), cu);
+        PROP_GO(&e, ui.user_prompt(prompt, &temp, false), cu);
         // ignore the newline at the end of the string
         while(temp.len && (temp.data[temp.len-1] == '\r'
                            || temp.data[temp.len-1] == '\n'))
@@ -1120,7 +1097,6 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
     listener_list_t listeners = { .dstrs = dstrs, .specs = specs, .cap = 8 };
 
     // set up the main parse
-    // common options
     opt_spec_t o_debug      = {'D',  "debug",      false};
     opt_spec_t o_sock       = {'s',  "socket",     true};
     opt_spec_t o_sm_dir     = {'d',  "splintermail-dir", true};
@@ -1131,19 +1107,23 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
     opt_spec_t o_key        = {'\0', "key",        true};
     opt_spec_t o_user       = {'u',  "user",       true};
     opt_spec_t o_account_dir= {'a',  "account-dir",true};
+    opt_spec_t o_follow     = {'\0', "follow",     false};
+    opt_spec_t o_force      = {'\0', "force",      false};
 
     opt_spec_t* spec[] = {
-    //  option               citm   api_client
-        &o_debug,         // y      y
-        &o_sock,          // y      n
-        &o_sm_dir,        // y      n
-        &o_logfile,       // y      n
-        &o_no_logfile,    // y      n
-        &o_listen,        // y      n
-        &o_cert,          // y      n
-        &o_key,           // y      n
-        &o_user,          // n      y
-        &o_account_dir,   // n      y
+    //  option               citm   api_client  status  configure
+        &o_debug,         // x      x           x       x
+        &o_sock,          // x      .           x       x
+        &o_sm_dir,        // x      .           .       x
+        &o_logfile,       // x      .           .       .
+        &o_no_logfile,    // x      .           .       .
+        &o_listen,        // x      .           .       .
+        &o_cert,          // x      .           .       .
+        &o_key,           // x      .           .       .
+        &o_user,          // .      x           .       x
+        &o_account_dir,   // .      x           .       .
+        &o_follow,        // .      .           x       .
+        &o_force,         // .      .           .       x
     };
     size_t speclen = sizeof(spec) / sizeof(*spec);
     int newargc;
@@ -1232,6 +1212,26 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
             retval = 1;
             goto cu;
         }
+    }else if((newargc > 1 && strcmp("status", argv[1]) == 0)){
+        opt_spec_t *ok_opts[] = { &o_debug, &o_sock, &o_follow };
+        bool failed = limit_options(
+            "splintermail status", spec, speclen, counts, ok_opts
+        );
+        if(failed){
+            retval = 1;
+            goto cu;
+        }
+    }else if((newargc > 1 && strcmp("configure", argv[1]) == 0)){
+        opt_spec_t *ok_opts[] = {
+            &o_debug, &o_sock, &o_sm_dir, &o_user, &o_force,
+        };
+        bool failed = limit_options(
+            "splintermail configure", spec, speclen, counts, ok_opts
+        );
+        if(failed){
+            retval = 1;
+            goto cu;
+        }
     }else{
         opt_spec_t *ok_opts[] = { &o_debug, &o_user, &o_account_dir };
         bool failed = limit_options(
@@ -1245,7 +1245,7 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
 
     // check for positional args
     if(!windows_service && newargc < 2){
-        fprintf(stderr, "you must specify \"citm\" or an api command\n");
+        fprintf(stderr, "missing subcommand\n");
         fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
         retval = 3;
         goto cu;
@@ -1287,7 +1287,6 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
             logger_add_filename(log_level, logfile_path.data);
         }
 
-        // citm path
         PROP_GO(&e,
             citm_main(
                 ui,
@@ -1302,6 +1301,27 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
                 &retval
             ),
         cu);
+
+    }else if(strcmp("status", argv[1]) == 0){
+
+        PROP_GO(&e, ui.status_main(status_sock, o_follow.found), cu);
+
+        retval = 0;
+
+    }else if(strcmp("configure", argv[1]) == 0){
+
+        PROP_GO(&e,
+            ui.configure_main(
+                baseurl,
+                acmeurl,
+                status_sock,
+                sm_dir_path,
+                o_user.val,
+                o_force.found,
+                &retval
+            ),
+        cu);
+
     }else{
         // api command
         PROP_GO(&e,

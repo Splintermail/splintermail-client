@@ -8,6 +8,9 @@
 
 #include "libcli/console_input.h"
 #include "libcli/ui.h"
+#include "libcli/status.h"
+#include "libcli/configure.h"
+#include "libcli/uv_configure.h"
 
 #include <version.h>
 

@@ -6,6 +6,9 @@ define_file_logname_for_source("${print_help_in}" "${print_help_out}")
 sm_lib(cli
     ui.c
     console_input.c
+    status.c
+    configure.c
+    uv_configure.c
     "${print_help_out}"
     DEPS http libcitm api_client
 )
@@ -14,3 +17,6 @@ if(WIN32)
     # additional dependencies for windows
     target_link_libraries(cli PUBLIC shlwapi)
 endif()
+
+sm_test(test_status.c DEPS cli)
+sm_test(test_configure.c DEPS cli)

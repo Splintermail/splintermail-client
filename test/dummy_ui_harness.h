@@ -85,6 +85,24 @@ extern bool api_token_called;
 extern char** passwords;
 extern char** strings;
 
+// status.h
+typedef struct {
+    char *status_sock;
+    bool follow;
+} status_args_t;
+extern status_args_t* status_args;
+extern bool status_called;
+
+// configure.h
+typedef struct {
+    char *status_sock;
+    char *smdir;
+    char *user;
+    bool force;
+} configure_args_t;
+extern configure_args_t* configure_args;
+extern bool configure_called;
+
 ui_i dummy_ui_harness(void);
 
 #endif // DUMMY_UI_HARNESS_C

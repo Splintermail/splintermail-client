@@ -55,8 +55,19 @@ typedef struct {
         json_t *json
     );
     // console_input.h
-    derr_t (*get_password)(dstr_t* password);
-    derr_t (*get_string)(dstr_t* input);
+    derr_t (*user_prompt)(dstr_t prompt, dstr_t *resp, bool hide);
+    // status.h
+    derr_t (*status_main)(const string_builder_t sockpath, bool follow);
+    // configure.h
+    derr_t (*configure_main)(
+        const dstr_t baseurl,
+        const dstr_t acmeurl,
+        const string_builder_t sock,
+        const string_builder_t smdir,
+        const dstr_t user,
+        bool force,
+        int *retval
+    );
     // libcitm.h
     derr_t (*uv_citm)(
         const addrspec_t *lspecs,

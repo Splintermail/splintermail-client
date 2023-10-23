@@ -162,7 +162,7 @@ void async_handle_close_cb(uv_handle_t *handle){
     derr_t e = E_OK; \
     int ret = func(__VA_ARGS__); \
     if(ret < 0){ \
-        ORIG(&e, uv_err_type(ret), #func ": %x\n", FUV(ret)); \
+        ORIG(&e, derr_type_from_uv_status(ret), #func ": %x", FUV(ret)); \
     }\
     return e
 
