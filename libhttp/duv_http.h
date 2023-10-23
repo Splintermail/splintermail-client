@@ -86,7 +86,8 @@ derr_t duv_http_init(
 
 // close is idempotent but only the first close_cb is respected
 // close_cb may be NULL
-void duv_http_close(duv_http_t *h, duv_http_close_cb close_cb);
+// returns true if a callback is coming (well, unless you set a NULL close_cb)
+bool duv_http_close(duv_http_t *h, duv_http_close_cb close_cb);
 
 
 ////// request //////

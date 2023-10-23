@@ -88,8 +88,9 @@ closing:
     if(h->close_cb) h->close_cb(h);
 }
 
-void duv_http_close(duv_http_t *h, duv_http_close_cb close_cb){
-    if(!h->initialized || h->closing) return;
+bool duv_http_close(duv_http_t *h, duv_http_close_cb close_cb){
+    if(!h->initialized || h->closed) return false;
+    if(h->closing) return true;
     h->closing = true;
     h->close_cb = close_cb;
 
@@ -101,6 +102,7 @@ void duv_http_close(duv_http_t *h, duv_http_close_cb close_cb){
     duv_timer_must_stop(&h->timer);
 
     http_schedule(h);
+    return true;
 }
 
 derr_t duv_http_init(
@@ -124,6 +126,14 @@ derr_t duv_http_init(
         .initialized = true,
     };
 
+    // read_buf size is effectively the longest-allowed line length
+    DSTR_WRAP_ARRAY(h->mem.host, h->mem._host);
+    PROP_GO(&e, dstr_new(&h->mem.read_buf, 8192), fail);
+    // but write_buf size does not correspond to any restrictions
+    PROP_GO(&e, dstr_new(&h->mem.write_buf, 4096), fail);
+
+    // success
+
     link_init(&h->pending);
     schedulable_prep(&h->schedulable, http_schedule_cb);
     // http_reader_t is not initialized until a req_start()
@@ -131,16 +141,11 @@ derr_t duv_http_init(
     duv_timer_must_init(loop, &h->timer);
     h->timer.data = h;
 
-    // read_buf size is effectively the longest-allowed line length
-    DSTR_WRAP_ARRAY(h->mem.host, h->mem._host);
-    PROP_GO(&e, dstr_new(&h->mem.read_buf, 8192), fail);
-    // but write_buf size does not correspond to any restrictions
-    PROP_GO(&e, dstr_new(&h->mem.write_buf, 4096), fail);
-
     return e;
 
 fail:
     duv_http_free_allocations(h);
+    *h = (duv_http_t){0};
 
     return e;
 }
