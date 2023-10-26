@@ -771,6 +771,10 @@ void json_free(json_t *json){
     if(was_preallocated){
         link_remove(&json->preallocated_text.link);
         link_remove(&json->preallocated_nodes.link);
+        // drop text from preallocated text block
+        if(json->preallocated_text.text){
+            json->preallocated_text.text->len = 0;
+        }
     }
     // free allocated else
     link_t *link;
