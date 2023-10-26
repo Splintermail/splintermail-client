@@ -56,9 +56,6 @@ test_descr = {
     '2.2':[InstallError, 'sm_dir exists, owned by service user'],
     '2.3':[InstallError, 'config file exists'],
     '2.4':[InstallError, 'existing config file not overwritten'],
-    '2.5':[InstallError, 'cert, key, and ca exist'],
-    '2.6':[InstallError, 'existing cert, key, ca, not overwritten'],
-    '2.7':[InstallError, 'ca is trusted (if cert/key/ca are new)'],
     '2.8':[InstallError, 'splintermail on path'],
     '2.9':[InstallError, 'splintermail service works'],
     '2.10':[InstallError, 'splintermail service owned by service user'],
@@ -67,27 +64,22 @@ test_descr = {
     # soft uninstall checks
     '3.0':[SoftUninstallError, 'soft uninstall succeeds'],
     '3.1':[SoftUninstallError, 'sm_dir remains'],
-    '3.2':[SoftUninstallError, 'ca still trusted'],
     '3.3':[SoftUninstallError, 'config file exists'],
     '3.4':[SoftUninstallError, 'service stopped'],
     # uninstall checks
     '4.0':[UninstallError, 'uninstall succeeds'],
     '4.1':[UninstallError, 'sm_dir deleted'],
-    '4.2':[UninstallError, 'CA removed from root chain'],
     '4.3':[UninstallError, 'unchanged config file removed'],
     '4.4':[UninstallError, 'service stopped'],
     # rageclean checks
     '5.0':[RageCleanError, 'rageclean succeeds'],
     '5.1':[RageCleanError, 'sm_dir deleted'],
-    '5.2':[RageCleanError, 'CA removed from root chain'],
     '5.3':[RageCleanError, 'changed config file removed'],
     '5.4':[RageCleanError, 'service stopped'],
     # upgrade checks
     '6.0':[UpgradeError, 'upgrade succeeds'],
     '6.1':[UpgradeError, 'unchanged config files are overwritten'],
     '6.2':[UpgradeError, 'changed config files not overwritten'],
-    '6.3':[UpgradeError, 'existing cert, key, ca, not overwritten'],
-    '6.4':[UpgradeError, 'missing cert, key, ca, repaired'],
     '6.5':[UpgradeError, 'splintermail service started'],
     '6.6':[UpgradeError, 'splintermail service works'],
 }
@@ -122,9 +114,6 @@ def testcode(c):
 
 class TestSuite():
     def __init__(self):
-        self.cert_file = os.path.join(self.sm_dir, 'citm-127.0.0.1-cert.pem')
-        self.key_file = os.path.join(self.sm_dir, 'citm-127.0.0.1-key.pem')
-        self.ca_file = os.path.join(self.sm_dir, 'citm-127.0.0.1-ca.crt')
         self.has_soft_uninstall = True
         self.has_uninstall = True
         self.has_rageclean = True
@@ -139,8 +128,6 @@ class TestSuite():
     def assert_owner(self, f, uid): raise NotImplemented('assert_owner')
     def assert_perms(self, f, perms): raise NotImplemented('assert_perms')
     def get_user_uid(self, username): raise NotImplemented('get_user_uid')
-    def assert_ca_is_trusted(self): raise NotImplemented('assert_ca_is_trusted')
-    def assert_ca_not_trusted(self): raise NotImplemented('assert_ca_not_trusted')
     def run_pkg_linter(self): raise NotImplemented('run_pkg_linter')
     def assert_service_owner(self): raise NotImplemented('assert_service_owner')
     # these are OS-specific, so they're not required
@@ -207,21 +194,15 @@ class TestSuite():
             self.assert_perms(self.sm_dir, 0o700)
         with testcode('2.3'):
             assert os.path.isfile(self.config_file), self.config_file
-        with testcode('2.5'):
-            assert os.path.isfile(self.cert_file), self.cert_file
-            assert os.path.isfile(self.key_file), self.key_file
-            assert os.path.isfile(self.ca_file), self.ca_file
         with testcode('2.8'):
             self.assert_exe_on_path(('splintermail', '--version'))
         with testcode('2.9'):
             self.start_non_automatic_service()
             self.assert_service_works()
-        with testcode('2.7'):
-            self.assert_ca_is_trusted()
         with testcode('2.10'):
             self.assert_service_owner()
         if clean != True:
-            # 2.4 2.6 2.7
+            # 2.4
             raise NotImplemented
 
     def check_soft_uninstall(self, updates=False):
@@ -231,8 +212,6 @@ class TestSuite():
             raise NotImplemented
         with testcode('3.1'):
             assert os.path.isdir(self.sm_dir), self.sm_dir
-        with testcode('3.2'):
-            self.assert_ca_is_trusted()
         with testcode('3.3'):
             assert os.path.isfile(self.config_file), self.config_file
         with testcode('3.4'):
@@ -245,8 +224,6 @@ class TestSuite():
             raise NotImplemented
         with testcode('4.1'):
             assert not os.path.isdir(self.sm_dir), self.sm_dir
-        with testcode('4.2'):
-            self.assert_ca_not_trusted()
         with testcode('4.3'):
             assert not os.path.isfile(self.config_file), self.config_file
         with testcode('4.4'):
@@ -257,8 +234,6 @@ class TestSuite():
             return
         with testcode('5.1'):
             assert not os.path.isdir(self.sm_dir), self.sm_dir
-        with testcode('5.2'):
-            self.assert_ca_not_trusted()
         with testcode('5.3'):
             assert not os.path.isfile(self.config_file), self.config_file
         with testcode('5.4'):
@@ -303,22 +278,6 @@ class WindowsTestSuite(TestSuite):
     def assert_perms(self, f, perms): pass
 
     def get_user_uid(self, username): return 'asdf'
-
-    def assert_ca_is_trusted(self):
-        cmd = ('certutil', '-store', 'Root')
-        p = Popen(cmd, stdout=PIPE)
-        out = p.stdout.read()
-        ret = p.wait()
-        assert ret == 0, ret
-        assert b'splintermail.localhost' in out, out
-
-    def assert_ca_not_trusted(self):
-        cmd = ('certutil', '-store', 'Root')
-        p = Popen(cmd, stdout=PIPE)
-        out = p.stdout.read()
-        ret = p.wait()
-        assert ret == 0, ret
-        assert b'splintermail.localhost' not in out, out
 
     def run_pkg_linter(self): pass
 
@@ -418,26 +377,6 @@ class OSXTestSuite(BSDTestSuite):
     def rageclean(self):
         self.has_rageclean = False
 
-    def assert_ca_is_trusted(self):
-        # check by trying to connect to the server, or else the certificate
-        # lifetime policy won't actually apply
-        cmd = ('security', 'verify-cert', 'https://127.0.0.1:1993')
-        cmd = ('security', 'dump-trust-settings', '-d')
-        p = Popen(cmd, stdout=PIPE)
-        out = p.stdout.read()
-        ret = p.wait()
-        assert ret == 0, ret
-        assert b"splintermail.localhost" in out, out.decode('utf8')
-
-    def assert_ca_not_trusted(self):
-        # unlike assert_ca_is_trusted, we can't assume the server is running
-        cmd = ('security', 'dump-trust-settings', '-d')
-        p = Popen(cmd, stdout=PIPE)
-        out = p.stdout.read()
-        ret = p.wait()
-        assert ret == 0, ret
-        assert b"splintermail.localhost" not in out, out.decode('utf8')
-
     def assert_service_stopped(self):
         cmd = ('launchctl', 'list')
         p = Popen(cmd, stdout=PIPE)
@@ -452,49 +391,10 @@ class LinuxTestSuite(UnixTestSuite):
         self.service_username = 'splintermail'
         super().__init__()
 
-    def assert_ca_is_trusted(self):
-        cmd = ("openssl", "x509", "-noout", "-subject")
-        chunk = []
-        with open(self.ca_list) as f:
-            for line in f:
-                chunk.append(line)
-                if "END CERTIFICATE" in line:
-                    # end of one cert
-                    cert = "".join(chunk)
-                    chunk = []
-                    p = Popen(cmd, stdin=PIPE, stdout=PIPE)
-                    p.stdin.write(cert.encode('utf8'))
-                    p.stdin.close()
-                    out = p.stdout.read()
-                    ret = p.wait()
-                    assert ret == 0, ret
-                    if b"splintermail.localhost" in out:
-                        return
-        raise ValueError("cert not found")
-
-    def assert_ca_not_trusted(self):
-        cmd = ("openssl", "x509", "-noout", "-subject")
-        chunk = []
-        with open(self.ca_list) as f:
-            for line in f:
-                chunk.append(line)
-                if "END CERTIFICATE" in line:
-                    # end of one cert
-                    cert = "".join(chunk)
-                    chunk = []
-                    p = Popen(cmd, stdin=PIPE, stdout=PIPE)
-                    p.stdin.write(cert.encode('utf8'))
-                    p.stdin.close()
-                    out = p.stdout.read()
-                    ret = p.wait()
-                    assert ret == 0, ret
-                    assert b"splintermail.localhost" not in out
-
 
 class ArchTestSuite(LinuxTestSuite):
     def __init__(self, installer):
         self.installer = installer
-        self.ca_list = '/etc/ssl/cert.pem'
         super().__init__()
 
     def run_pkg_linter(self):
@@ -542,7 +442,6 @@ class ArchTestSuite(LinuxTestSuite):
 class DebianTestSuite(LinuxTestSuite):
     def __init__(self, installer):
         self.installer = installer
-        self.ca_list = '/etc/ssl/certs/ca-certificates.crt'
         super().__init__()
 
     def run_pkg_linter(self):
@@ -575,7 +474,6 @@ class DebianTestSuite(LinuxTestSuite):
 class RHELTestSuite(LinuxTestSuite):
     def __init__(self, installer):
         self.installer = installer
-        self.ca_list = '/etc/ssl/certs/ca-bundle.crt'
         super().__init__()
 
     def run_pkg_linter(self):

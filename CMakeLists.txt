@@ -588,10 +588,6 @@ if(APPLE)
     set(preuninstall_out "${payload}/usr/local/share/splintermail/preuninstall.sh")
     set(preupgrade_in "${supp_dir}/osx/preupgrade.sh")
     set(preupgrade_out "${payload}/usr/local/share/splintermail/preupgrade.sh")
-    set(keygen_in "${supp_dir}/keygen.sh")
-    set(keygen_out "${payload}/usr/local/share/splintermail/keygen.sh")
-    set(openssl_cnf_in "${supp_dir}/openssl.cnf")
-    set(openssl_cnf_out "${payload}/usr/local/share/splintermail/openssl.cnf")
     set(license_txt_in "${supp_dir}/static_link_license.txt")
     set(license_txt_out "${payload}/usr/local/share/splintermail/LICENSE.txt")
     set(bashcomp_in "${supp_dir}/completions/bash/splintermail")
@@ -604,8 +600,6 @@ if(APPLE)
     set(man_out "${payload}/usr/local/share/man/man1/splintermail.1.gz")
     qwwq("${preuninstall_in}" "${preuninstall_out}")
     qwwq("${preupgrade_in}" "${preupgrade_out}")
-    qwwq("${keygen_in}" "${keygen_out}")
-    qwwq("${openssl_cnf_in}" "${openssl_cnf_out}")
     qwwq("${license_txt_in}" "${license_txt_out}")
     qwwq("${bashcomp_in}" "${bashcomp_out}")
     qwwq("${zshcomp_in}" "${zshcomp_out}")
@@ -613,8 +607,6 @@ if(APPLE)
     qwwq("${man_in}" "${man_out}")
     list(APPEND file_deps "${preuninstall_out}")
     list(APPEND file_deps "${preupgrade_out}")
-    list(APPEND file_deps "${keygen_out}")
-    list(APPEND file_deps "${openssl_cnf_out}")
     list(APPEND file_deps "${license_txt_out}")
     list(APPEND file_deps "${bashcomp_out}")
     list(APPEND file_deps "${zshcomp_out}")
@@ -691,29 +683,16 @@ if(APPLE)
 elseif(UNIX)
     # linux source install
     set(supp_build "${PROJECT_BINARY_DIR}/support_files")
-    qwwq("${supp_dir}/openssl.cnf" "${supp_build}/openssl.cnf")
-    qwwq("${supp_dir}/keygen.sh" "${supp_build}/keygen.sh")
     qwwq("${supp_dir}/splintermail.conf" "${supp_build}/splintermail.conf")
     qwwq("${supp_dir}/completions/bash/splintermail" "${supp_build}/completions/bash/splintermail")
     qwwq("${supp_dir}/completions/zsh/_splintermail" "${supp_build}/completions/zsh/_splintermail")
     qwwq("${supp_dir}/splintermail.1" "${supp_build}/splintermail.1")
     qwwq("${supp_dir}/linux/splintermail.service" "${supp_build}/linux/splintermail.service")
-    add_custom_target(pp_openssl_cnf ALL DEPENDS "${supp_build}/openssl.cnf")
-    add_custom_target(pp_keygen_sh ALL DEPENDS "${supp_build}/keygen.sh")
     add_custom_target(pp_splintermail_conf ALL DEPENDS "${supp_build}/splintermail.conf")
     add_custom_target(pp_completions_bash ALL DEPENDS "${supp_build}/completions/bash/splintermail")
     add_custom_target(pp_completions_zsh ALL DEPENDS "${supp_build}/completions/zsh/_splintermail")
     add_custom_target(pp_man ALL DEPENDS "${supp_build}/splintermail.1")
     add_custom_target(pp_splintermail_service ALL DEPENDS "${supp_build}/linux/splintermail.service")
-
-    install(FILES "${supp_build}/openssl.cnf"
-        DESTINATION "share/splintermail")
-
-    install(FILES "${supp_build}/keygen.sh"
-        DESTINATION "share/splintermail"
-        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
-                    GROUP_READ GROUP_EXECUTE
-                    WORLD_READ WORLD_EXECUTE)
 
     # bash completion file
     install(FILES "${supp_build}/completions/bash/splintermail"
@@ -877,16 +856,6 @@ elseif(WIN32)
     # install actions... we have to write executables instead of scripts...
     # ... thanks for that, antivirus industry.  Thanks.
 
-    # keygen.exe (will be installed)
-    set(keygen_src_in "${supp_dir}/windows/keygen.c")
-    set(keygen_src_out "${PROJECT_BINARY_DIR}/installer/keygen.c")
-    qwwq("${keygen_src_in}" "${keygen_src_out}")
-    add_executable(keygen "${keygen_src_out}")
-    default_compile_options(keygen)
-    define_file_logname_for_source("${keygen_src_in}" "${keygen_src_out}")
-    target_link_libraries(keygen PRIVATE dstr)
-    list(APPEND tgt_deps keygen)
-
     # rm_rf.exe (will be embedded in installer for uninstallation)
     add_executable(rm_rf "${supp_dir}/windows/rm_rf.c")
     default_compile_options(rm_rf)
@@ -899,25 +868,20 @@ elseif(WIN32)
     set(wxs_out "${PROJECT_BINARY_DIR}/installer/splintermail.wxs")
     set(conf_in "${supp_dir}/splintermail.conf")
     set(conf_out "${PROJECT_BINARY_DIR}/installer/splintermail.conf")
-    set(openssl_cnf_in "${supp_dir}/openssl.cnf")
-    set(openssl_cnf_out "${PROJECT_BINARY_DIR}/installer/openssl.cnf")
     set(license_txt_in "${supp_dir}/static_link_license.txt")
     set(license_txt_out "${PROJECT_BINARY_DIR}/installer/static_link_license.txt")
     qwwq("${wxs_in}" "${wxs_out}")
     qwwq("${conf_in}" "${conf_out}")
-    qwwq("${openssl_cnf_in}" "${openssl_cnf_out}")
     qwwq("${license_txt_in}" "${license_txt_out}")
     list(APPEND file_deps "${wxs_out}")
     list(APPEND file_deps "${conf_out}")
-    list(APPEND file_deps "${openssl_cnf_out}")
     list(APPEND file_deps "${license_txt_out}")
 
     # "compile" msi
     set(wixobj "${PROJECT_BINARY_DIR}/installer/splintermail.wixobj")
-    set(openssl_bin_def "-dOPENSSL_BIN=${OPENSSL_ROOT_DIR}/bin/openssl.exe")
     add_custom_command(
         OUTPUT "${wixobj}"
-        COMMAND candle "${openssl_bin_def}" "splintermail.wxs"
+        COMMAND candle "splintermail.wxs"
                 -arch "$ENV{VSCMD_ARG_TGT_ARCH}"
         DEPENDS ${file_deps}
         WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/installer"

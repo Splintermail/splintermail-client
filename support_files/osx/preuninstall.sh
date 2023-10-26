@@ -26,9 +26,6 @@ fi
 # delete the default config file (not handled by installer)
 rm -f "$orig_config"
 
-# before attempt to untrust/delete the old certificate it
-security delete-certificate -c "QW ca_common_name WQ" || true
-
 # delete the data folder (not handled by installer)
 rm -rf "QW sm_dir WQ"
 

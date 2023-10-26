@@ -6,16 +6,8 @@ post_install() {
     fi
 
     local share_dir sm_dir
-    local old_ca_file old_key_file old_cert_file
-    local ca_file key_file cert_file
     share_dir="QW share_dir WQ"
     sm_dir="QW sm_dir WQ"
-    old_ca_file="$sm_dir/QW old_ca_name WQ"
-    old_key_file="$sm_dir/QW old_key_name WQ"
-    old_cert_file="$sm_dir/QW old_cert_name WQ"
-    ca_file="$sm_dir/QW ca_name WQ"
-    key_file="$sm_dir/QW key_name WQ"
-    cert_file="$sm_dir/QW cert_name WQ"
 
     # create default storage directory
     if [ ! -d "$sm_dir" ] ; then
@@ -23,38 +15,6 @@ post_install() {
         chmod 700 "$sm_dir" || return 3
         chown splintermail:splintermail "$sm_dir" || return 4
     fi
-
-    # migrate old certificates from v0.2 installations
-    if [ -f "$old_cert_file" ] ; then
-        mv "$old_cert_file" "$cert_file" || return 5
-    fi
-    if [ -f "$old_key_file" ] ; then
-        mv "$old_key_file" "$key_file" || return 6
-    fi
-    if [ -f "$old_ca_file" ] ; then
-        mv "$old_ca_file" "$ca_file" || return 7
-    fi
-
-    # remove the cert_file that may accidentally have been installed in 0.2.0
-    if [ -f "/etc/ca-certificates/trust-source/anchors/QW old_cert_name WQ" ] ; then
-        rm "/etc/ca-certificates/trust-source/anchors/QW old_cert_name WQ" || return 8
-        update-ca-trust extract || return 9
-    fi
-
-    # generate the SSL certificates, if they don't exist already
-    if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ] || [ ! -f "$ca_file" ] ; then
-        # generate the files
-        sh "QW share_dir WQ/keygen.sh" "QW share_dir WQ/openssl.cnf" \
-                "$sm_dir" || return 10
-        # trust the generated certificate authority
-        cp "$ca_file" "/etc/ca-certificates/trust-source/anchors/" \
-                || return 11
-        update-ca-trust extract || return 12
-        # make sure splintermail can read them
-        chown splintermail:splintermail \
-                "$cert_file" "$key_file" "$ca_file" || return 13
-    fi
-
 }
 
 post_upgrade() {
@@ -77,11 +37,6 @@ pre_remove() {
 
 post_remove() {
     oldversion="$1"
-    # remove the cert_file that may accidentally have been installed in 0.2.0
-    rm -f "/etc/ca-certificates/trust-source/anchors/QW old_cert_name WQ"
-    # untrust the certificate generated at install
-    rm -f "/etc/ca-certificates/trust-source/anchors/QW ca_name WQ"
-    update-ca-trust extract || true
     # delete files
     rm -rf "QW sm_dir WQ" || true
     # delete service user

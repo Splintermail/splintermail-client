@@ -121,36 +121,6 @@
                     KeyPath='yes'/>
             </Component>
 
-            <!-- keygen.exe -->
-            <Component Id='keygen_component'
-                       Guid='41956d46-449c-4881-a3b7-bcefa6b9287a'>
-              <File Id='keygen_file'
-                    Source='../keygen.exe'
-                    Name='keygen.exe'
-                    CompanionFile='splintermail_file'
-                    DiskId='1'/>
-            </Component>
-
-            <!-- openssl.cnf -->
-            <Component Id='openssl_cnf_component'
-                       Guid='0c017e9d-54f7-4c7a-9d53-b248ac831b57'>
-              <File Id='openssl_cnf_file'
-                    Source='openssl.cnf'
-                    Name='openssl.cnf'
-                    CompanionFile='splintermail_file'
-                    DiskId='1'/>
-            </Component>
-
-            <!-- openssl.exe binary -->
-            <Component Id='openssl_component'
-                       Guid='16ff6837-9f6b-495b-bec8-38e0d731847c'>
-              <File Id='openssl_file'
-                    Source='$(var.OPENSSL_BIN)'
-                    Name='openssl.exe'
-                    CompanionFile='splintermail_file'
-                    DiskId='1'/>
-            </Component>
-
             <!-- LICENSE.txt -->
             <Component Id='license_component'
                        Guid='02ee3892-e970-4933-a2b6-d6bf87a3d001'>
@@ -197,25 +167,6 @@
       </Component>
     </Directory>
 
-    <!--generate/trust keys if they don't exist-->
-    <!--this exectutable also untrusts old keys before it creates new ones-->
-    <CustomAction Id='keygen_action'
-                  FileKey='keygen_file'
-                  ExeCommand='"[INSTALLDIR]openssl.exe" "[INSTALLDIR]openssl.cnf" "[splintermail_dir]\"'
-                  Execute='deferred'
-                  Return='check'
-                  HideTarget='no'
-                  Impersonate='no'/>
-
-    <!--untrust keys-->
-    <CustomAction Id='untrust_ca_action'
-                  Directory='TARGETDIR'
-                  ExeCommand='[SystemFolder]certutil -delstore Root "QW ca_common_name WQ"'
-                  Execute='deferred'
-                  Return='check'
-                  HideTarget='no'
-                  Impersonate='no'/>
-
     <!--delete the splintermail directory entirely-->
     <Binary Id="rm_rf_binary" SourceFile="../rm_rf.exe"/>
     <CustomAction Id='delete_data_action'
@@ -227,16 +178,8 @@
                   Impersonate='no'/>
 
     <InstallExecuteSequence>
-      <!--make sure keys exist after every install/upgrade-->
-      <Custom Action='keygen_action' After="InstallFiles">
-        NOT REMOVE
-      </Custom>
       <!--delete the splintermail directory only on uninstall-->
       <Custom Action='delete_data_action' Before="InstallFinalize">
-        (REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)
-      </Custom>
-      <!--untrust the local CA on uninstall-->
-      <Custom Action='untrust_ca_action' Before="InstallFinalize">
         (REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)
       </Custom>
       <!--RemoveExistingProducts must come after InstallFinalize or components
@@ -259,9 +202,6 @@
       <ComponentRef Id='splintermail_dir_component' />
       <ComponentRef Id='original_splintermail_conf_component' />
       <ComponentRef Id='splintermail_conf_component' />
-      <ComponentRef Id='keygen_component' />
-      <ComponentRef Id='openssl_cnf_component' />
-      <ComponentRef Id='openssl_component' />
       <ComponentRef Id='license_component' />
       <ComponentRef Id='PATH_reg_component' />
       <!-- <ComponentRef Id='ProgramMenuDir' /> -->

@@ -4,12 +4,6 @@ set -e
 # useful variables
 share_dir="QW share_dir WQ"
 sm_dir="QW sm_dir WQ"
-old_ca_file="$sm_dir/QW old_ca_name WQ"
-old_key_file="$sm_dir/QW old_key_name WQ"
-old_cert_file="$sm_dir/QW old_cert_name WQ"
-ca_file="$sm_dir/QW ca_name WQ"
-key_file="$sm_dir/QW key_name WQ"
-cert_file="$sm_dir/QW cert_name WQ"
 
 # create service user
 if ! getent passwd splintermail >/dev/null ; then
@@ -21,28 +15,6 @@ if [ ! -d "$sm_dir" ] ; then
     mkdir -p "$sm_dir"
     chmod 700 "$sm_dir"
     chown splintermail:splintermail "$sm_dir"
-fi
-
-# migrate old certificates from v0.2 installations
-if [ -f "$old_cert_file" ] ; then
-    mv "$old_cert_file" "$cert_file"
-fi
-if [ -f "$old_key_file" ] ; then
-    mv "$old_key_file" "$key_file"
-fi
-if [ -f "$old_ca_file" ] ; then
-    mv "$old_ca_file" "$ca_file"
-fi
-
-# generate the SSL certificates, if they don't exist already
-if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ] || [ ! -f "$ca_file" ] ; then
-    # generate the files
-    sh "$share_dir/keygen.sh" "$share_dir/openssl.cnf" "$sm_dir"
-    # trust the generated certificate authority
-    cp "$ca_file" "/usr/local/share/ca-certificates"
-    update-ca-certificates
-    # make sure splintermail can read them
-    chown splintermail:splintermail "$ca_file" "$key_file" "$cert_file"
 fi
 
 # service should get started in stubs written by debhelper
