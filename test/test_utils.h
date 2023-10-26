@@ -293,7 +293,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     if(dstr_eq(_got, _exp)) break; \
     TRACE_ORIG(e, \
         E_VALUE, \
-        "expected %x == %x but got %x", \
+        "expected %x == \"%x\" but got \"%x\"", \
         FS(name), FD_DBG(_exp), FD_DBG(_got) \
     ); \
     action; \
@@ -331,8 +331,8 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     TRACE_ORIG(e, \
         E_VALUE, \
         "for value '%x'\n" \
-        "expected: %x\n" \
-        "but got:  %x", \
+        "expected: \"%x\"\n" \
+        "but got:  \"%x\"", \
         FS(name), FD_DBG(_exp), FD_DBG(_got) \
     ); \
     action; \
@@ -357,7 +357,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     firstdiff(_exp, _got, &zoom_exp, &zoom_got, &caret); \
     TRACE_ORIG(e, \
         E_VALUE, \
-        "-- for value '%x', expected:\n" \
+        "-- for value %x, expected:\n" \
         "%x%x" \
         "-- but got:\n" \
         "%x%x-- (end) --\n" \
