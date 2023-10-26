@@ -421,6 +421,11 @@ derr_t jspec_api_read(jspec_t *jspec, jctx_t *ctx){
         ORIG(&e, E_RESPONSE, "api call failed");
     }
 
+    if(!contents_ok){
+        jctx_error(ctx, "api response missing key: \"contents\"\n");
+        return e;
+    }
+
     // now call the content jspec on the inner layer
     jctx_t innerctx = jctx_sub_key(ctx, DSTR_LIT("contents"), jcontents.node);
     jspec_t *content_spec = CONTAINER_OF(jspec, jspec_api_t, jspec)->content;
