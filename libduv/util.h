@@ -54,6 +54,16 @@ DUV_HANDLE_PUNS(DUV_HANDLE_DECL)
 DUV_HANDLE_PUNS(DUV_HANDLE_CLOSE_DECL)
 #undef DUV_HANDLE_CLOSE_DECL
 
+//// close any uv_handle_t subclass:
+//// returns true if a close_cb is coming
+// /* relies on non-NULL handle.data as an indicator that init has occured, but
+//    close_cb has not occured; caller must handle those cases properly */
+// bool duv_TYPE_close2(uv_TYPE_t *handle);
+#define DUV_HANDLE_CLOSE2_DECL(type) \
+    bool duv_##type##_close2(uv_##type##_t *handle, uv_close_cb close_cb);
+DUV_HANDLE_PUNS(DUV_HANDLE_CLOSE2_DECL)
+#undef DUV_HANDLE_CLOSE2_DECL
+
 #define DUV_STREAM_PUNS(XX) \
     XX(tcp) \
     XX(tty) \

@@ -73,6 +73,15 @@ DUV_HANDLE_PUNS(DUV_HANDLE_DEF)
     }
 DUV_HANDLE_PUNS(DUV_HANDLE_CLOSE_DEF)
 
+#define DUV_HANDLE_CLOSE2_DEF(type) \
+    bool duv_##type##_close2(uv_##type##_t *handle, uv_close_cb close_cb){ \
+        if(!handle->data) return false; \
+        if(uv_is_closing((uv_handle_t*)handle)) return true; \
+        uv_close((uv_handle_t*)handle, close_cb); \
+        return true; \
+    }
+DUV_HANDLE_PUNS(DUV_HANDLE_CLOSE2_DEF)
+
 #define DUV_STREAM_DEF(type) \
     uv_stream_t *duv_##type##_stream(uv_##type##_t *stream){ \
         return (uv_stream_t*)stream; \
