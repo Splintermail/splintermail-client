@@ -3,21 +3,12 @@ extern derr_type_t E_UV;
 
 // error handling helpers
 
-#ifdef _WIN32
-/* in windows, use uv_strerror(), since libuv's windows errors are arbitrary
-   negative numbers */
 typedef struct {
     fmt_i iface;
     int err;
 } _fmt_uverr_t;
 derr_type_t _fmt_uverr(const fmt_i *iface, writer_i *out);
 #define FUV(err) (&(_fmt_uverr_t){ {_fmt_uverr}, err }.iface)
-#else
-/* in unix, rely on standard errno handling, since libuv doesn't handle as many
-   error types as unix can have, and libuv leaks memory when it sees an erro
-   type that it doesn't recognize, which is annoying under asan */
-#define FUV(err) (&(_fmt_errno_t){ {_fmt_errno}, -err }.iface)
-#endif
 
 static inline derr_type_t uv_err_type(int err){
     return (err == UV_ENOMEM) ? E_NOMEM : E_UV;

@@ -8,10 +8,11 @@
 
 REGISTER_ERROR_TYPE(E_UV, "UVERROR", "error from libuv");
 
-#ifdef _WIN32
-/* in windows, use uv_strerror(), since libuv's windows errors are arbitrary
-   negative numbers */
 DEF_CONTAINER_OF(_fmt_uverr_t, iface, fmt_i)
+
+#ifdef _WIN32
+/* in windows, use just uv_strerror(), since libuv's windows errors are
+   arbitrary negative numbers */
 derr_type_t _fmt_uverr(const fmt_i *iface, writer_i *out){
     int err = CONTAINER_OF(iface, _fmt_uverr_t, iface)->err;
     const char *msg = uv_strerror(err);
@@ -19,7 +20,27 @@ derr_type_t _fmt_uverr(const fmt_i *iface, writer_i *out){
     return out->w->puts(out, msg, len);
 }
 #else
-// unix just calls fmt_error and so compiles nothing here
+/* in unix, manually check known uv error types, but fall back to standard
+   errno handling, since libuv doesn't handle as many error types as unix can
+   have, and libuv leaks memory when it sees an errno type it doesn't
+   recognize, which is annoying under asan */
+derr_type_t _fmt_uverr(const fmt_i *iface, writer_i *out){
+    int err = CONTAINER_OF(iface, _fmt_uverr_t, iface)->err;
+    char *msg = NULL;
+    char buf[512];
+    size_t len;
+    switch(err){
+        #define FUV_CASE(ERR, MSG) \
+            case UV_##ERR: msg = MSG; len = strlen(msg); break;
+        UV_ERRNO_MAP(FUV_CASE)
+        #undef FUV_CASE
+        default:
+            compat_strerror_r(-err, buf, sizeof(buf));
+            len = strnlen(buf, sizeof(buf));
+            msg = buf;
+    }
+    return out->w->puts(out, msg, len);
+}
 #endif
 
 // all uv errors, as derr_type_t's
