@@ -1,5 +1,6 @@
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
+#include <openssl/err.h>
 
 #include "libduvtls/libduvtls.h"
 
@@ -183,6 +184,7 @@ static derr_type_t classify_verify_result(long r){
 static bool _advance_ssl_do_handshake(duv_tls_t *t){
     if(t->handshake_done) return true;
     if(t->need_read) return true;
+    ERR_clear_error();
     int ret = SSL_do_handshake(t->ssl);
     long lret;
     if(ret != 1){
@@ -202,6 +204,7 @@ static bool _advance_ssl_do_handshake(duv_tls_t *t){
                 derr_type_t etype = classify_verify_result(lret);
                 if(etype != E_NONE){
                     TRACE_ORIG(&t->e, etype, "%x", FD(error_to_msg(etype)));
+                    ERR_clear_error();
                     return false;
                 }
                 /* SSL_get_verify_result returns OK if no peer certificate
@@ -211,6 +214,7 @@ static bool _advance_ssl_do_handshake(duv_tls_t *t){
                 if(!peer_cert){
                     etype = E_NOCERT;
                     TRACE_ORIG(&t->e, etype, "%x", FD(error_to_msg(etype)));
+                    ERR_clear_error();
                     return false;
                 }
                 X509_free(peer_cert);
@@ -245,6 +249,7 @@ static bool _advance_ssl_do_handshake(duv_tls_t *t){
         X509 *peer_cert = SSL_get_peer_certificate(t->ssl);
         if(!peer_cert){
             TRACE_ORIG(&t->e, E_NOCERT, "%x", FD(error_to_msg(E_NOCERT)));
+            ERR_clear_error();
             return false;
         }
         X509_free(peer_cert);
@@ -316,6 +321,7 @@ static bool _advance_ssl_write(duv_tls_t *t){
             if((size_t)blen > t->write_buf.len) return true;
             size_t write_size = buf.len - t->nwritten;
             size_t nwritten;
+            ERR_clear_error();
             int ret = SSL_write_ex(
                 t->ssl, buf.data + t->nwritten, write_size, &nwritten
             );
@@ -365,6 +371,7 @@ static bool _advance_ssl_read(duv_tls_t *t){
         stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
 
         size_t nread;
+        ERR_clear_error();
         int ret = SSL_read_ex(t->ssl, read->buf.data, read->buf.size, &nread);
 
         if(ret != 1){
@@ -426,6 +433,7 @@ static bool _advance_ssl_shutdown(duv_tls_t *t){
            wants to shutdown.
          - SSL_shutdown until we see a 0 or a 1, regardless of when the user
            wants to read. */
+    ERR_clear_error();
     int ret = SSL_shutdown(t->ssl);
     if(ret < 0){
         switch(SSL_get_error(t->ssl, ret)){
