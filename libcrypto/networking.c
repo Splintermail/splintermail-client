@@ -1,6 +1,5 @@
 #include "libcrypto.h"
 
-
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/x509v3.h>
@@ -447,9 +446,9 @@ static derr_type_t put_cfstring(writer_i *out, CFStringRef str, bool *ok){
         return out->w->puts(out, s, strlen(s));
     }
 
-    // otherwise grab the first 1k bytes
+    // otherwise grab up to the first 1k bytes
     char buf[1024];
-    CFRange range = { .location = 0, .length = sizeof(buf) };
+    CFRange range = { .location = 0, .length = CFStringGetLength(str) };
     CFIndex used = 0;
     CFIndex len = CFStringGetBytes(
         str,
@@ -468,7 +467,7 @@ static derr_type_t put_cfstring(writer_i *out, CFStringRef str, bool *ok){
     }
 
     *ok = true;
-    return out->w->puts(out, buf, (size_t)len);
+    return out->w->puts(out, buf, (size_t)used);
 }
 
 typedef struct {
@@ -524,6 +523,36 @@ static derr_type_t _fmt_cferror(const fmt_i *iface, writer_i *out){
 
 #define FCFERROR(cferror) (&(_fmt_cferror_t){ {_fmt_cferror}, cferror }.iface)
 
+/* CFErrors are identified by a domain and a code, as described in:
+
+       CoreFoundation.framework/Versions/A/Headers/CFError.h
+
+   TLS errors codes are defined in:
+
+       Security.framework/Versions/A/Headers/SecBase.h */
+static void try_convert_to_ssl_error(CFErrorRef cferror, X509_STORE_CTX *ctx){
+    // require a valid error
+    if(!cferror) return;
+    // tls-related errors are in OSStatus error domain
+    if(CFErrorGetDomain(cferror) != kCFErrorDomainOSStatus) return;
+    CFIndex code = CFErrorGetCode(cferror);
+    int new;
+    switch(code){
+        #define MATCH(macos, openssl) case macos: new = openssl; break
+        MATCH(errSecCertificateExpired, X509_V_ERR_CERT_HAS_EXPIRED);
+        MATCH(errSecCertificateNotValidYet, X509_V_ERR_CERT_NOT_YET_VALID);
+        MATCH(errSecCertificateRevoked, X509_V_ERR_CERT_REVOKED);
+        /* One or more certificates required to validate this certificate
+           cannot be found. */
+        MATCH(errSecCreateChainFailed, X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN);
+        #undef MATCH
+        default:
+            LOG_DEBUG("unrecognized OSStatus error code %x\n", FI(code));
+            return;
+    }
+    X509_STORE_CTX_set_error(ctx, new);
+}
+
 /* macos strategy:  I don't see a non-deprecated way to get a list of all
    system certs (the old strategy) but I do see ways to evaluate the trust
    of a single certificate chain, so we'll just do exactly that in a
@@ -544,9 +573,10 @@ static derr_type_t _fmt_cferror(const fmt_i *iface, writer_i *out){
       the certificate has been explicitly trusted by the application, since
       no certificate store is available in macos.  Thanks, macos.
 
-    - If we see a preverify_ok=0, we check the whole TLS cert chain against
-      macos's trusted stores, and if the OS says it's trustworthy we override
-      the failure.
+    - If we see a preverify_ok=0, and we see a verification error we know
+      macos can override, we check the whole TLS cert chain against macos's
+      trusted stores, and if the OS says it's trustworthy we override the
+      failure.
 
     - Typically, that happens once while OpenSSL is evaluating the chain of
       certs.  OpenSSL starts at the root certificate and says, "hey I don't
@@ -559,9 +589,6 @@ static derr_type_t _fmt_cferror(const fmt_i *iface, writer_i *out){
     - After chain is verified, OpenSSL does the hostname check.  We
       intentionally configure the macos lookup to not consider the hostname
       verification since we have that covered.
-
-    - Note that hostname verification failures do not result in a call to
-      our verify_callback.
 
    So in the end, we observe the following properties:
 
@@ -611,9 +638,28 @@ static int macos_verify_callback(int preverify_ok, X509_STORE_CTX *ctx){
        given a root certificate that we've overridden to be trusted. */
     if(preverify_ok) return preverify_ok;
 
+    /* take a whitelist approach to what failures we pass along to macos; there
+       are very many failures and there should only be one or two cases that
+       we let macos override */
+    int err = X509_STORE_CTX_get_error(ctx);
+    switch(err){
+        case X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT:
+        case X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN:
+        case X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY:
+        case X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE:
+            LOG_DEBUG(
+                "deferring to macos after openssl failure %x\n", FI(err)
+            );
+            break;
+        default:
+            LOG_DEBUG(
+                "skipping macos check after openssl failure %d\n", FI(err)
+            );
+            return preverify_ok;
+    }
+
     int ok = 0;
 
-    // int err = X509_STORE_CTX_get_error(ctx);
     // int depth = X509_STORE_CTX_get_error_depth(ctx);
     // fprintf(stderr, "err = %d, depth = %d, ntrusted = %d, ntotal = %d\n",
     //         err, depth,
@@ -698,11 +744,11 @@ static int macos_verify_callback(int preverify_ok, X509_STORE_CTX *ctx){
     if(cferror){
         // we failed to evalue trust
         LOG_ERROR("SecTrustEvaluateWithError(): %x\n", FCFERROR(cferror));
+        try_convert_to_ssl_error(cferror, ctx);
         goto cu;
     }
 
     if(trusted){
-        LOG_ERROR("yo actually we do trust this cert\n");
         ok = 1;
         // erase the error entirely
         X509_STORE_CTX_set_error(ctx, X509_V_OK);

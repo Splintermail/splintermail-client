@@ -252,7 +252,11 @@ fail_ctx:
 
 fail_thread:
     // our multithreaded failure strategy is: "just exit"
-    TRACE(&e, "exiting due to error on main thread\n");
+    TRACE(&e,
+        "exiting due to main thread error in do_verify_test(\"%x\", \"%x\")\n",
+        FS(hostname),
+        FS(keypair)
+    );
     DUMP(e);
     DROP_VAR(&e);
     exit(1);

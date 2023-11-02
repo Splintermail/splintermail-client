@@ -80,7 +80,11 @@ derr_t connection_new_ssl(connection_t* conn, ssl_context_t* ctx,
     //int ret = BIO_do_connect(conn->bio);
     long ret = BIO_ctrl(conn->bio, BIO_C_DO_STATE_MACHINE, 0, NULL);
     if(ret != 1){
-        ORIG_GO(&e, E_CONN, "error making connection: %x", fail_1, FSSL);
+        /* in macos, something about the way we set the callback causes the
+           verification error here instead */
+        long lret = SSL_get_verify_result(ssl);
+        derr_type_t etype = lret != X509_V_OK ? E_SSL : E_CONN;
+        ORIG_GO(&e, etype, "error making connection: %x", fail_1, FSSL);
     }
 
     // is SSL certificate verified (cryptographically sound)?
