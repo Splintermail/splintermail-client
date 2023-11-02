@@ -515,7 +515,6 @@ derr_t uv_citm(
 
     bool loop_configured = false;
     bool scheduler_configured = false;
-    int fd = -1;
     SSL_CTX *server_ctx = NULL;
     uv_citm_t uv_citm = {0};
     uv_acme_manager_t uvam = {0};
@@ -662,10 +661,19 @@ cu:
     for(size_t i = 0; i < uv_citm.nlisteners; i++){
         citm_listener_free(&uv_citm.listeners[i]);
     }
-    if(fd == INVALID_SOCKET) compat_closesocket(fd);
 
     if(uv_citm.async_cancel.data){
         duv_async_close(&uv_citm.async_cancel, noop_close_cb);
+        uv_citm.async_cancel.data = NULL;
+    }
+    if(uv_citm.async_user.data){
+        duv_async_close(&uv_citm.async_user, noop_close_cb);
+        uv_citm.async_user.data = NULL;
+    }
+
+    if(loop_configured){
+        // uvam, at least, needs to run to close all of its handles
+        DROP_CMD( duv_run(&uv_citm.loop) );
     }
 
     // will run the loop as part of closing
