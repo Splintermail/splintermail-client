@@ -1,29 +1,20 @@
-<?xml version='1.0' encoding='windows-1252'?>
-<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
-  <!-- if Product ID is fixed and version is fixed it is a "patch" update-->
-  <!-- if Product ID is fixed and version changes it is a "minor" update-->
-  <!-- if Product ID changes and version changes it is a "major" update-->
+﻿<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- if Package ID is fixed and version is fixed it is a "patch" update-->
+  <!-- if Package ID is fixed and version changes it is a "minor" update-->
+  <!-- if Package ID changes and version changes it is a "major" update-->
   <!-- we will always do major updates, it will be simpler.  The version
        should be updated manually in the CMake file for every release-->
-  <Product Name='QW G."Pkg Name" WQ'
-           Id='*'
-           UpgradeCode='f04e8b4c-9fc0-4478-ba41-38d657549d38'
-           Language='1033'
-           Codepage='1252'
+  <Package Name='QW G."Pkg Name" WQ'
+           UpgradeCode="f04e8b4c-9fc0-4478-ba41-38d657549d38"
+           Language="1033"
+           Codepage="1252"
            Version='QW version WQ'
-           Manufacturer='Splintermail LLC'>
+           Manufacturer='Splintermail LLC'
+           InstallerVersion="200">
 
-    <!-- Package ID should change every build, always always always -->
-    <Package Id='*'
-             Keywords='Installer'
-             Description='QW G."Pkg Name" WQ Installer'
-             Comments='Splintermail is Awesome.'
-             Manufacturer='Splintermail LLC'
-             InstallScope='perMachine'
-             InstallerVersion='200'
-             Languages='1033'
-             Compressed='yes'
-             SummaryCodepage='1252'/>
+    <SummaryInformation Keywords='Installer'
+                        Description='QW G."Pkg Name" WQ Installer'
+                        Manufacturer='Splintermail LLC'/>
 
     <!--Only the latest version is supported... so we set ID here to the same
         as Product.UpgradeCode, so any version can update any other version-->
@@ -45,17 +36,8 @@
     <Media Id='1' Cabinet='Splintermail.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1' />
     <Property Id='DiskPrompt' Value="Splintermail Installation [1]" />
 
-    <!-- use the right Program Files folder -->
-    <?if $(sys.BUILDARCH) = x64 ?>
-      <?define ProgFiles = "ProgramFiles64Folder" ?>
-    <?else ?>
-      <?define ProgFiles = "ProgramFilesFolder" ?>
-    <?endif ?>
-
-    <!-- This seems to be "C:\", and requires that Name='SourceDir' -->
-    <Directory Id='TARGETDIR' Name='SourceDir'>
       <!-- "Program Files" -->
-      <Directory Id='$(var.ProgFiles)'>
+      <StandardDirectory Id="ProgramFiles6432Folder">
         <!-- My comapany's folder -->
         <Directory Id='Splintermail' Name='Splintermail'>
           <!-- This software package -->
@@ -133,10 +115,10 @@
 
           </Directory>
         </Directory>
-      </Directory>
+      </StandardDirectory>
 
       <!-- "ProgramData" -->
-      <Directory Id='CommonAppDataFolder'>
+      <StandardDirectory Id="CommonAppDataFolder">
         <!-- My comapany's folder -->
         <Directory Id='splintermail_dir' Name='splintermail'>
           <!--create the folder-->
@@ -145,11 +127,11 @@
             <CreateFolder />
           </Component>
         </Directory>
-      </Directory>
+      </StandardDirectory>
 
       <!-- useless registry component that goes to our PATH variable, necessary
            because <Environment> can't be a KeyPath -->
-      <Component Id='PATH_reg_component' Guid='3e383da1-c73d-4052-a74b-50952535ae55'>
+      <Component Id='PATH_reg_component' Guid='3e383da1-c73d-4052-a74b-50952535ae55' Directory='TARGETDIR'>
         <RegistryKey Root='HKLM'
                      Key='Software\Splintermail\QW G."Pkg Name" WQ'>
           <RegistryValue Type='integer'
@@ -165,12 +147,11 @@
                      Action="set"
                      System="yes" />
       </Component>
-    </Directory>
 
     <!--delete the splintermail directory entirely-->
     <Binary Id="rm_rf_binary" SourceFile="../rm_rf.exe"/>
     <CustomAction Id='delete_data_action'
-                  BinaryKey='rm_rf_binary'
+                  BinaryRef='rm_rf_binary'
                   ExeCommand='"[splintermail_dir]\"'
                   Execute='deferred'
                   Return='check'
@@ -179,9 +160,9 @@
 
     <InstallExecuteSequence>
       <!--delete the splintermail directory only on uninstall-->
-      <Custom Action='delete_data_action' Before="InstallFinalize">
-        (REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)
-      </Custom>
+      <Custom Action="delete_data_action"
+              Before="InstallFinalize"
+              Condition='(REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)'/>
       <!--RemoveExistingProducts must come after InstallFinalize or components
           containing user-editable config files will have their reference
           counts decremented (to zero) and will get overwritten every time-->
@@ -209,5 +190,5 @@
 
     <!--<Icon Id="Foobar10.exe" SourceFile="FoobarAppl10.exe" />-->
 
-  </Product>
+  </Package>
 </Wix>
