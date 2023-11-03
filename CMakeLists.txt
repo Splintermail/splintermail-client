@@ -870,39 +870,38 @@ elseif(WIN32)
     set(conf_out "${PROJECT_BINARY_DIR}/installer/splintermail.conf")
     set(license_txt_in "${supp_dir}/static_link_license.txt")
     set(license_txt_out "${PROJECT_BINARY_DIR}/installer/static_link_license.txt")
+    set(theme_in "${supp_dir}/windows/customtheme.xml")
+    set(theme_out "${PROJECT_BINARY_DIR}/installer/customtheme.xml")
     qwwq("${wxs_in}" "${wxs_out}")
     qwwq("${conf_in}" "${conf_out}")
     qwwq("${license_txt_in}" "${license_txt_out}")
+    qwwq("${theme_in}" "${theme_out}")
     list(APPEND file_deps "${wxs_out}")
     list(APPEND file_deps "${conf_out}")
     list(APPEND file_deps "${license_txt_out}")
+    list(APPEND file_deps "${theme_out}")
 
-    # "compile" msi
-    set(wixobj "${PROJECT_BINARY_DIR}/installer/splintermail.wixobj")
-    add_custom_command(
-        OUTPUT "${wixobj}"
-        COMMAND candle "splintermail.wxs"
-                -arch "$ENV{VSCMD_ARG_TGT_ARCH}"
-        DEPENDS ${file_deps}
-        WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/installer"
-        )
-
-    # "link" msi
-    set(msi_out "${PROJECT_BINARY_DIR}/installer/splintermail.msi")
+    set(arch "$ENV{VSCMD_ARG_TGT_ARCH}")
+    # build msi
+    set(msi_out "${PROJECT_BINARY_DIR}/installer/splintermail_${arch}.msi")
     add_custom_command(
         OUTPUT "${msi_out}"
-        COMMAND light -ext WixUIExtension "${wixobj}"
-        BYPRODUCTS "${PROJECT_BINARY_DIR}/installer/splintermail.wixpdb"
-        DEPENDS "${wixobj}" splintermail ${tgt_deps}
+        COMMAND wix build
+                -o "${msi_out}"
+                -arch "${arch}"
+                "splintermail.wxs"
+        DEPENDS ${file_deps} splintermail ${tgt_deps}
+        # COMMAND light -ext WixUIExtension "${wixobj}"
+        # BYPRODUCTS "${PROJECT_BINARY_DIR}/installer/splintermail.wixpdb"
         WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/installer"
-        )
+    )
     add_custom_target(msi DEPENDS "${msi_out}")
 
     # create bundle
-      # Only run for 64-bit version (depends on msi from 32-bit version)
-      # Note that nested CMake projects would be complicated due to the
-      # different environments that we have to have for each build
-    if("$ENV{VSCMD_ARG_TGT_ARCH}" STREQUAL "x64")
+    # Only run for 64-bit version (depends on msi from 32-bit version)
+    # Note that nested CMake projects would be complicated due to the
+    # different environments that we have to have for each build
+    if("${arch}" STREQUAL "x64")
         if("${BUILD32_DIR}" STREQUAL "")
             message(FATAL_ERROR "BUILD32_DIR not specified for 64-bit build")
         endif()
@@ -913,24 +912,17 @@ elseif(WIN32)
         set(license_rtf_out "${PROJECT_BINARY_DIR}/installer/static_link_license.rtf")
         qwwq("${bwxs_in}" "${bwxs_out}")
         qwwq("${license_rtf_in}" "${license_rtf_out}")
-        set(bwixobj "${PROJECT_BINARY_DIR}/installer/bundle.wixobj")
-        add_custom_command(
-            OUTPUT "${bwixobj}"
-            COMMAND candle -ext WixBalExtension "bundle.wxs"
-                    "-dBUILD32_DIR=${BUILD32_DIR}"
-            DEPENDS "${bwxs_out}" "${license_rtf_out}"
-            WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/installer"
-            )
-        # "link" bundle
-        set(msi32 "${BUILD32_DIR}/installer/splintermail.msi")
+        set(msi32 "${BUILD32_DIR}/installer/splintermail_x86.msi")
         set(bundle_out "${PROJECT_BINARY_DIR}/installer/install_splintermail-${PROJECT_VERSION}.exe")
         add_custom_command(
             OUTPUT "${bundle_out}"
-            COMMAND light -ext WixBalExtension "${bwixobj}" -o "${bundle_out}"
-            BYPRODUCTS "${PROJECT_BINARY_DIR}/installer/install_splintermail-${PROJECT_VERSION}.wixpdb"
-            DEPENDS "${bwixobj}" "${msi_out}" "${msi32}"
+            COMMAND wix build -o "${bundle_out}" "bundle.wxs"
+                    -d "BUILD32_DIR=${BUILD32_DIR}"
+                    -ext WixToolset.Bal.wixext
+            # BYPRODUCTS "${PROJECT_BINARY_DIR}/installer/install_splintermail-${PROJECT_VERSION}.wixpdb"
+            DEPENDS "${bwxs_out}" "${license_rtf_out}" "${msi_out}" "${msi32}"
             WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/installer"
-            )
+        )
         add_custom_target(installer DEPENDS "${bundle_out}")
     endif()
 
