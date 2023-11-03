@@ -36,117 +36,117 @@
     <Media Id='1' Cabinet='Splintermail.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1' />
     <Property Id='DiskPrompt' Value="Splintermail Installation [1]" />
 
-      <!-- "Program Files" -->
-      <StandardDirectory Id="ProgramFiles6432Folder">
-        <!-- My comapany's folder -->
-        <Directory Id='Splintermail' Name='Splintermail'>
-          <!-- This software package -->
-          <Directory Id='INSTALLDIR' Name='QW G."Pkg Name" WQ'>
-            <!-- The bin/ directory to add to the PATH -->
-            <Directory Id='bindir' Name='bin'>
-              <!--splintermail.exe-->
-              <!--this exectutable has the "master" version number, which is
-                  built into the executable using the CMake version.  It is
-                  important that version is always bumped because the windows
-                  installer needs to see a higher version to replace this
-                  component on update-->
-              <Component Id='splintermail_component' Guid='12a7aff6-a963-451f-bb3c-8e366524385d'>
-                <File Id='splintermail_file'
-                      Source='../splintermail.exe'
-                      Name='splintermail.exe'
-                      DiskId='1'
-                      KeyPath='yes'/>
-                <ServiceInstall Id='serviceinstall'
-                                Name='splintermail'
-                                DisplayName='Splintermail CITM'
-                                Description='Splintermail Crypto-in-the-Middle'
-                                Start='auto'
-                                Vital='yes'
-                                ErrorControl='normal'
-                                Type='ownProcess'
-                                />
-                <ServiceControl Id="servicecontrol"
-                                Name='splintermail'
-                                Start='install'
-                                Stop="uninstall"
-                                Remove="uninstall"
-                                Wait="yes"
-                                />
-              </Component>
-            </Directory>
-
-            <!--splintermail.conf, readonly original version-->
-            <!--this is a CompanionFile to the splintermail executable meaning
-                that even though this file isn't versioned it will install
-                over old-versioned components as if it had the same version
-                as the splintermail exectuable-->
-            <Component Id='original_splintermail_conf_component'
-                       Guid='b356a7f6-0b0c-4406-a49a-8e947410ce9b'>
-              <File Id='original_splintermail_conf_file'
-                    Source='splintermail.conf'
-                    Name='original_splintermail.conf'
-                    CompanionFile='splintermail_file'
-                    ReadOnly='yes'
-                    DiskId='1'/>
-            </Component>
-
-            <!--splintermail.conf, user-editable version-->
-            <!--This is a KeyPath because its own presence determins if it
-                should be installed (not a companion file).  It is not
-                versioned, indicating that it might contain user data-->
-            <Component Id='splintermail_conf_component'
-                       Guid='2dfb5a27-abdd-42f3-9209-ee019fa5faff'>
-              <File Id='splintermail_conf_file'
-                    Source='splintermail.conf'
-                    Name='splintermail.conf'
+    <!-- "Program Files" -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <!-- My comapany's folder -->
+      <Directory Id='Splintermail' Name='Splintermail'>
+        <!-- This software package -->
+        <Directory Id='INSTALLDIR' Name='QW G."Pkg Name" WQ'>
+          <!-- The bin/ directory to add to the PATH -->
+          <Directory Id='bindir' Name='bin'>
+            <!--splintermail.exe-->
+            <!--this exectutable has the "master" version number, which is
+                built into the executable using the CMake version.  It is
+                important that version is always bumped because the windows
+                installer needs to see a higher version to replace this
+                component on update-->
+            <Component Id='splintermail_component' Guid='12a7aff6-a963-451f-bb3c-8e366524385d'>
+              <File Id='splintermail_file'
+                    Source='../splintermail.exe'
+                    Name='splintermail.exe'
                     DiskId='1'
                     KeyPath='yes'/>
+              <ServiceInstall Id='serviceinstall'
+                              Name='splintermail'
+                              DisplayName='Splintermail CITM'
+                              Description='Splintermail Crypto-in-the-Middle'
+                              Start='auto'
+                              Vital='yes'
+                              ErrorControl='normal'
+                              Type='ownProcess'
+                              />
+              <ServiceControl Id="servicecontrol"
+                              Name='splintermail'
+                              Start='install'
+                              Stop="uninstall"
+                              Remove="uninstall"
+                              Wait="yes"
+                              />
             </Component>
-
-            <!-- LICENSE.txt -->
-            <Component Id='license_component'
-                       Guid='02ee3892-e970-4933-a2b6-d6bf87a3d001'>
-              <File Id='license_file'
-                    Source='static_link_license.txt'
-                    Name='LICENSE.txt'
-                    CompanionFile='splintermail_file'
-                    DiskId='1'/>
-            </Component>
-
           </Directory>
-        </Directory>
-      </StandardDirectory>
 
-      <!-- "ProgramData" -->
-      <StandardDirectory Id="CommonAppDataFolder">
-        <!-- My comapany's folder -->
-        <Directory Id='splintermail_dir' Name='splintermail'>
-          <!--create the folder-->
-          <Component Id='splintermail_dir_component'
-                     Guid='7e787993-3803-4664-bdab-63bad30e1abc'>
-            <CreateFolder />
+          <!--splintermail.conf, readonly original version-->
+          <!--this is a CompanionFile to the splintermail executable meaning
+              that even though this file isn't versioned it will install
+              over old-versioned components as if it had the same version
+              as the splintermail exectuable-->
+          <Component Id='original_splintermail_conf_component'
+                     Guid='b356a7f6-0b0c-4406-a49a-8e947410ce9b'>
+            <File Id='original_splintermail_conf_file'
+                  Source='splintermail.conf'
+                  Name='original_splintermail.conf'
+                  CompanionFile='splintermail_file'
+                  ReadOnly='yes'
+                  DiskId='1'/>
           </Component>
-        </Directory>
-      </StandardDirectory>
 
-      <!-- useless registry component that goes to our PATH variable, necessary
-           because <Environment> can't be a KeyPath -->
-      <Component Id='PATH_reg_component' Guid='3e383da1-c73d-4052-a74b-50952535ae55' Directory='TARGETDIR'>
-        <RegistryKey Root='HKLM'
-                     Key='Software\Splintermail\QW G."Pkg Name" WQ'>
-          <RegistryValue Type='integer'
-                         Name='PATH_installed'
-                         Value='1'
-                         KeyPath='yes'/>
-        </RegistryKey>
-        <Environment Id="PATH"
-                     Name="PATH"
-                     Value="[INSTALLDIR]\bin"
-                     Permanent="no"
-                     Part="last"
-                     Action="set"
-                     System="yes" />
-      </Component>
+          <!--splintermail.conf, user-editable version-->
+          <!--This is a KeyPath because its own presence determins if it
+              should be installed (not a companion file).  It is not
+              versioned, indicating that it might contain user data-->
+          <Component Id='splintermail_conf_component'
+                     Guid='2dfb5a27-abdd-42f3-9209-ee019fa5faff'>
+            <File Id='splintermail_conf_file'
+                  Source='splintermail.conf'
+                  Name='splintermail.conf'
+                  DiskId='1'
+                  KeyPath='yes'/>
+          </Component>
+
+          <!-- LICENSE.txt -->
+          <Component Id='license_component'
+                     Guid='02ee3892-e970-4933-a2b6-d6bf87a3d001'>
+            <File Id='license_file'
+                  Source='static_link_license.txt'
+                  Name='LICENSE.txt'
+                  CompanionFile='splintermail_file'
+                  DiskId='1'/>
+          </Component>
+
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- "ProgramData" -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <!-- My comapany's folder -->
+      <Directory Id='splintermail_dir' Name='splintermail'>
+        <!--create the folder-->
+        <Component Id='splintermail_dir_component'
+                   Guid='7e787993-3803-4664-bdab-63bad30e1abc'>
+          <CreateFolder />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- useless registry component that goes to our PATH variable, necessary
+         because <Environment> can't be a KeyPath -->
+    <Component Id='PATH_reg_component' Guid='3e383da1-c73d-4052-a74b-50952535ae55' Directory='TARGETDIR'>
+      <RegistryKey Root='HKLM'
+                   Key='Software\Splintermail\QW G."Pkg Name" WQ'>
+        <RegistryValue Type='integer'
+                       Name='PATH_installed'
+                       Value='1'
+                       KeyPath='yes'/>
+      </RegistryKey>
+      <Environment Id="PATH"
+                   Name="PATH"
+                   Value="[INSTALLDIR]\bin"
+                   Permanent="no"
+                   Part="last"
+                   Action="set"
+                   System="yes" />
+    </Component>
 
     <!--delete the splintermail directory entirely-->
     <Binary Id="rm_rf_binary" SourceFile="../rm_rf.exe"/>
