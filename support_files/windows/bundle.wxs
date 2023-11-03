@@ -9,6 +9,7 @@
                                               ShowVersion='yes'
                                               LicenseFile='static_link_license.rtf'
                                               Theme='rtfLargeLicense'
+                                              ThemeFile='customtheme.xml'
                                               />
     </BootstrapperApplication>
 
