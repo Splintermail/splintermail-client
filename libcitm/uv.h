@@ -34,6 +34,7 @@ struct uv_citm_t {
 
 derr_t uv_citm(
     const addrspec_t *lspecs,
+    int *lfds,  // for systemd/launchd
     size_t nlspecs,
     const addrspec_t remote,
     const char *key,   // explicit --key (disables acme)
@@ -42,6 +43,7 @@ derr_t uv_citm(
     char *acme_verify_name,  // may be "pebble" in some test scenarios
     dstr_t sm_baseurl,
     string_builder_t sockpath,
+    int *sockfd,  // for systemd/launchd
     SSL_CTX *client_ctx,
     string_builder_t sm_dir,
     // function pointers, mainly for instrumenting tests:

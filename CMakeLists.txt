@@ -688,11 +688,13 @@ elseif(UNIX)
     qwwq("${supp_dir}/completions/zsh/_splintermail" "${supp_build}/completions/zsh/_splintermail")
     qwwq("${supp_dir}/splintermail.1" "${supp_build}/splintermail.1")
     qwwq("${supp_dir}/linux/splintermail.service" "${supp_build}/linux/splintermail.service")
+    qwwq("${supp_dir}/linux/splintermail.socket" "${supp_build}/linux/splintermail.socket")
     add_custom_target(pp_splintermail_conf ALL DEPENDS "${supp_build}/splintermail.conf")
     add_custom_target(pp_completions_bash ALL DEPENDS "${supp_build}/completions/bash/splintermail")
     add_custom_target(pp_completions_zsh ALL DEPENDS "${supp_build}/completions/zsh/_splintermail")
     add_custom_target(pp_man ALL DEPENDS "${supp_build}/splintermail.1")
     add_custom_target(pp_splintermail_service ALL DEPENDS "${supp_build}/linux/splintermail.service")
+    add_custom_target(pp_splintermail_socket ALL DEPENDS "${supp_build}/linux/splintermail.socket")
 
     # bash completion file
     install(FILES "${supp_build}/completions/bash/splintermail"
@@ -745,10 +747,14 @@ elseif(UNIX)
         # systemd service
         install(FILES "${supp_build}/linux/splintermail.service"
             DESTINATION "lib/systemd/system")
+        install(FILES "${supp_build}/linux/splintermail.socket"
+            DESTINATION "lib/systemd/system")
         # licence handled automatically by .spec file
     elseif("${PACKAGE_FOR}" STREQUAL "ARCH")
         # systemd service
         install(FILES "${supp_build}/linux/splintermail.service"
+            DESTINATION "lib/systemd/system")
+        install(FILES "${supp_build}/linux/splintermail.socket"
             DESTINATION "lib/systemd/system")
         # licence
         install(FILES "UNLICENSE"
@@ -770,8 +776,12 @@ elseif(UNIX)
         # copy the systemd service over
         set(svcfile_in "${supp_dir}/linux/splintermail.service")
         set(svcfile_out "${debdir}/splintermail.service")
+        set(sockfile_in "${supp_dir}/linux/splintermail.socket")
+        set(sockfile_out "${debdir}/splintermail.socket")
         qwwq("${svcfile_in}" "${svcfile_out}")
+        qwwq("${sockfile_in}" "${sockfile_out}")
         list(APPEND debfiles "${svcfile_out}")
+        list(APPEND debfiles "${sockfile_out}")
 
         # run some debian commands
         execute_process(COMMAND dpkg --print-architecture OUTPUT_VARIABLE debarch)

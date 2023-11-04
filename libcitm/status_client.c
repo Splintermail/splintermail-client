@@ -61,7 +61,8 @@ static void read_cb(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf){
             case UV_EOF:
                 ORIG_GO(&sc->e,
                     E_RESPONSE,
-                    "server closed our connection; maybe it died?",
+                    "local splintermail server closed our connection; "
+                    "maybe it died?",
                     done
                 );
             case UV_ENOBUFS:

@@ -20,16 +20,20 @@ post_install() {
 post_upgrade() {
     newversion="$1"
     oldversion="$2"
-    # if splintermail.service is active, restart it
-    if systemctl is-active splintermail.service >/dev/null ; then
+    # if splintermail.socket is active, stop it
+    if systemctl is-active splintermail.socket >/dev/null ; then
+        systemctl stop splintermail.socket
+        systemctl stop splintermail.service || true
+        # restart socket
         systemctl daemon-reload
-        systemctl restart splintermail.service
+        systemct start splintermail.socket
     fi
 }
 
 pre_remove() {
-    # if splintermail.service is active, stop it
-    if systemctl is-active splintermail.service >/dev/null ; then
+    # if splintermail.socket is active, stop it
+    if systemctl is-active splintermail.socket >/dev/null ; then
+        systemctl stop splintermail.socket || true
         systemctl stop splintermail.service || true
     fi
     systemctl daemon-reload || true

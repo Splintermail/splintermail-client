@@ -72,6 +72,7 @@ typedef struct {
 // if this fails, you still have to duv_loop_run() to finish cleanup
 derr_t status_server_init(
     status_server_t *ss,
+    int *sockfd,
     uv_loop_t *loop,
     scheduler_i *scheduler,
     string_builder_t sockpath,

@@ -106,6 +106,7 @@ static derr_t test_client_advance_up(advancer_t *advancer){
         PROP(&e,
             status_server_init(
                 &tc->ss,
+                NULL, // sockfd; we don't support --system here
                 &tc->root.loop,
                 &tc->root.scheduler.iface,
                 tc->sock,

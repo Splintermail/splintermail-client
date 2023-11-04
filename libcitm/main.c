@@ -50,7 +50,7 @@ static derr_t listener_cb(void *data, dstr_t val){
     size_t idx = l->len++;
 
     if(l->len > l->cap){
-        ORIG(&e, E_FIXEDSIZE, "too many --listener flags, limit 8");
+        ORIG(&e, E_FIXEDSIZE, "too many --listen flags, limit 8");
     }
 
     // val.data is persisted, but the dstr_t box is not
@@ -163,6 +163,7 @@ int main(int argc, char **argv){
     PROP_GO(&e,
          uv_citm(
             listeners.specs,
+            NULL, // lfds; we don't support --system here
             listeners.len,
             remote,
             key,
@@ -171,6 +172,7 @@ int main(int argc, char **argv){
             acme_verify_name,
             sm_baseurl,
             sockpath,
+            NULL, // sockfd; we don't support --system here
             ssl_ctx.ctx,
             sm_dir,
             indicate_ready,

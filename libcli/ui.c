@@ -10,12 +10,13 @@
 #include <errno.h>
 
 // os-specific defaults
-#ifndef _WIN32
-DSTR_STATIC(os_default_sm_dir, "/var/lib/splintermail");
-DSTR_STATIC(os_default_sock, "/var/run/splintermail/citm.sock");
-#else
+#ifdef _WIN32
 DSTR_STATIC(os_default_sm_dir, "C:/ProgramData/splintermail");
 DSTR_STATIC(os_default_sock, "\\\\.\\pipe\\splintermail-citm");
+#else
+DSTR_STATIC(os_default_sm_dir, "/var/lib/splintermail");
+DSTR_STATIC(os_default_sock, "/var/run/splintermail.sock");
+static derr_t detect_system_fds(listener_list_t l, int *sockfd);
 #endif
 
 // pass all calls to the real thing
@@ -40,6 +41,9 @@ ui_i default_ui_harness(void){
         .status_main = status_main,
         .configure_main = uv_configure_main,
         .uv_citm = uv_citm,
+        #ifndef _WIN32
+        .detect_system_fds = detect_system_fds,
+        #endif
     };
 }
 
@@ -481,16 +485,6 @@ static void trim_logfile_quiet(const char *path, long maxlen){
     DROP_VAR(&e);
 }
 
-// for selecting multiple --listeners
-typedef struct {
-    dstr_t *dstrs;
-    addrspec_t *specs;
-    size_t len;
-    size_t cap;
-    bool invalid;
-    bool key_required;
-} listener_list_t;
-
 static derr_t listener_cb(void *data, dstr_t val){
     derr_t e = E_OK;
 
@@ -498,7 +492,7 @@ static derr_t listener_cb(void *data, dstr_t val){
 
     if(l->len >= l->cap){
         FFMT_QUIET(stderr,
-            "too many --listener flags, limit %x\n", FU(l->cap)
+            "too many --listen flags, limit %x\n", FU(l->cap)
         );
         l->invalid = true;
         return e;
@@ -506,9 +500,6 @@ static derr_t listener_cb(void *data, dstr_t val){
 
     size_t idx = l->len++;
     addrspec_t *spec = &l->specs[idx];
-
-    if(l->len > l->cap){
-    }
 
     // val.data is persisted, but the dstr_t box is not
     l->dstrs[idx] = val;
@@ -522,7 +513,7 @@ static derr_t listener_cb(void *data, dstr_t val){
     }
     dstr_t specstr = dstr_from_off(dstr_off_extend(spec->scheme, spec->port));
 
-    // --listener requires each of SCHEME, HOST, and PORT
+    // --listen requires each of SCHEME, HOST, and PORT
     if(!spec->scheme.len || !spec->host.len || !spec->port.len){
         FFMT_QUIET(stderr,
             "--listen %x is missing elements, must be SCHEME://HOST:PORT\n",
@@ -553,9 +544,192 @@ static derr_t listener_cb(void *data, dstr_t val){
     return e;
 }
 
+#ifdef _WIN32
+
+// windows
+
+static void indicate_ready(void *user_data, uv_citm_t *uv_citm){
+    (void)user_data;
+    (void)uv_citm;
+    ReportSvcStatus(SERVICE_RUNNING, NO_ERROR, 0 );
+}
+
+#else
+#ifdef __APPLE__
+
+// macos:
+
+#include <launch.h>
+
+static derr_t detect_system_fds(listener_list_t l, int *sockfd){
+    derr_t e = E_OK;
+
+    /* listener fds, each named `listenN` since launchd offers arrays of
+       sockets but doesn't presrve their order (!) */
+    int *fds = NULL;
+    size_t nfds;
+    size_t i = 0;
+    for(; true; i++){
+        DSTR_VAR(key, 64);
+        PROP_GO(&e, FMT(&key, "listen%x", FU(i)), cu);
+        int ret = launch_activate_socket(key.data, &fds, &nfds);
+        // end when a key lookup fails
+        if(ret == ESRCH) break;
+        if(ret){
+            ORIG_GO(&e,
+                E_OS,
+                "failed to get launchd socket \"%x\": %x",
+                cu,
+                FD(key),
+                FE(ret)
+            );
+        }
+        if(nfds != 1){
+            ORIG_GO(&e,
+                E_PARAM,
+                "launchd socket \"%x\" contains %x listeners, "
+                "but exactly 1 is required",
+                cu,
+                FD(key),
+                FU(nfds)
+            );
+        }
+        if(i < l.len){
+            l.lfds[i] = fds[0];
+        }
+        free(fds);
+        fds = NULL;
+    }
+
+    if(i != l.len){
+        ORIG_GO(&e,
+            E_PARAM,
+            "launchd service provided %x listener sockets, "
+            "but splintermail is configured for exactly %x listeners\n",
+            cu,
+            FU(nfds),
+            FU(l.len)
+        );
+    }
+
+    // status fds
+    int ret = launch_activate_socket("status", &fds, &nfds);
+    if(ret){
+        ORIG_GO(&e,
+            E_OS,
+            "failed to get launchd status socket: %x",
+            cu,
+            FE(ret)
+        );
+    }
+    if(nfds != 1){
+        ORIG_GO(&e,
+            E_PARAM,
+            "launchd service provided %x status sockets, "
+            "but splintermail requires exactly 1\n",
+            cu,
+            FU(nfds)
+        );
+    }
+    *sockfd = fds[0];
+
+cu:
+    if(fds) free(fds);
+
+    return e;
+}
+
+static void indicate_ready(void *user_data, uv_citm_t *uv_citm){
+    (void)user_data;
+    (void)uv_citm;
+    // launchd doesn't seem to have an sd_notify equivalent
+}
+
+#else
+
+// linux
+
+#include <systemd/sd-daemon.h>
+
+static derr_t dsd_is_socket(int i, int fd, int family, bool *ok){
+    derr_t e = E_OK;
+
+    *ok = false;
+
+    // always SOCK_STREAM, always listening=1
+    int ret = sd_is_socket(fd, family, SOCK_STREAM, 1);
+    if(ret < 0){
+        ORIG(&e, E_OS, "sd_is_socket(%x): %x", FI(i), FE(-ret));
+    }
+
+    *ok = ret;
+
+    return e;
+}
+
+static derr_t detect_system_fds(listener_list_t l, int *sockfd){
+    derr_t e = E_OK;
+
+    // there should be one unix socket, and 1 or more tcp sockets
+
+    int nfds = sd_listen_fds(1); // 1 means "unset_env = true"
+    if(nfds < 0) ORIG(&e, E_OS, "sd_listen_fds: %x", FE(-nfds));
+
+    size_t nunix = 0;
+    size_t ntcp = 0;
+    for(int i = 0; i < nfds; i++){
+        int fd = SD_LISTEN_FDS_START + i;
+        bool is_unix;
+        bool is_ipv4;
+        bool is_ipv6;
+        PROP(&e, dsd_is_socket(i, fd, AF_UNIX, &is_unix) );
+        PROP(&e, dsd_is_socket(i, fd, AF_INET, &is_ipv4) );
+        PROP(&e, dsd_is_socket(i, fd, AF_INET6, &is_ipv6) );
+        if(is_unix){
+            if(!nunix) *sockfd = fd;
+            nunix++;
+        }else if(is_ipv4 || is_ipv6){
+            if(ntcp < l.len) l.lfds[ntcp] = fd;
+            ntcp++;
+        }else{
+            ORIG(&e, E_PARAM, "got systemd socket of unrecognized family");
+        }
+    }
+
+    // make sure we got the right counts
+    if(nunix != 1){
+        ORIG(&e,
+            E_PARAM,
+            "systemd service provided %x AF_UNIX status sockets, "
+            "but splintermail requires exactly 1\n",
+            FU(nunix)
+        );
+    }
+    if(ntcp != l.len){
+        ORIG(&e,
+            E_PARAM,
+            "systemd service provided %x listener sockets, "
+            "but splintermail is configured for exactly %x listeners\n",
+            FU(ntcp),
+            FU(l.len)
+        );
+    }
+
+    return e;
+}
+
+static void indicate_ready(void *user_data, uv_citm_t *uv_citm){
+    (void)user_data;
+    (void)uv_citm;
+    (void)sd_notify(0, "READY=1");
+}
+
+#endif
+#endif
+
 static derr_t citm_main(
     const ui_i ui,
-    bool windows_service,
+    bool system, // windows_service or --system
     const opt_spec_t o_cert,
     const opt_spec_t o_key,
     listener_list_t listeners,
@@ -569,11 +743,14 @@ static derr_t citm_main(
 
     dstr_t cert = {0};
     dstr_t key = {0};
+    int sockfd = -1;
 
     if(listeners.len == 0){
-        DSTR_STATIC(default_listen, "starttls://127.0.0.1:1993");
-        listeners.specs[0] = must_parse_addrspec(&default_listen);
-        listeners.len = 1;
+        DSTR_STATIC(default_starttls, "starttls://[::1]:143");
+        DSTR_STATIC(default_tls, "tls://[::1]:993");
+        listeners.specs[0] = must_parse_addrspec(&default_starttls);
+        listeners.specs[1] = must_parse_addrspec(&default_tls);
+        listeners.len = 2;
         listeners.key_required = true;
     }
 
@@ -591,22 +768,19 @@ static derr_t citm_main(
         PROP_GO(&e, FMT(&key, "%x", FD(o_key.val)), cu);
     }
 
+    #ifndef _WIN32
+    if(system) PROP_GO(&e, ui.detect_system_fds(listeners, &sockfd), cu);
+    #endif
+
     // migrate pre-citm device keys for use with citm
     PROP_GO(&e,
         ui.for_each_file_in_dir(&sm_dir_path, migrate_ditm_keys_hook, NULL),
     cu);
 
-#ifdef _WIN32
-    if(windows_service == true){
-        ReportSvcStatus(SERVICE_RUNNING, NO_ERROR, 0 );
-    }
-#else
-    (void)windows_service;
-#endif
-
     PROP_GO(&e,
         ui.uv_citm(
             listeners.specs,
+            listeners.lfds,
             listeners.len,
             remote,
             key.data,
@@ -615,9 +789,10 @@ static derr_t citm_main(
             NULL,  // acme_verify_name
             baseurl,  // sm_baseurl
             status_sock,
+            &sockfd,
             NULL,  // client_ctx
             sm_dir_path,
-            NULL, // indicate_ready
+            system ? indicate_ready : NULL,
             NULL, // user_async_hook
             NULL
         ),
@@ -628,6 +803,7 @@ static derr_t citm_main(
 cu:
     dstr_free(&cert);
     dstr_free(&key);
+    if(sockfd > -1) compat_close(sockfd);
 
     return e;
 }
@@ -1036,6 +1212,14 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
     dstr_t config_text = {0};
     dstr_t logfile_path = {0};
 
+    // support multiple listeners
+    dstr_t dstrs[8] = {0};
+    addrspec_t specs[8] = {0};
+    int lfds[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+    listener_list_t listeners = {
+        .dstrs = dstrs, .specs = specs, .lfds = lfds, .cap = 8
+    };
+
     derr_t e = E_OK;
     int retval = 98;
     // ignore SIGPIPE, required to work with OpenSSL
@@ -1091,11 +1275,6 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
 
     // dump-conf handled after config and command line
 
-    // support multiple listeners
-    dstr_t dstrs[8] = {0};
-    addrspec_t specs[8] = {0};
-    listener_list_t listeners = { .dstrs = dstrs, .specs = specs, .cap = 8 };
-
     // set up the main parse
     opt_spec_t o_debug      = {'D',  "debug",      false};
     opt_spec_t o_sock       = {'s',  "socket",     true};
@@ -1109,6 +1288,9 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
     opt_spec_t o_account_dir= {'a',  "account-dir",true};
     opt_spec_t o_follow     = {'\0', "follow",     false};
     opt_spec_t o_force      = {'\0', "force",      false};
+    #ifndef _WIN32
+    opt_spec_t o_system     = {'\0', "system",     false};
+    #endif
 
     opt_spec_t* spec[] = {
     //  option               citm   api_client  status  configure
@@ -1120,6 +1302,9 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
         &o_listen,        // x      .           .       .
         &o_cert,          // x      .           .       .
         &o_key,           // x      .           .       .
+        #ifndef _WIN32
+        &o_system,        // x      .           .       .
+        #endif
         &o_user,          // .      x           .       x
         &o_account_dir,   // .      x           .       .
         &o_follow,        // .      .           x       .
@@ -1175,17 +1360,14 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
         goto cu;
     }
 
-    // if we had --dump_conf on the command line, this is where we dump config
+    // if we had --dump-conf on the command line, this is where we dump config
     if(o_dump_conf.found){
-        fprintf(stderr, "nlisteners = %zu\n", listeners.len);
+        // treat --listen specially
+        for(size_t i = 0; i < listeners.len; i++){
+            FFMT_QUIET(stdout, "listen %x\n", FD(dstrs[i]));
+        }
         for(size_t i = 0; i < speclen; i++){
-            // treat --listen specially
-            if(strcmp(spec[i]->olong, "listen") == 0){
-                for(size_t i = 0; i < listeners.len; i++){
-                    FFMT_QUIET(stdout, "listen %x\n", FD(dstrs[i]));
-                }
-                continue;
-            }
+            if(strcmp(spec[i]->olong, "listen") == 0) continue;
             // all non --listen options
             fdump_opt(spec[i], stdout);
         }
@@ -1204,6 +1386,9 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
             &o_listen,
             &o_cert,
             &o_key,
+            #ifndef _WIN32
+            &o_system,
+            #endif
         };
         bool failed = limit_options(
             "splintermail citm", spec, speclen, counts, ok_opts
@@ -1274,6 +1459,12 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
         /* configure logfile here, because logfile_path will be read during the
            final DUMP in error scenarios */
 
+        #ifdef _WIN32
+        bool system = windows_service;
+        #else
+        bool system = o_system.found;
+        #endif
+
         // print to a log file, unless --no-logfile is specifed
         if(o_logfile.found > o_no_logfile.found){
             PROP_GO(&e, FMT(&logfile_path, "%x", FD(o_logfile.val)), cu);
@@ -1290,7 +1481,7 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
         PROP_GO(&e,
             citm_main(
                 ui,
-                windows_service,
+                system,
                 o_cert,
                 o_key,
                 listeners,
@@ -1340,6 +1531,12 @@ fail:
         DUMP(e);
         DROP_VAR(&e);
         retval = 125;
+    }
+
+    for(size_t i = 0; i < listeners.len; i++){
+        if(listeners.lfds[i] > -1){
+            compat_close(listeners.lfds[i]);
+        }
     }
 
     // free memory after DUMP, since logfile_path will be read during DUMP

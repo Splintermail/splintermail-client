@@ -99,7 +99,7 @@ void status_advance_down(advancer_t *advancer, derr_t *e){
 }
 
 static derr_t real_print(dstr_t buf){
-    return FFMT(stdout, "%s", FD(buf));
+    return FFMT(stdout, "%x", FD(buf));
 }
 
 derr_t status_main(const string_builder_t status_sock, bool follow){

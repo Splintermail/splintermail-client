@@ -1,14 +1,14 @@
 #!/bin/sh
 
-# check if there is a version of splintermail already installed
+# check if there is a version of splintermail installed
 if pkgutil --pkgs | grep -q QW osx_pkg_id WQ ; then
-    upgrading="true"
+    uninstalling="true"
 else
-    upgrading="false"
+    uninstalling="false"
 fi
 
-# if there was a version installed, call the preupgrade script
-if [ "$upgrading" = "true" ] ; then
+# if there was a version installed, call the preuninstall script
+if [ "$uninstalling" = "true" ] ; then
     sh "QW share_dir WQ/preuninstall.sh"
 fi
 

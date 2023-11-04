@@ -16,6 +16,9 @@ sm_lib(cli
 if(WIN32)
     # additional dependencies for windows
     target_link_libraries(cli PUBLIC shlwapi)
+elseif(APPLE)
+else()
+    target_link_libraries(cli PUBLIC systemd)
 endif()
 
 sm_test(test_status.c DEPS cli)

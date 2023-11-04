@@ -21,6 +21,9 @@
 extern bool looked_good;
 extern dstr_t reason_log;
 
+// ui.h
+extern bool detect_system_fds_called;
+
 // citm.h
 typedef struct {
     size_t nlspecs;
@@ -31,6 +34,8 @@ typedef struct {
     char *status_sock;
     char *sm_dir;
     derr_t to_return;
+    // if system is set, expect lfds and sockfd to be set
+    bool system;
 } citm_args_t;
 extern citm_args_t* citm_args;
 extern bool citm_called;

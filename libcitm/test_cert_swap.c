@@ -186,6 +186,7 @@ static void *run_uv_citm(void *arg){
     PROP_GO(&e,
         uv_citm(
             lspecs,
+            NULL, // lfds; we don't support --system here
             nlspecs,
             remote,
             NULL, // key
@@ -194,6 +195,7 @@ static void *run_uv_citm(void *arg){
             NULL, // acme_verify_name
             sm_baseurl,
             sockpath,
+            NULL, // sockfd; we don't support --system here
             NULL, // client_ctx
             g->tmp,
             globals_indicate_ready,

@@ -1,0 +1,10 @@
+[Socket]
+# --socket /run/splintermail.sock
+ListenStream=/run/splintermail.sock
+# --listen starttls::/[::1]:143
+ListenStream=[::1]:143
+# --listen tls::/[::1]:993
+ListenStream=[::1]:993
+
+[Install]
+WantedBy=sockets.target

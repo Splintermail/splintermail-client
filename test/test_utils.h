@@ -378,7 +378,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     _EXPECT_DM(e, name, got, exp, goto label)
 
 #define _EXPECT_NULL(e, name, got, action) do { \
-    const void *_got = (got); \
+    const void *_got = (void*)(got); \
     if(_got == NULL) break; \
     TRACE_ORIG(e, \
         E_VALUE, \
@@ -396,7 +396,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     _EXPECT_NULL(e, name, got, goto label)
 
 #define _EXPECT_NOT_NULL(e, name, got, action) do { \
-    const void *_got = (got); \
+    const void *_got = (void*)(got); \
     if(_got != NULL) break; \
     TRACE_ORIG(e, \
         E_VALUE, \

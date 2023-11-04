@@ -42,7 +42,7 @@ DESTDIR="%{buildroot}" cmake --build "QW build_dir WQ" --target install
 %post
 # install if $1==1, upgrade if $1==0
 # this just enables/disables the service according to the preset policy
-%systemd_post splintermail.service
+%systemd_post splintermail.socket
 # create service user
 getent group splintermail >/dev/null || groupadd -r splintermail
 getent passwd splintermail >/dev/null || \

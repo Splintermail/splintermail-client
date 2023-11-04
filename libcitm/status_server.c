@@ -485,6 +485,7 @@ static void on_fail_close_cb(uv_handle_t *handle){
 
 derr_t status_server_init(
     status_server_t *ss,
+    int *sockfd,  // sockfd only available in unix, from systemd/launchd
     uv_loop_t *loop,
     scheduler_i *scheduler,
     string_builder_t sockpath,
@@ -529,15 +530,24 @@ derr_t status_server_init(
 #ifdef _WIN32
     PROP_GO(&e, duv_pipe_bind_path(&ss->pipe, sockpath), fail);
 #else
-    // unix: needs a file lock
-    // note that sockpath is limited to like 108 chars for AF_UNIX sockets
-    DSTR_VAR(lock, 256);
-    PROP_GO(&e, FMT(&lock, "%x", FSB(sockpath)), fail);
-    if(dstr_endswith2(lock, DSTR_LIT(".sock"))) lock.len -= 5;
-    PROP_GO(&e, dstr_append(&lock, &DSTR_LIT(".lock")), fail);
-    PROP_GO(&e,
-        duv_pipe_bind_with_lock(&ss->pipe, sockpath, SBD(lock), &ss->lockfd),
-    fail);
+    // unix: inherit a socket or create our own
+    if(sockfd && *sockfd > -1){
+        // socket fd was provided by systemd/launchd
+        PROP_GO(&e, duv_pipe_open(&ss->pipe, *sockfd), fail);
+        *sockfd = -1;
+    }else{
+        // create our own
+        // note that sockpath is limited to like 108 chars for AF_UNIX sockets
+        DSTR_VAR(lock, 256);
+        PROP_GO(&e, FMT(&lock, "%x", FSB(sockpath)), fail);
+        if(dstr_endswith2(lock, DSTR_LIT(".sock"))) lock.len -= 5;
+        PROP_GO(&e, dstr_append(&lock, &DSTR_LIT(".lock")), fail);
+        PROP_GO(&e,
+            duv_pipe_bind_with_lock(
+                &ss->pipe, sockpath, SBD(lock), &ss->lockfd
+            ),
+        fail);
+    }
 #endif
 
     PROP_GO(&e, duv_pipe_listen(&ss->pipe, 5, on_listener), fail);
@@ -547,6 +557,7 @@ derr_t status_server_init(
     return e;
 
 fail:
+    if(sockfd && *sockfd > -1){ compat_close(*sockfd); *sockfd = -1; }
     if(ss->pipe.data) duv_pipe_close(&ss->pipe, on_fail_close_cb);
     dstr_free(&ss->wbuf);
     dstr_free(&ss->json_text);

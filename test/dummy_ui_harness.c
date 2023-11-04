@@ -25,11 +25,31 @@ static const char *strend(const char *s, const char *ending){
     EXPECT_D(e, name, __got, __exp); \
 } while(0)
 
+// ui.h
+bool detect_system_fds_called;
+#ifndef _WIN32
+static derr_t fake_detect_system_fds(listener_list_t l, int *sockfd){
+    derr_t e = E_OK;
+
+    printf("fake_detect_system_fds\n");
+
+    EXPECT_B(&e, "detect_system_fds_called", detect_system_fds_called, false);
+    detect_system_fds_called = true;
+    for(size_t i = 0; i < l.len; i++){
+        l.lfds[i] = 1;
+    }
+    *sockfd = 1;
+
+    return e;
+}
+#endif
+
 // libcitm/citm.h
 citm_args_t *citm_args;
 bool citm_called;
 static derr_t fake_uv_citm(
     const addrspec_t *lspecs,
+    int *lfds,
     size_t nlspecs,
     const addrspec_t remote,
     const char *key,   // explicit --key (disables acme)
@@ -38,6 +58,7 @@ static derr_t fake_uv_citm(
     char *acme_verify_name,  // may be "pebble" in some test scenarios
     dstr_t sm_baseurl,
     string_builder_t status_sock,
+    int *sockfd,
     SSL_CTX *client_ctx,
     string_builder_t sm_dir,
     // function pointers, mainly for instrumenting tests:
@@ -48,22 +69,32 @@ static derr_t fake_uv_citm(
     derr_t e = E_OK;
 
     EXPECT_NOT_NULL(&e, "citm args", citm_args);
+    EXPECT_B(&e, "citm_called", citm_called, false);
+    citm_called = true;
+
     EXPECT_U(&e, "nlspecs", nlspecs, citm_args->nlspecs);
+    EXPECT_NOT_NULL(&e, "lfds", lfds);
     for(size_t i = 0; i < nlspecs; i++){
         EXPECT_ADDR(&e, "lspec", lspecs[i], citm_args->lspecs[i]);
+        EXPECT_I(&e, "ldf[i]", lfds[i], citm_args->system ? 1 : -1);
     }
-    fprintf(stderr, "key: %s\n", key);
     EXPECT_S(&e, "key", strend(key, citm_args->key), citm_args->key);
     EXPECT_S(&e, "cert", strend(cert, citm_args->cert), citm_args->cert);
     EXPECT_ADDR(&e, "remote", remote, citm_args->remote);
     EXPECT_SBS(&e, "status_sock", status_sock, citm_args->status_sock);
     EXPECT_SBS(&e, "sm_dir", sm_dir, citm_args->sm_dir);
-    EXPECT_B(&e, "citm_called", citm_called, false);
+    EXPECT_NOT_NULL(&e, "sockfd", sockfd);
+    EXPECT_NOT_NULL(&e, "sockfd", sockfd);
+    EXPECT_I(&e, "*sockfd", *sockfd, citm_args->system ? 1 : -1);
+
+    // when --system is set, we expect an indicate_ready
+    if(citm_args->system){
+        EXPECT_NOT_NULL(&e, "indicate_ready", indicate_ready);
+    }else{
+        EXPECT_NULL(&e, "indicate_ready", indicate_ready);
+    }
 
     // hardcoded args; never configured by the cli
-    if(indicate_ready != NULL){
-        ORIG(&e, E_VALUE, "expected indicate_ready == NULL");
-    }
     if(user_async_hook != NULL){
         ORIG(&e, E_VALUE, "expected user_async_hook == NULL");
     }
@@ -74,8 +105,6 @@ static derr_t fake_uv_citm(
         "sm_baseurl", sm_baseurl, DSTR_LIT("https://splintermail.com")
     );
     EXPECT_NULL(&e, "client_ctx", client_ctx);
-
-    citm_called = true;
 
     return citm_args->to_return;
 }
@@ -459,5 +488,8 @@ ui_i dummy_ui_harness(void){
         .status_main = fake_status_main,
         .configure_main = fake_configure_main,
         .uv_citm = fake_uv_citm,
+        #ifndef _WIN32
+        .detect_system_fds = fake_detect_system_fds,
+        #endif
     };
 }

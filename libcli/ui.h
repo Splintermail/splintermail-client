@@ -7,6 +7,17 @@ extern SERVICE_STATUS_HANDLE g_svc_status_h;
 VOID ReportSvcStatus(DWORD current_state, DWORD exit_code, DWORD wait_hint);
 #endif // _WIN32
 
+// for selecting multiple --listen flags
+typedef struct {
+    dstr_t *dstrs;
+    addrspec_t *specs;
+    int *lfds;
+    size_t len;
+    size_t cap;
+    bool invalid;
+    bool key_required;
+} listener_list_t;
+
 typedef struct {
     // libdstr
     derr_t (*dir_w_access_path)(
@@ -71,6 +82,7 @@ typedef struct {
     // libcitm.h
     derr_t (*uv_citm)(
         const addrspec_t *lspecs,
+        int *lfds,
         size_t nlspecs,
         const addrspec_t remote,
         const char *key,
@@ -79,12 +91,17 @@ typedef struct {
         char *acme_verify_name,
         dstr_t sm_baseurl,
         string_builder_t sockpath,
+        int *sockfd,
         SSL_CTX *client_ctx,
         string_builder_t sm_dir,
         void (*indicate_ready)(void*, uv_citm_t*),
         void (*user_async_hook)(void*, uv_citm_t*),
         void *user_data
     );
+    // ui.h
+    #ifndef _WIN32
+    derr_t (*detect_system_fds)(listener_list_t l, int *sockfd);
+    #endif
 } ui_i;
 
 // pass all calls to the real thing

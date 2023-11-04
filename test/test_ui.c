@@ -15,7 +15,7 @@ static char *default_status_sock = "\\\\.\\pipe\\splintermail-citm";
 static char *default_sm_dir = "C:/ProgramData/splintermail";
 #else
 // unix
-static char *default_status_sock = "/var/run/splintermail/citm.sock";
+static char *default_status_sock = "/var/run/splintermail.sock";
 static char *default_sm_dir = "/var/lib/splintermail";
 #endif
 
@@ -70,6 +70,7 @@ struct test_case_t {
     char* test_name;
     char** argv;
     bool call_citm_loop;
+    bool call_detect_system_fds;
     bool call_status_main;
     bool call_configure_main;
     citm_args_t citm_args;
@@ -100,6 +101,7 @@ static derr_t run_test_case(struct test_case_t test){
     looked_good = true;
     reason_log.len = 0;
     citm_called = false;
+    detect_system_fds_called = false;
     status_called = false;
     configure_called = false;
     register_token_called = false;
@@ -179,6 +181,9 @@ static derr_t run_test_case(struct test_case_t test){
     if(test.call_citm_loop != citm_called)
         UH_OH("run_test_case citm_called exp %x but got %x\n",
               FB(test.call_citm_loop), FB(citm_called));
+    if(test.call_detect_system_fds != detect_system_fds_called)
+        UH_OH("run_test_case detect_system_fds_called exp %x but got %x\n",
+              FB(test.call_detect_system_fds), FB(detect_system_fds_called));
     if(test.call_status_main != status_called)
         UH_OH("run_test_case status_called exp %x but got %x\n",
               FB(test.call_status_main), FB(status_called));
@@ -244,9 +249,9 @@ static derr_t run_all_cases(char *tmpconf){
         // prepare the expected stdout
         test_case.test_name = "config";
         test_case.expect_out =
-            "splintermail-dir 12345\n"
             "listen starttls://h:1\n"
             "listen insecure://H:2\n"
+            "splintermail-dir 12345\n"
         ;
         test_case.argv = (char*[]){
             SM,
@@ -313,8 +318,8 @@ static derr_t run_all_cases(char *tmpconf){
         struct test_case_t test_case, base_case = {
             .call_citm_loop = true,
             .citm_args = {
-                .nlspecs = 1,
-                .lspecs = {"starttls://127.0.0.1:1993"},
+                .nlspecs = 2,
+                .lspecs = {"starttls://[::1]:143", "tls://[::1]:993"},
                 .key = NULL,
                 .cert = NULL,
                 .remote = "tls://splintermail.com:993",
@@ -339,6 +344,7 @@ static derr_t run_all_cases(char *tmpconf){
         test_case = base_case;
         test_case.test_name = "citm one listener";
         test_case.citm_args.lspecs[0] = "insecure://yo:5";
+        test_case.citm_args.nlspecs = 1;
         test_case.citm_args.key = NULL;
         test_case.citm_args.cert = NULL;
         test_case.argv = (char*[]){
@@ -401,6 +407,20 @@ static derr_t run_all_cases(char *tmpconf){
         test_case.argv = (char*[]){
             SM, "citm", "--socket", "customsock", NULL
         };
+        PROP(&e, run_test_case(test_case) );
+
+        test_case = base_case;
+        test_case.test_name = "citm use system fds";
+        test_case.argv = (char*[]){SM, "citm", "--system", NULL};
+        #ifdef _WIN32
+        // windows outcome: reject unknown option
+        test_case.expect_return = 1;
+        test_case.call_citm_loop = false;
+        #else
+        // unix outcome: detect system fds before citm loop
+        test_case.call_detect_system_fds = true;
+        test_case.citm_args.system = true;
+        #endif
         PROP(&e, run_test_case(test_case) );
     }
 

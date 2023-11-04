@@ -1,12 +1,12 @@
 [Unit]
 Description=splintermail CITM server.
+After=network.target
+Wants=splintermail.socket
 
 [Service]
-Type=simple
+Type=notify
+Restart=always
 ExecStart=QW install_prefix WQ/bin/splintermail citm
-StandardOutput=syslog
-StandardError=syslog
-Restart=on-failure
 User=splintermail
 Group=splintermail
 

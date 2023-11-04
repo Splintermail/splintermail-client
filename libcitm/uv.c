@@ -308,6 +308,7 @@ static derr_t lspec_wants_tls(addrspec_t spec, bool *out){
 static derr_t citm_listener_init(
     citm_listener_t *listener,
     addrspec_t spec,
+    int *fdin,  // fd only available in unix, from systemd/launchd
     uv_citm_t *uv_citm,
     SSL_CTX *ctx
 ){
@@ -319,11 +320,17 @@ static derr_t citm_listener_init(
     bool ok = imap_scheme_parse(scheme, &listener->security);
     if(!ok) ORIG(&e, E_PARAM, "invalid scheme: %x", FD(specstr));
 
-    compat_socket_t fd = INVALID_SOCKET;
     bool tcp_configured = false;
 
-    // set up the fd
-    PROP_GO(&e, bind_addrspec(spec, SOCK_STREAM, 0, &fd), fail);
+    compat_socket_t fd = INVALID_SOCKET;
+    #ifndef _WIN32
+    if(fdin && *fdin > -1){ fd = *fdin; *fdin = -1; }
+    #endif
+
+    if(fd == INVALID_SOCKET){
+        // create a new fd
+        PROP_GO(&e, bind_addrspec(spec, SOCK_STREAM, 0, &fd), fail);
+    }
     // initialize the tcp
     PROP_GO(&e, duv_tcp_init(&uv_citm->loop, &listener->tcp), fail);
     tcp_configured = true;
@@ -346,7 +353,7 @@ static derr_t citm_listener_init(
     return e;
 
 fail:
-    if(fd != INVALID_SOCKET) compat_closesocket(fd);
+    if(fdin && *fdin > -1){ compat_close(*fdin); *fdin = -1; }
     if(listener->ctx) SSL_CTX_free(listener->ctx);
     if(tcp_configured) duv_tcp_close(&listener->tcp, noop_close_cb);
 
@@ -516,6 +523,7 @@ static void ss_done_cb(void *data, derr_t err){
 
 derr_t uv_citm(
     const addrspec_t *lspecs,
+    int *lfds,  // for systemd/launchd
     size_t nlspecs,
     const addrspec_t remote,
     const char *key,   // explicit --key (disables acme)
@@ -524,6 +532,7 @@ derr_t uv_citm(
     char *acme_verify_name,  // may be "pebble" in some test scenarios
     dstr_t sm_baseurl,
     string_builder_t sockpath,
+    int *sockfd,  // for systemd/launchd
     SSL_CTX *client_ctx,
     string_builder_t sm_dir,
     // function pointers, mainly for instrumenting tests:
@@ -648,6 +657,7 @@ derr_t uv_citm(
             citm_listener_init(
                 &uv_citm.listeners[i],
                 lspecs[i],
+                lfds ? &lfds[i] : NULL,
                 &uv_citm,
                 server_ctx
             ),
@@ -657,17 +667,13 @@ derr_t uv_citm(
         dstr_t specstr = dstr_from_off(
             dstr_off_extend(lspecs[i].scheme, lspecs[i].port)
         );
-        if(indicate_ready){
-            LOG_INFO("listening on %x\n", FD(specstr));
-        }else{
-            // always indicate on DEBUG-level logs
-            LOG_DEBUG("listening on %x\n", FD(specstr));
-        }
+        LOG_DEBUG("listening on %x\n", FD(specstr));
     }
 
     PROP_GO(&e,
         status_server_init(
             &uv_citm.ss,
+            sockfd,
             &uv_citm.loop,
             &uv_citm.scheduler.iface,
             sockpath,
@@ -692,11 +698,9 @@ derr_t uv_citm(
 
     // initialization success!
 
+    LOG_DEBUG("all listeners ready\n");
     if(indicate_ready){
         indicate_ready(user_data, &uv_citm);
-    }else{
-        // always indicate on DEBUG-level logs
-        LOG_DEBUG("all listeners ready\n");
     }
 
     PROP_GO(&e, duv_run(&uv_citm.loop), cu);
@@ -742,6 +746,12 @@ cu:
 
     // if uv_citm exited due to an error, detect it now
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&e, &uv_citm.e);
+
+    // close any systemd/launchd file descriptors
+    for(size_t i = 0; i < nlspecs; i++){
+        if(lfds && lfds[i] > -1){ compat_close(lfds[i]); lfds[i] = -1; }
+    }
+    if(sockfd && *sockfd > -1){ compat_close(*sockfd); *sockfd = -1; }
 
     return e;
 }

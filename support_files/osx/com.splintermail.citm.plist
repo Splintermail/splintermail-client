@@ -8,17 +8,51 @@
   <array>
     <string>/usr/local/bin/splintermail</string>
     <string>citm</string>
+    <string>--system</string>
   </array>
-  <!-- CITM has no launchd integration, it accepts its own connections -->
-  <key>KeepAlive</key>
-  <true/>
+  <key>Sockets</key>
+  <dict>
+    <!--
+      listener tcp sockets: must be named listenN where N is 0-indexed.
+      Supposedly you can have a Socket item which is an array of
+      dicts, but launchd doesn't actually preserve the order of the array,
+      and the order of sockets must match the order of `listen` options in
+      the splintermail config file, so this is how we preserve ordering.
+    -->
+    <!-- the default starttls://[::]:143 -->
+    <key>listen0</key>
+    <dict>
+      <key>SockNodeName</key>
+      <string>::</string>
+      <key>SockServiceName</key>
+      <integer>143</integer>
+      <key>SockFamily</key>
+      <string>IPv4v6</string>
+    </dict>
+    <key>listen1</key>
+    <!-- the default tls://[::]:993 -->
+    <dict>
+      <key>SockNodeName</key>
+      <string>::</string>
+      <key>SockServiceName</key>
+      <integer>993</integer>
+      <key>SockFamily</key>
+      <string>IPv4v6</string>
+    </dict>
+    <!-- status server unix socket -->
+    <key>status</key>
+    <dict>
+      <key>SockPathName</key>
+      <string>/var/run/splintermail.sock</string>
+      <!-- SockPathOwner, SockPathGroup, and SockPathMode seem to cause
+           launchd to silently ignore this socket -->
+    </dict>
+  </dict>
   <!-- not a gui application -->
   <key>ProcessType</key>
   <string>Background</string>
   <!-- run as the _splintermail user -->
   <key>UserName</key>
   <string>_splintermail</string>
-  <!-- <key>StandardErrorPath</key>
-  <string>HOME/.citm/citm_log.stderr</string> -->
 </dict>
 </plist>
