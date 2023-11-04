@@ -12,13 +12,14 @@
 #define STATUS_MIN_MAP(XX) \
     XX(STATUS_MIN_NONE, 0, "") \
     XX(STATUS_MIN_CREATE_ACCOUNT, 1, "creating an acme account") \
-    XX(STATUS_MIN_RELOAD, 2, "checking on previous acme orders") \
+    XX(STATUS_MIN_RELOAD, 2, "checking on previous acme order") \
     XX(STATUS_MIN_CREATE_ORDER, 3, "creating an acme order") \
     XX(STATUS_MIN_GET_AUTHZ, 4, "getting the acme authorization") \
     XX(STATUS_MIN_PREPARE_CHALLENGE, 5, "preparing for the acme challenge") \
     XX(STATUS_MIN_COMPLETE_CHALLENGE, 6, "completing the acme challenge") \
     XX(STATUS_MIN_GENERATE_KEY, 7, "generating a new tls key") \
     XX(STATUS_MIN_FINALIZE_ORDER, 8, "finalizing the acme order") \
+    XX(STATUS_MIN_RETRY, 9, "retrying again soon") \
 
 #define STATUS_ENUM(name, val, str) name = val,
 typedef enum {

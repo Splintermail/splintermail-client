@@ -44,12 +44,9 @@ typedef void (*acme_manager_done_cb)(void*, derr_t);
 
 typedef struct {
     derr_t e;
-    // iterating through list_orders
-    LIST(dstr_t) orders;
-    size_t check_order_idx;
 
     // checking orders
-    acme_status_e best;
+    acme_status_e order_status;
     acme_status_e challenge_status;
 
     EVP_PKEY *pkey;
@@ -65,9 +62,6 @@ typedef struct {
 
     bool keygen_started : 1;
     bool keygen_done : 1;
-    bool list_orders_sent : 1;
-    bool list_orders_done : 1;
-    bool checked_existing_orders : 1;
     bool check_order_sent : 1;
     bool check_order_done : 1;
     bool new_order_sent : 1;
@@ -177,7 +171,6 @@ struct acme_manager_i {
     void (*get_order)(
         acme_manager_i *iface, const acme_account_t acct, const dstr_t order
     );
-    void (*list_orders)(acme_manager_i *iface, const acme_account_t acct);
     void (*get_authz)(
         acme_manager_i *iface, const acme_account_t acct, const dstr_t authz
     );
@@ -249,8 +242,6 @@ void am_get_order_done(
     dstr_t certurl,     // might be empty
     time_t retry_after  // might be zero
 );
-// allocated list of allocated strings is returned
-void am_list_orders_done(acme_manager_t *am, derr_t err, LIST(dstr_t) orders);
 void am_get_authz_done(
     acme_manager_t *am,
     derr_t err,

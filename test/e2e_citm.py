@@ -3013,6 +3013,21 @@ def test_acme(cmd, maildir_root, remote):
         # wait for acme to be successful
         wait_for_msg(subproc.out_q, b"obtained new ACME cert")
 
+        # find the notBefore time on the certificate and wait for it; if the
+        # pebble server is provided by a remote machine, there might be a few
+        # seconds before it is ready.
+        pem = ssl.get_server_certificate(("127.0.0.1", 2994))
+        cmd = ["./test/not_before"]
+        p = subprocess.run(
+            cmd, input=pem.encode('utf8'), stdout=subprocess.PIPE, check=True
+        )
+        not_before = int(p.stdout.strip())
+        delay = not_before - time.time()
+        if delay > 0:
+            delay_ms = int(delay * 1000)
+            print(f"waiting {delay_ms} ms for clock skew", file=sys.stderr)
+            time.sleep(delay)
+
         # connect with tls, and expect valid certs
         with socket.socket() as s:
             s.connect(("127.0.0.1", 2994))

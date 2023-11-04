@@ -216,20 +216,6 @@ static void uvam_get_order(
     acme_get_order(uvam->acme, acct, order, uvam_get_order_cb, uvam);
 }
 
-static void uvam_list_orders_cb(void *data, derr_t err, LIST(dstr_t) orders){
-    uv_acme_manager_t *uvam = data;
-    am_list_orders_done(&uvam->am, err, orders);
-    schedule(uvam);
-}
-
-static void uvam_list_orders(
-    acme_manager_i *iface,
-    const acme_account_t acct
-){
-    uv_acme_manager_t *uvam = CONTAINER_OF(iface, uv_acme_manager_t, iface);
-    acme_list_orders(uvam->acme, acct, uvam_list_orders_cb, uvam);
-}
-
 static void uvam_get_authz_cb(
     void *data,
     derr_t err,
@@ -461,7 +447,6 @@ derr_t uv_acme_manager_init(
             .new_account = uvam_new_account,
             .new_order = uvam_new_order,
             .get_order = uvam_get_order,
-            .list_orders = uvam_list_orders,
             .get_authz = uvam_get_authz,
             .challenge = uvam_challenge,
             .challenge_finish = uvam_challenge_finish,

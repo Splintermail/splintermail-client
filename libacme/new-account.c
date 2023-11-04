@@ -28,7 +28,6 @@ static void _new_account_cb(
     jdump_i *obj =  DOBJ(
         DKEY("key", DJWKPVT(acct.key)),
         DKEY("kid", DD(acct.kid)),
-        DKEY("orders", DD(acct.orders)),
     );
     PROP_GO(&e, jdump(obj, WF(stdout), 2), done);
 

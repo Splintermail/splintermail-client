@@ -16,7 +16,6 @@ void acme_free(acme_t **acme);
 typedef struct {
     key_i *key;
     dstr_t kid;
-    dstr_t orders;
 } acme_account_t;
 
 derr_t acme_account_from_json(acme_account_t *acct, json_ptr_t ptr);
@@ -27,7 +26,6 @@ derr_t acme_account_from_path(acme_account_t *acct, string_builder_t path);
 #define DACCT(acct) DOBJ( \
     DKEY("key", DJWKPVT((acct).key)), \
     DKEY("kid", DD((acct).kid)), \
-    DKEY("orders", DD((acct).orders)), \
 )
 
 derr_t acme_account_to_file(const acme_account_t acct, char *file);
@@ -96,16 +94,6 @@ void acme_get_order(
     const acme_account_t acct,
     const dstr_t order,
     acme_get_order_cb cb,
-    void *cb_data
-);
-
-// allocated list of allocated strings is returned
-typedef void (*acme_list_orders_cb)(void*, derr_t, LIST(dstr_t) orders);
-
-void acme_list_orders(
-    acme_t *acme,
-    const acme_account_t acct,
-    acme_list_orders_cb cb,
     void *cb_data
 );
 

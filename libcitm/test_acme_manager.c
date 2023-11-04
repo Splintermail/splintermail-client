@@ -45,8 +45,7 @@ static char *acct1 =
     "    \"y\": \"uL4CozKllAT0eTmGdpGQ2u5FQdu49K_QjMVywMOrifY\","
     "    \"d\": \"y2deb3RTFPTaU_7T-uTwds_mddZu7wiwelLMRNYA7oU\""
     "  },"
-    "  \"kid\": \"kid1\","
-    "  \"orders\": \"orders1\""
+    "  \"kid\": \"kid1\""
     "}";
 
 static char *jwk1 =
@@ -59,6 +58,17 @@ static char *jwk1 =
     "}";
 
 static char *thumb1 = "tJZ4TbWuh3ceHFD74n9nxAzMFvVjVULRLwpa1WN7Sd4";
+
+static char *order_good =
+    "{"
+    "  \"fulldomain\": \"yomamma.user.splintermail.com\","
+    "  \"order\": \"ogood\""
+    "}";
+static char *order_stale =
+    "{"
+    "  \"fulldomain\": \"notyomamma.user.splintermail.com\","
+    "  \"order\": \"ostale\""
+    "}";
 
 // returns a cert which is loadable, but otherwise totally bogus
 static derr_t mkcert(char *key, dstr_t domain, time_t expiry, dstr_t *out){
@@ -162,7 +172,6 @@ typedef enum {
     NEW_ACCOUNT,
     NEW_ORDER,
     GET_ORDER,
-    LIST_ORDERS,
     GET_AUTHZ,
     CHALLENGE,
     CHALLENGE_FINISH,
@@ -186,7 +195,6 @@ static char *call_type_names[] = {
     "NEW_ACCOUNT",
     "NEW_ORDER",
     "GET_ORDER",
-    "LIST_ORDERS",
     "GET_AUTHZ",
     "CHALLENGE",
     "CHALLENGE_FINISH",
@@ -269,7 +277,6 @@ typedef struct {
     bool want_new_account;
     bool want_new_order;
     bool want_get_order;
-    bool want_list_orders;
     bool want_get_authz;
     bool want_challenge;
     bool want_finalize;
@@ -462,14 +469,6 @@ static void g_get_order(
 done:
     if(is_error(g->e)) LOG_ERROR("failure occured\n");
     return;
-}
-
-static void g_list_orders(acme_manager_i *iface, const acme_account_t acct){
-    globals_t *g = CONTAINER_OF(iface, globals_t, iface);
-    g->want_list_orders = true;
-    (void)acct;
-    call_t call;
-    expect_call(g, LIST_ORDERS, &call);
 }
 
 static void g_get_authz(
@@ -715,8 +714,6 @@ static void add_call(globals_t *g, call_e type, call_u u){
     add_call(g, NEW_ORDER, CALL_U(.new_order = domain))
 #define EXPECT_GET_ORDER(g, order) \
     add_call(g, GET_ORDER, CALL_U(.get_order = order))
-#define EXPECT_LIST_ORDERS(g) \
-    add_call(g, LIST_ORDERS, CALL_U(0))
 #define EXPECT_GET_AUTHZ(g, authz) \
     add_call(g, GET_AUTHZ, CALL_U(.get_authz = authz))
 #define EXPECT_CHALLENGE(g, authz, chlng) \
@@ -828,12 +825,11 @@ static derr_t g_keygen_done(globals_t *g, derr_type_t etype, char *key){
 }
 
 static derr_t g_new_account_done(
-    globals_t *g, derr_type_t etype, const char *kid, const char *orders
+    globals_t *g, derr_type_t etype, const char *kid
 ){
     derr_t e = E_OK;
 
     dstr_t dkid = {0};
-    dstr_t dorders = {0};
     key_i *key = NULL;
 
     if(!etype){
@@ -845,9 +841,8 @@ static derr_t g_new_account_done(
 
     derr_t err = { .type = etype };
     PROP_GO(&e, dstr_copystr(kid, &dkid), fail);
-    PROP_GO(&e, dstr_copystr(orders, &dorders), fail);
 
-    acme_account_t acct = {key, dkid, dorders};
+    acme_account_t acct = {key, dkid};
     key = NULL;
     am_new_account_done(&g->am, err, acct);
     g->want_new_account = false;
@@ -858,7 +853,6 @@ static derr_t g_new_account_done(
 
 fail:
     dstr_free(&dkid);
-    dstr_free(&dorders);
     if(key) key->free(key);
     return e;
 }
@@ -948,40 +942,6 @@ fail:
     dstr_free(&dcerturl);
     return e;
 }
-
-// allocated list of allocated strings is returned
-static derr_t _g_list_orders_done(
-    globals_t *g, derr_type_t etype, char **strs, size_t n
-){
-    derr_t e = E_OK;
-
-    LIST(dstr_t) dlist = {0};
-
-    derr_t err = { .type = etype };
-    PROP_GO(&e, LIST_NEW(dstr_t, &dlist, n), fail);
-    for(size_t i = 0; i < n; i++){
-        PROP_GO(&e, dstr_copystr(strs[i], &dlist.data[dlist.len++]), fail);
-    }
-    am_list_orders_done(&g->am, err, dlist);
-    g->want_list_orders = false;
-
-    PROP(&e, run(g) );
-
-    return e;
-
-fail:
-    for(size_t i = 0; i < dlist.len; i++){
-        dstr_free(&dlist.data[i]);
-    }
-    LIST_FREE(dstr_t, &dlist);
-    return e;
-}
-
-#define g_list_orders_done(g, etype, ...) \
-    _g_list_orders_done((g), (etype), \
-        &(char*[]){NULL, __VA_ARGS__}[1], \
-        sizeof((char*[]){NULL, __VA_ARGS__})/sizeof(char*) - 1 \
-    )
 
 static derr_t g_get_authz_done(globals_t *g,
     derr_type_t etype,
@@ -1078,14 +1038,12 @@ static derr_t g_close(globals_t *g, derr_type_t etype){
     MAYBE_DONE(prepare, cncl, NULL);
     MAYBE_DONE(unprepare, cncl, NULL);
     MAYBE_DONE(keygen, cncl, NULL);
-    MAYBE_DONE(new_account, cncl, "", "");
+    MAYBE_DONE(new_account, cncl, "");
     MAYBE_DONE(new_order, cncl, "", "", "", "");
     MAYBE_DONE(get_order, cncl, 0, "", "", "", "", "", 0);
     MAYBE_DONE(get_authz, cncl, 0, 0, "", "", "", "", 0);
     MAYBE_DONE(challenge, cncl);
     MAYBE_DONE(finalize, cncl, (dstr_t){0});
-    // list_orders is special because of the nested __VA_ARGS__
-    if(g->want_list_orders) PROP(&e, g_list_orders_done(g, cncl) );
 
     #undef MAYBE_DONE
 
@@ -1115,14 +1073,12 @@ static void forceclose(globals_t *g, derr_t *E){
     MAYBE_DONE(prepare, cncl, NULL);
     MAYBE_DONE(unprepare, cncl, NULL);
     MAYBE_DONE(keygen, cncl, NULL);
-    MAYBE_DONE(new_account, cncl, "", "");
+    MAYBE_DONE(new_account, cncl, "");
     MAYBE_DONE(new_order, cncl, "", "", "", "");
     MAYBE_DONE(get_order, cncl, 0, "", "", "", "", "", 0);
     MAYBE_DONE(get_authz, cncl, 0, 0, "", "", "", "", 0);
     MAYBE_DONE(challenge, cncl);
     MAYBE_DONE(finalize, cncl, (dstr_t){0});
-    // list_orders is special because of the nested __VA_ARGS__
-    if(g->want_list_orders) DROP_CMD( g_list_orders_done(g, cncl) );
 
     #undef MAYBE_DONE
 
@@ -1161,7 +1117,6 @@ static derr_t globals_init(globals_t *g){
             .new_account = g_new_account,
             .new_order = g_new_order,
             .get_order = g_get_order,
-            .list_orders = g_list_orders,
             .get_authz = g_get_authz,
             .challenge = g_challenge,
             .challenge_finish = g_challenge_finish,
@@ -1286,7 +1241,7 @@ static derr_t test_am_advance_state(void){
     EXPECT_KEYGEN(&g);
     EXPECT_NEW_ORDER(&g, fulldomain);
     EXPECT_STATUS(&g, TLS_FIRST, CREATE_ORDER, fulldomain);
-    PROP_GO(&e, g_new_account_done(&g, E_NONE, "k1", "orders"), cu);
+    PROP_GO(&e, g_new_account_done(&g, E_NONE, "k1"), cu);
 
     EXPECT_GET_AUTHZ(&g, "z1");
     EXPECT_STATUS(&g, TLS_FIRST, GET_AUTHZ, fulldomain);
@@ -1352,16 +1307,16 @@ static derr_t test_am_advance_state(void){
     g.now = renewal;
     EXPECT_DEADLINE_CERT(&g, expiry);
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
-    EXPECT_STATUS(&g, TLS_RENEW, RELOAD, fulldomain);
+    EXPECT_NEW_ORDER(&g, fulldomain);
+    EXPECT_STATUS(&g, TLS_RENEW, CREATE_ORDER, fulldomain);
     PROP_GO(&e, run(&g), cu);
 
     // pretend expiry occurs
     g.now = expiry;
     EXPECT_UPDATE(&g, false);
-    EXPECT_NEW_ORDER(&g, fulldomain);
-    EXPECT_STATUS(&g, TLS_EXPIRED, CREATE_ORDER, fulldomain);
-    PROP_GO(&e, g_list_orders_done(&g, E_NONE), cu);
+    EXPECT_GET_AUTHZ(&g, "a");
+    EXPECT_STATUS(&g, TLS_EXPIRED, GET_AUTHZ, fulldomain);
+    PROP_GO(&e, g_new_order_done(&g, E_NONE, "o1", "x", "a", "f"), cu);
 
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
@@ -1431,8 +1386,8 @@ static derr_t test_acme_manager_init(void){
     // start with installation and account but no key/cert
     PROP_GO(&e, dstr_write_path2(dstr_from_cstr(acct1), acct), cu);
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
-    PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
+    EXPECT_NEW_ORDER(&g, fulldomain);
+    PROP_GO(&e, START(&g, false, TLS_FIRST, CREATE_ORDER, fulldomain), cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
     // start with installation and account and key/cert
@@ -1448,23 +1403,23 @@ static derr_t test_acme_manager_init(void){
     g.now = renewal;
     EXPECT_DEADLINE_CERT(&g, expiry);
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
-    PROP_GO(&e, START(&g, true, TLS_RENEW, RELOAD, fulldomain), cu);
+    EXPECT_NEW_ORDER(&g, fulldomain);
+    PROP_GO(&e, START(&g, true, TLS_RENEW, CREATE_ORDER, fulldomain), cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
     // start with installation and account and expired key/cert
     g.now = expiry;
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
-    PROP_GO(&e, START(&g, false, TLS_EXPIRED, RELOAD, fulldomain), cu);
+    EXPECT_NEW_ORDER(&g, fulldomain);
+    PROP_GO(&e, START(&g, false, TLS_EXPIRED, CREATE_ORDER, fulldomain), cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
     g.now = 0;
 
     // start with installation and account and key/cert which are not ours
     PROP_GO(&e, dstr_write_path2(notmycert, cert), cu);
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
-    PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
+    EXPECT_NEW_ORDER(&g, fulldomain);
+    PROP_GO(&e, START(&g, false, TLS_FIRST, CREATE_ORDER, fulldomain), cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
     // start with installation and account and keynew but no certnew
@@ -1473,8 +1428,8 @@ static derr_t test_acme_manager_init(void){
     PROP_GO(&e, dstr_write_path2(DSTR_LIT("badkey"), keynew), cu);
     EXPECT_DEADLINE_CERT(&g, expiry);
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
-    PROP_GO(&e, START(&g, true, TLS_RENEW, RELOAD, fulldomain), cu);
+    EXPECT_NEW_ORDER(&g, fulldomain);
+    PROP_GO(&e, START(&g, true, TLS_RENEW, CREATE_ORDER, fulldomain), cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
     // start with installation and account and keynew and half-written certnew
@@ -1484,8 +1439,8 @@ static derr_t test_acme_manager_init(void){
     PROP_GO(&e, dstr_write_path2(halfmycert, certnew), cu);
     EXPECT_DEADLINE_CERT(&g, expiry);
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
-    PROP_GO(&e, START(&g, true, TLS_RENEW, RELOAD, fulldomain), cu);
+    EXPECT_NEW_ORDER(&g, fulldomain);
+    PROP_GO(&e, START(&g, true, TLS_RENEW, CREATE_ORDER, fulldomain), cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
     // start with installation and account and keynew and certnew
@@ -1522,15 +1477,16 @@ cu:
 
 /*
    Test each of:
-    - ignoring existing orders which don't match the domain
-    - reject all invalid orders
-    - stop listing when finding VALID order
-    - list_orders finds an ACME_PROCESSING order
-    - list_orders finds an ACME_READY order
-    - list_orders finds a PENDING order, get_authz finds PENDING
+    - ignore stale order.json
+    - reject order for wrong domain
+    - get_order finds an ACME_VALID order
+    - get_order finds an ACME_PROCESSING order
+    - get_order finds an ACME_READY order
+    - get_order finds a PENDING order, get_authz finds PENDING
     - get_authz finds an ACME_PROCESSING status
     - get_authz finds an ACME_VALID status
     - get_authz finds an ACME_INVALID status
+    - order.json is deleted after successful new_cert
 */
 static derr_t test_advance_new_cert(void){
     derr_t e = E_OK;
@@ -1540,6 +1496,7 @@ static derr_t test_advance_new_cert(void){
 
     string_builder_t inst = sb_append(&g.tmp, SBS("installation.json"));
     string_builder_t acct = sb_append(&g.tmp, SBS("account.json"));
+    string_builder_t ordr = sb_append(&g.tmp, SBS("order.json"));
 
     // start by configuring an installation and an account
     PROP_GO(&e, dstr_write_path2(dstr_from_cstr(inst1), inst), cu);
@@ -1567,85 +1524,60 @@ static derr_t test_advance_new_cert(void){
             ), \
         cu)
 
-    // ignoring existing orders which don't match the domain
+    // ignore stale order.json
+    PROP_GO(&e, dstr_write_path2(dstr_from_cstr(order_stale), ordr), cu);
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
+    EXPECT_NEW_ORDER(&g, fulldomain);
+    EXPECT_STATUS(&g, TLS_FIRST, CREATE_ORDER, fulldomain);
+    /* technically a bug, since we don't check if the order.json is stale, but
+       nobody really cares */
     PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
-    EXPECT_GET_ORDER(&g, "o1");
-    PROP_GO(&e, g_list_orders_done(&g, E_NONE, "o1", "o2", "o3", "o4", "o5"), cu);
-    EXPECT_GET_ORDER(&g, "o2");
-    WRONG_ORDER_DONE(ACME_INVALID);
-    EXPECT_GET_ORDER(&g, "o3");
-    WRONG_ORDER_DONE(ACME_PENDING);
-    EXPECT_GET_ORDER(&g, "o4");
-    WRONG_ORDER_DONE(ACME_READY);
-    EXPECT_GET_ORDER(&g, "o5");
+    PROP_GO(&e, g_close(&g, E_CANCELED), cu);
+
+    // reject order for wrong domain
+    /* technically this is near-impossible because either somebody would have
+       to modify our order.json or the acme server would have to change the
+       domain for an existing order; this check made more sense with the
+       get_order strategy but it doesn't make much sense to delete valid
+       safety checks so here we are */
+    PROP_GO(&e, dstr_write_path2(dstr_from_cstr(order_good), ordr), cu);
+    EXPECT_KEYGEN(&g);
+    EXPECT_GET_ORDER(&g, "ogood");
+    PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
+    EXPECT_NEW_ORDER(&g, fulldomain);
+    EXPECT_STATUS(&g, TLS_FIRST, CREATE_ORDER, fulldomain);
     WRONG_ORDER_DONE(ACME_VALID);
-    EXPECT_NEW_ORDER(&g, fulldomain);
-    EXPECT_STATUS(&g, TLS_FIRST, CREATE_ORDER, fulldomain);
-    WRONG_ORDER_DONE(ACME_PROCESSING);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
-    // reject all invalid orders
+    // get_order finds an ACME_VALID order
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
+    EXPECT_GET_ORDER(&g, "ogood");
     PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
-    EXPECT_GET_ORDER(&g, "o1");
-    PROP_GO(&e, g_list_orders_done(&g, E_NONE, "o1", "o2", "o3", "o4"), cu);
-    EXPECT_GET_ORDER(&g, "o2");
-    GET_ORDER_DONE(ACME_INVALID, "1", 0);
-    EXPECT_GET_ORDER(&g, "o3");
-    GET_ORDER_DONE(ACME_REVOKED, "2", 0);
-    EXPECT_GET_ORDER(&g, "o4");
-    GET_ORDER_DONE(ACME_DEACTIVATED, "3", 0);
-    EXPECT_NEW_ORDER(&g, fulldomain);
-    EXPECT_STATUS(&g, TLS_FIRST, CREATE_ORDER, fulldomain);
-    GET_ORDER_DONE(ACME_EXPIRED, "4", 0);
-    PROP_GO(&e, g_close(&g, E_CANCELED), cu);
-
-    // stop listing when finding VALID order
-    EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
-    PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
-    EXPECT_GET_ORDER(&g, "o1");
-    PROP_GO(&e, g_list_orders_done(&g, E_NONE, "o1", "o2"), cu);
     EXPECT_STATUS(&g, TLS_FIRST, GENERATE_KEY, fulldomain);
-    GET_ORDER_DONE(ACME_VALID, "1", 0);
-    EXPECT_FINALIZE_FROM_VALID(&g, "c1");
+    GET_ORDER_DONE(ACME_VALID, "3", 9);
+    EXPECT_FINALIZE_FROM_VALID(&g, "c3");
     EXPECT_STATUS(&g, TLS_FIRST, FINALIZE_ORDER, fulldomain);
     PROP_GO(&e, g_keygen_done(&g, E_NONE, k1), cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
-    // list_orders finds an ACME_PROCESSING order
+    // get_order finds an ACME_PROCESSING order
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
+    EXPECT_GET_ORDER(&g, "ogood");
     PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
-    EXPECT_GET_ORDER(&g, "o1");
-    PROP_GO(&e, g_list_orders_done(&g, E_NONE, "o1", "o2", "o3"), cu);
-    EXPECT_GET_ORDER(&g, "o2");
-    GET_ORDER_DONE(ACME_PENDING, "1", 0);
-    EXPECT_GET_ORDER(&g, "o3");
-    GET_ORDER_DONE(ACME_READY, "2", 0);
     EXPECT_STATUS(&g, TLS_FIRST, GENERATE_KEY, fulldomain);
     GET_ORDER_DONE(ACME_PROCESSING, "3", 9);
-    EXPECT_FINALIZE_FROM_PROCESSING(&g, "o3", 9);
+    EXPECT_FINALIZE_FROM_PROCESSING(&g, "ogood", 9);
     EXPECT_STATUS(&g, TLS_FIRST, FINALIZE_ORDER, fulldomain);
     PROP_GO(&e, g_keygen_done(&g, E_NONE, k1), cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
-    // list_orders finds an ACME_READY order
+    // get_order finds an ACME_READY order
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
+    EXPECT_GET_ORDER(&g, "ogood");
     PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
-    EXPECT_GET_ORDER(&g, "o1");
-    PROP_GO(&e, g_list_orders_done(&g, E_NONE, "o1", "o2", "o3"), cu);
-    EXPECT_GET_ORDER(&g, "o2");
-    GET_ORDER_DONE(ACME_PENDING, "1", 0);
-    EXPECT_GET_ORDER(&g, "o3");
-    GET_ORDER_DONE(ACME_READY, "2", 7);
     EXPECT_STATUS(&g, TLS_FIRST, GENERATE_KEY, fulldomain);
-    GET_ORDER_DONE(ACME_INVALID, "3", 0);
-    EXPECT_FINALIZE(&g, "o2", "f2", fulldomain);
+    GET_ORDER_DONE(ACME_READY, "2", 7);
+    EXPECT_FINALIZE(&g, "ogood", "f2", fulldomain);
     EXPECT_STATUS(&g, TLS_FIRST, FINALIZE_ORDER, fulldomain);
     PROP_GO(&e, g_keygen_done(&g, E_NONE, k1), cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
@@ -1665,33 +1597,25 @@ static derr_t test_advance_new_cert(void){
             ), \
         cu)
 
-    // list_orders finds a PENDING order, get_authz finds PENDING
+    // get_order finds a PENDING order, get_authz finds PENDING
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
+    EXPECT_GET_ORDER(&g, "ogood");
     PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
-    EXPECT_GET_ORDER(&g, "o1");
-    PROP_GO(&e, g_list_orders_done(&g, E_NONE, "o1", "o2", "o3"), cu);
-    EXPECT_GET_ORDER(&g, "o2");
-    GET_ORDER_DONE(ACME_EXPIRED, "1", 0);
-    EXPECT_GET_ORDER(&g, "o3");
-    GET_ORDER_DONE(ACME_PENDING, "2", 7);
-    EXPECT_GET_AUTHZ(&g, "a2");
+    EXPECT_GET_AUTHZ(&g, "a1");
     EXPECT_STATUS(&g, TLS_FIRST, GET_AUTHZ, fulldomain);
-    GET_ORDER_DONE(ACME_INVALID, "3", 0);
-    EXPECT_PREPARE(&g, "t2");
+    GET_ORDER_DONE(ACME_PENDING, "1", 7);
+    EXPECT_PREPARE(&g, "t1");
     EXPECT_STATUS(&g, TLS_FIRST, PREPARE_CHALLENGE, fulldomain);
-    GET_AUTHZ_DONE(ACME_PENDING, ACME_PENDING, "2", 0);
+    GET_AUTHZ_DONE(ACME_PENDING, ACME_PENDING, "1", 0);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
     // get_authz finds an ACME_PROCESSING status
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
+    EXPECT_GET_ORDER(&g, "ogood");
     PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
-    EXPECT_GET_ORDER(&g, "o1");
-    PROP_GO(&e, g_list_orders_done(&g, E_NONE, "o1"), cu);
     EXPECT_GET_AUTHZ(&g, "a1");
     EXPECT_STATUS(&g, TLS_FIRST, GET_AUTHZ, fulldomain);
-    GET_ORDER_DONE(ACME_PENDING, "1", 0);
+    GET_ORDER_DONE(ACME_PENDING, "1", 7);
     EXPECT_CHALLENGE_FINISH(&g, "a1", 5);
     EXPECT_STATUS(&g, TLS_FIRST, COMPLETE_CHALLENGE, fulldomain);
     GET_AUTHZ_DONE(ACME_PENDING, ACME_PROCESSING, "2", 5);
@@ -1699,32 +1623,50 @@ static derr_t test_advance_new_cert(void){
 
     // get_authz finds an ACME_VALID status
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
+    EXPECT_GET_ORDER(&g, "ogood");
     PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
-    EXPECT_GET_ORDER(&g, "o1");
-    PROP_GO(&e, g_list_orders_done(&g, E_NONE, "o1"), cu);
     EXPECT_GET_AUTHZ(&g, "a1");
     EXPECT_STATUS(&g, TLS_FIRST, GET_AUTHZ, fulldomain);
-    GET_ORDER_DONE(ACME_PENDING, "1", 0);
+    GET_ORDER_DONE(ACME_PENDING, "1", 7);
     EXPECT_STATUS(&g, TLS_FIRST, GENERATE_KEY, fulldomain);
     GET_AUTHZ_DONE(ACME_PENDING, ACME_VALID, "2", 5);
-    EXPECT_FINALIZE(&g, "o1", "f1", fulldomain);
+    EXPECT_FINALIZE(&g, "ogood", "f1", fulldomain);
     EXPECT_STATUS(&g, TLS_FIRST, FINALIZE_ORDER, fulldomain);
     PROP_GO(&e, g_keygen_done(&g, E_NONE, k1), cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
     // get_authz finds an ACME_INVALID status
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
+    EXPECT_GET_ORDER(&g, "ogood");
     PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
-    EXPECT_GET_ORDER(&g, "o1");
-    PROP_GO(&e, g_list_orders_done(&g, E_NONE, "o1"), cu);
     EXPECT_GET_AUTHZ(&g, "a1");
     EXPECT_STATUS(&g, TLS_FIRST, GET_AUTHZ, fulldomain);
-    GET_ORDER_DONE(ACME_PENDING, "1", 0);
+    GET_ORDER_DONE(ACME_PENDING, "1", 7);
     EXPECT_DEADLINE_BACKOFF(&g, g.now + 15);
-    EXPECT_STATUS(&g, TLS_FIRST, RELOAD, fulldomain);
+    EXPECT_STATUS(&g, TLS_FIRST, RETRY, fulldomain);
     GET_AUTHZ_DONE(ACME_INVALID, ACME_INVALID, "2", 5);
+    PROP_GO(&e, g_close(&g, E_CANCELED), cu);
+
+    // order.json is deleted after successful new_cert
+    EXPECT_KEYGEN(&g);
+    EXPECT_GET_ORDER(&g, "ogood");
+    PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
+    EXPECT_STATUS(&g, TLS_FIRST, GENERATE_KEY, fulldomain);
+    GET_ORDER_DONE(ACME_VALID, "3", 9);
+    EXPECT_FINALIZE_FROM_VALID(&g, "c3");
+    EXPECT_STATUS(&g, TLS_FIRST, FINALIZE_ORDER, fulldomain);
+    PROP_GO(&e, g_keygen_done(&g, E_NONE, k1), cu);
+    DSTR_VAR(c1, 4096);
+    time_t expiry = g.now + 90*DAY;
+    PROP_GO(&e, mkcert(k1, dstr_from_cstr(fulldomain), expiry, &c1), cu);
+    EXPECT_UPDATE(&g, true);
+    EXPECT_DEADLINE_CERT(&g, g.now + 75*DAY);
+    EXPECT_UNPREPARE(&g);
+    EXPECT_STATUS(&g, TLS_GOOD, NONE, fulldomain);
+    PROP_GO(&e, g_finalize_done(&g, E_NONE, c1), cu);
+    bool ordr_ok;
+    PROP_GO(&e, exists_path2(ordr, &ordr_ok), cu);
+    EXPECT_B_GO(&e, "order.json deleted", !ordr_ok, true, cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
 cu:
@@ -1755,6 +1697,7 @@ static derr_t test_retries(void){
     string_builder_t acct = sb_append(&g.tmp, SBS("account.json"));
     string_builder_t key = sb_append(&g.tmp, SBS("key.pem"));
     string_builder_t cert = sb_append(&g.tmp, SBS("cert.pem"));
+    string_builder_t ordr = sb_append(&g.tmp, SBS("order.json"));
 
     // start by configuring an installation
     PROP_GO(&e, dstr_write_path2(dstr_from_cstr(inst1), inst), cu);
@@ -1763,25 +1706,25 @@ static derr_t test_retries(void){
     EXPECT_NEW_ACCOUNT(&g, NULL, "me@yo.com");
     PROP_GO(&e, START(&g, false, TLS_FIRST, CREATE_ACCOUNT, fulldomain), cu);
     EXPECT_DEADLINE_BACKOFF(&g, g.now + 1);
-    PROP_GO(&e, g_new_account_done(&g, E_SOCK, NULL, NULL), cu);
+    PROP_GO(&e, g_new_account_done(&g, E_SOCK, NULL), cu);
     g.now += 1;
     EXPECT_DEADLINE_BACKOFF(&g, g.now + 5);
-    PROP_GO(&e, g_new_account_done(&g, E_CONN, NULL, NULL), cu);
+    PROP_GO(&e, g_new_account_done(&g, E_CONN, NULL), cu);
     g.now += 5;
     EXPECT_DEADLINE_BACKOFF(&g, g.now + 15);
-    PROP_GO(&e, g_new_account_done(&g, E_CONN, NULL, NULL), cu);
+    PROP_GO(&e, g_new_account_done(&g, E_CONN, NULL), cu);
     g.now += 15;
     EXPECT_DEADLINE_BACKOFF(&g, g.now + 30);
-    PROP_GO(&e, g_new_account_done(&g, E_CONN, NULL, NULL), cu);
+    PROP_GO(&e, g_new_account_done(&g, E_CONN, NULL), cu);
     g.now += 30;
     EXPECT_DEADLINE_BACKOFF(&g, g.now + 45);
-    PROP_GO(&e, g_new_account_done(&g, E_CONN, NULL, NULL), cu);
+    PROP_GO(&e, g_new_account_done(&g, E_CONN, NULL), cu);
     g.now += 45;
     EXPECT_DEADLINE_BACKOFF(&g, g.now + 60);
-    PROP_GO(&e, g_new_account_done(&g, E_CONN, NULL, NULL), cu);
+    PROP_GO(&e, g_new_account_done(&g, E_CONN, NULL), cu);
     g.now += 60;
     EXPECT_DEADLINE_BACKOFF(&g, g.now + 60);
-    PROP_GO(&e, g_new_account_done(&g, E_CONN, NULL, NULL), cu);
+    PROP_GO(&e, g_new_account_done(&g, E_CONN, NULL), cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
 
     // reconfigure with an account
@@ -1799,11 +1742,8 @@ static derr_t test_retries(void){
         DKEY("contents", DS("i died")),
     );
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
-    PROP_GO(&e, START(&g, false, TLS_FIRST, RELOAD, fulldomain), cu);
     EXPECT_NEW_ORDER(&g, fulldomain);
-    EXPECT_STATUS(&g, TLS_FIRST, CREATE_ORDER, fulldomain);
-    PROP_GO(&e, g_list_orders_done(&g, E_NONE), cu);
+    PROP_GO(&e, START(&g, false, TLS_FIRST, CREATE_ORDER, fulldomain), cu);
     EXPECT_GET_AUTHZ(&g, "z1");
     EXPECT_STATUS(&g, TLS_FIRST, GET_AUTHZ, fulldomain);
     PROP_GO(&e, g_new_order_done(&g, E_NONE, "o1", "x", "z1", "f1"), cu);
@@ -1828,9 +1768,12 @@ static derr_t test_retries(void){
     PROP_GO(&e, g_prepare_done(&g, E_NONE, prep_timeout), cu);
     // emit failure response
     EXPECT_DEADLINE_BACKOFF(&g, g.now + 15);
-    EXPECT_STATUS(&g, TLS_FIRST, RELOAD, fulldomain);
+    EXPECT_STATUS(&g, TLS_FIRST, RETRY, fulldomain);
     PROP_GO(&e, g_prepare_done(&g, E_NONE, bad_resp), cu);
     PROP_GO(&e, g_close(&g, E_CANCELED), cu);
+
+    // delete stray order.json
+    PROP_GO(&e, dunlink_path(&ordr), cu);
 
     // test unprepare has independent timeout
     time_t expiry = 90*DAY;
@@ -1855,14 +1798,11 @@ static derr_t test_retries(void){
     g.now += 100;
     EXPECT_DEADLINE_CERT(&g, expiry);
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
-    EXPECT_STATUS(&g, TLS_RENEW, RELOAD, fulldomain);
+    EXPECT_NEW_ORDER(&g, fulldomain);
+    EXPECT_STATUS(&g, TLS_RENEW, CREATE_ORDER, fulldomain);
     PROP_GO(&e, run(&g), cu);
 
     // unprepare timeout is independent
-    EXPECT_NEW_ORDER(&g, fulldomain);
-    EXPECT_STATUS(&g, TLS_RENEW, CREATE_ORDER, fulldomain);
-    PROP_GO(&e, g_list_orders_done(&g, E_NONE), cu);
     EXPECT_GET_AUTHZ(&g, "z1");
     EXPECT_STATUS(&g, TLS_RENEW, GET_AUTHZ, fulldomain);
     PROP_GO(&e, g_new_order_done(&g, E_NONE, "o1", "x", "z1", "f1"), cu);
@@ -1906,23 +1846,24 @@ static derr_t test_retries(void){
     // some non-retryable failure in new_cert causes acme_manager to crash
     g.now += 90*DAY;
     EXPECT_KEYGEN(&g);
-    EXPECT_LIST_ORDERS(&g);
-    PROP_GO(&e, START(&g, false, TLS_EXPIRED, RELOAD, fulldomain), cu);
+    EXPECT_NEW_ORDER(&g, fulldomain);
+    PROP_GO(&e, START(&g, false, TLS_EXPIRED, CREATE_ORDER, fulldomain), cu);
     // E_CONN is retryable
     EXPECT_DEADLINE_BACKOFF(&g, g.now + 15);
-    PROP_GO(&e, g_list_orders_done(&g, E_CONN), cu);
+    EXPECT_STATUS(&g, TLS_EXPIRED, RETRY, fulldomain);
+    PROP_GO(&e, g_new_order_done(&g, E_CONN, "", "", "", ""), cu);
     g.now += 15;
     // E_SOCK is retryable
     EXPECT_DEADLINE_BACKOFF(&g, g.now + 30);
-    PROP_GO(&e, g_list_orders_done(&g, E_SOCK), cu);
+    PROP_GO(&e, g_new_order_done(&g, E_SOCK, "", "", "", ""), cu);
     g.now += 30;
     // E_RESPONSE is retryable
     EXPECT_DEADLINE_BACKOFF(&g, g.now + 60);
-    PROP_GO(&e, g_list_orders_done(&g, E_RESPONSE), cu);
+    PROP_GO(&e, g_new_order_done(&g, E_RESPONSE, "", "", "", ""), cu);
     g.now += 60;
     // but nothing else is retryable
     EXPECT_CLOSE(&g);
-    PROP_GO(&e, g_list_orders_done(&g, E_NOMEM), cu);
+    PROP_GO(&e, g_new_order_done(&g, E_NOMEM, "", "", "", ""), cu);
     PROP_GO(&e, g_close(&g, E_NOMEM), cu);
 
 cu:

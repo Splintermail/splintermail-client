@@ -115,11 +115,11 @@ update, that would average less than 12 long-polling connections at a time.
 
 4. create an account with the jwk, write it to file
 
-5. list orders.  If one is valid, take the cert and skip to 14.  If one is
-   processing, skip to 13.  If one is ready, skip to 12.  If one is pending,
-   skip to 7.
+5. Check if we have an existing order on file.  If we do and it is processing,
+   skip to 13.  If it is ready, skip to 12.  If it is pending, skip to 7.
 
-6. Create a new order.
+6. Create a new order, write it to file.  letsencrypt doesn't actually support
+   tracking orders in the server (!).
 
 7. get authz in order to view challenge token.  If status is not "valid" skip
    to 9.

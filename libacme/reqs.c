@@ -104,19 +104,6 @@ typedef struct {
 typedef struct {
     // inputs
     acme_account_t acct;
-    acme_list_orders_cb cb;
-    void *cb_data;
-    // state
-    bool sent;
-    dstr_t current;
-    dstr_t next;
-    // outputs
-    LIST(dstr_t) orders;
-} acme_list_orders_state_t;
-
-typedef struct {
-    // inputs
-    acme_account_t acct;
     dstr_t authz;
     acme_get_authz_cb cb;
     void *cb_data;
@@ -206,7 +193,6 @@ struct acme_t {
         acme_new_order_state_t new_order;
         acme_get_order_state_t get_order;
         acme_finalize_state_t finalize;
-        acme_list_orders_state_t list_orders;
         acme_get_authz_state_t get_authz;
         acme_challenge_state_t challenge;
     } state;
@@ -350,7 +336,6 @@ derr_t acme_account_from_json(acme_account_t *acct, json_ptr_t ptr){
     jspec_t *jspec = JOBJ(false,
         JKEY("key", JJWK(&acct->key)),
         JKEY("kid", JDCPY(&acct->kid)),
-        JKEY("orders", JDCPY(&acct->orders)),
     );
 
     IF_PROP(&e, jspec_read(jspec, ptr) ){
@@ -428,7 +413,6 @@ void acme_account_free(acme_account_t *acct){
     if(!acct) return;
     if(acct->key) acct->key->free(acct->key);
     dstr_free(&acct->kid);
-    dstr_free(&acct->orders);
     *acct = (acme_account_t){0};
 }
 
@@ -494,6 +478,50 @@ unhandled:
         E_RESPONSE,
         "non-%x response %x: %x %x\n---\n%x\n---",
         FI(exp),
+        FS(doingwhat),
+        FI(acme->req.status),
+        FD_DBG(acme->req.reason),
+        FD(acme->rbuf),
+    );
+}
+
+static derr_t expect_status_range(
+    acme_t *acme, int expmin, int expmax, const char *doingwhat, bool *badnonce
+){
+    derr_t e = E_OK;
+
+    if(badnonce) *badnonce = false;
+
+    DSTR_STATIC(badnonce_type, "urn:ietf:params:acme:error:badNonce");
+
+    if(acme->req.status >= expmin && acme->req.status <= expmax) return e;
+
+    // all handleable errors have json-parsable bodies
+    json_t json;
+    JSON_PREP_PREALLOCATED(json, 1024, 64, true);
+    PROP_GO(&e, json_parse(acme->rbuf, &json), unhandled);
+    dstr_t type;
+    jspec_t *jspec = JOBJ(true,
+        JKEY("type", JDREF(&type)),
+    );
+    bool ok;
+    PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, NULL), unhandled);
+    if(!ok) goto unhandled;
+
+    // match against recognized errors
+    if(badnonce && acme->req.status == 400 && dstr_eq(type, badnonce_type)){
+        *badnonce = true;
+        return e;
+    }
+
+unhandled:
+    // ignore parsing errors
+    DROP_VAR(&e);
+    ORIG(&e,
+        E_RESPONSE,
+        "non-[%x-%x] response %x: %x %x\n---\n%x\n---",
+        FI(expmin),
+        FI(expmax),
         FS(doingwhat),
         FI(acme->req.status),
         FD_DBG(acme->req.reason),
@@ -699,7 +727,7 @@ static void new_account_reader_cb(stream_reader_t *reader, derr_t err){
     // check status
     bool badnonce;
     PROP_GO(&e,
-        expect_status(acme, 201, "posting new account", &badnonce),
+        expect_status_range(acme, 200, 201, "posting new account", &badnonce),
     done);
     if(badnonce){
         state->sent = false;
@@ -712,13 +740,15 @@ static void new_account_reader_cb(stream_reader_t *reader, derr_t err){
     // read body
     acme_status_e status;
     jspec_t *jspec = JOBJ(true,
-        JKEY("orders", JDCPY(&state->acct.orders)),
         JKEY("status", JASTAT(&status)),
     );
     bool ok;
     DSTR_VAR(errbuf, 512);
     PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf), done);
     if(!ok){
+        FFMT_QUIET(stderr, "response was");
+        DROP_CMD( json_fdump(json.root, stderr) );
+        FFMT_QUIET(stderr, "\n");
         ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
     }
 
@@ -987,42 +1017,8 @@ done:
     return;
 }
 
-static derr_t mkrfc3339(time_t epoch, dstr_t *out){
-    derr_t e = E_OK;
-
-    struct tm tm;
-    PROP(&e, dgmtime(epoch, &tm) );
-    dtm_t dtm = dtm_from_tm(tm);
-
-    char buf[32];
-    int len = snprintf(
-        buf, sizeof(buf),
-        "%.4d-%.2d-%.2dT%.2d:%.2d:%.2dZ",
-        dtm.year,
-        dtm.month,
-        dtm.day,
-        dtm.hour,
-        dtm.min,
-        dtm.sec
-    );
-    if(len < 0) LOG_FATAL("mkrfc3339 snprintf failed!\n");
-    if((size_t)len >= sizeof(buf)) LOG_FATAL("mkrfc3339 snprintf overflow!\n");
-
-    dstr_t temp = dstr_from_cstrn(buf, (size_t)len, true);
-
-    PROP(&e, dstr_append(out, &temp) );
-
-    return e;
-}
-
 static derr_t new_order_body(acme_t *acme, acme_account_t acct, dstr_t domain){
     derr_t e = E_OK;
-
-    // request a notBefore of yesterday, to handle clock skew between machines
-    time_t now;
-    PROP(&e, dtime(&now) );
-    DSTR_VAR(not_before, 32);
-    PROP(&e, mkrfc3339(now - 86400, &not_before) );
 
     // build the outer jws
     DSTR_VAR(protected, 4096);
@@ -1041,7 +1037,6 @@ static derr_t new_order_body(acme_t *acme, acme_account_t acct, dstr_t domain){
         DKEY("identifiers", DARR(
             DOBJ(DKEY("type", DS("dns")), DKEY("value", DD(domain)))
         )),
-        DKEY("notBefore", DD(not_before)),
     );
     PROP(&e, jdump(jpayload, WD(&payload), 0) );
 
@@ -1278,217 +1273,6 @@ void acme_get_order(
     };
     acme->advance_state = get_order_advance_state;
     acme->free_state = get_order_free_state;
-
-    schedule(acme);
-}
-
-//
-
-static derr_t jlist_dstr(jctx_t *ctx, size_t index, void *data){
-    (void)index;
-    LIST(dstr_t) *l = (LIST(dstr_t)*)data;
-    derr_t e = E_OK;
-    if(!jctx_require_type(ctx, JSON_STRING)) return e;
-    dstr_t orig = jctx_text(ctx);
-    dstr_t copy = {0};
-    PROP(&e, dstr_copy(&orig, &copy) );
-    PROP_GO(&e, LIST_APPEND(dstr_t, l, copy), fail);
-    return e;
-
-fail:
-    dstr_free(&copy);
-    return e;
-}
-
-static void list_orders_reader_cb(stream_reader_t *reader, derr_t err){
-    acme_t *acme = CONTAINER_OF(reader, acme_t, reader);
-    acme_list_orders_state_t *state = &acme->state.list_orders;
-    json_t json;
-    json_prep(&json);
-
-    derr_t e = E_OK;
-
-    // check for errors
-    KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
-    PROP_VAR_GO(&e, &acme->e, done);
-
-    // check status
-    bool badnonce;
-    PROP_GO(&e, expect_status(acme, 200, "listing orders", &badnonce), done);
-    if(badnonce){
-        // erase any state->next we saw in the failed request
-        state->next.len = 0;
-        // retry url at state->current
-        goto done;
-    }
-
-    // parse body
-    PROP_GO(&e, json_parse(acme->rbuf, &json), done);
-
-    // read body
-    jspec_t *jspec = JOBJ(true,
-        JKEY("orders", JLIST(jlist_dstr, &state->orders))
-    );
-
-    bool ok;
-    DSTR_VAR(errbuf, 512);
-    PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf), done);
-    if(!ok) ORIG_GO(&e, E_RESPONSE, "%x", done, FD(errbuf));
-
-    // is there another page after this?
-    if(state->next.len){
-        // follow rel=next links until they run out
-        PROP_GO(&e, dstr_copy(&state->next, &state->current), done);
-        // done with next
-        state->next.len = 0;
-    }else{
-        // no more requests
-        state->current.len = 0;
-    }
-
-done:
-    json_free(&json);
-    acme_advance_state(acme, e);
-}
-
-static void list_orders_hdr_cb(duv_http_req_t *req, http_pair_t hdr){
-    acme_t *acme = CONTAINER_OF(req, acme_t, req);
-    acme_list_orders_state_t *state = &acme->state.list_orders;
-
-    if(is_error(acme->e)) return;
-
-    if(!state->next.len && dstr_ieq(hdr.key, DSTR_LIT("Link"))){
-        // find the rel=next link
-        weblinks_t wl;
-        url_t *url = weblinks_iter(&wl, &hdr.value);
-        for(; url; url = weblinks_next(&wl)){
-            weblink_param_t *p;
-            while((p = weblinks_next_param(&wl))){
-                if(!dstr_eq(p->key, DSTR_LIT("rel"))) continue;
-                if(!dstr_eq(p->value, DSTR_LIT("next"))) continue;
-                // found it
-                dstr_t text = url_text(*url);
-                PROP_GO(&acme->e, dstr_copy(&text, &state->next), done);
-                return;
-            }
-        }
-        // check for parsing errors
-        derr_type_t etype = weblinks_status(&wl);
-        if(etype){
-            ORIG_GO(&acme->e,
-                E_RESPONSE,
-                "failed parsing Link header: %x:\n%x",
-                done,
-                FD(error_to_dstr(etype)),
-                FD(weblinks_errbuf(&wl))
-            );
-        }
-        return;
-    }
-
-    // also grab nonce
-    base_hdr_cb(req, hdr);
-
-done:
-    return;
-}
-
-static derr_t list_orders_body(acme_t *acme, acme_account_t acct, dstr_t url){
-    derr_t e = E_OK;
-
-    // build the outer jws
-    DSTR_VAR(protected, 4096);
-    jdump_i *jprotected = DOBJ(
-        DOBJSNIPPET(acct.key->protected_params),
-        DKEY("kid", DD(acct.kid)),
-        DKEY("nonce", DD(acme->nonce)),
-        DKEY("url", DD(url)),
-    );
-    PROP(&e, jdump(jprotected, WD(&protected), 0) );
-
-    acme->nonce.len = 0;
-
-    acme->wbuf.len = 0;
-    PROP(&e, jws(protected, DSTR_LIT(""), SIGN_KEY(acct.key), &acme->wbuf) );
-
-    return e;
-}
-
-static void list_orders_advance_state(acme_t *acme, derr_t err){
-    derr_t e = E_OK;
-    acme_list_orders_state_t *state = &acme->state.list_orders;
-    LIST(dstr_t) orders = {0};
-
-    // check for errors
-    KEEP_FIRST_IF_NOT_CANCELED_VAR(&acme->e, &err);
-    PROP_VAR_GO(&e, &acme->e, done);
-
-    if(need_directory(acme)) return;
-    if(need_nonce(acme)) return;
-
-    if(!state->sent){
-        // initial request based on account "orders" url
-        PROP_GO(&e,
-            dstr_copy(&state->acct.orders, &state->current),
-        done);
-        state->sent = true;
-    }
-
-    // keep paging and/or retrying until we run out of pages
-    if(state->current.len){
-        PROP_GO(&e, list_orders_body(acme, state->acct, state->current), done);
-
-        PROP_GO(&e,
-            acme_post(
-                acme,
-                &state->current,
-                &content_type,
-                list_orders_hdr_cb,
-                list_orders_reader_cb
-            ),
-        done);
-
-        return;
-    }
-
-done:
-    if(!is_error(e)){
-        orders = state->orders;
-        state->orders = (LIST(dstr_t)){0};
-    }
-    acme_list_orders_cb cb = state->cb;
-    void *cb_data = state->cb_data;
-    acme->free_state(acme);
-    acme->advance_state = NULL;
-    acme->free_state = NULL;
-    cb(cb_data, e, orders);
-}
-
-static void list_orders_free_state(acme_t *acme){
-    acme_list_orders_state_t *state = &acme->state.list_orders;
-    for(size_t i = 0; i < state->orders.len; i++){
-        dstr_free(&state->orders.data[i]);
-    }
-    LIST_FREE(dstr_t, &state->orders);
-    dstr_free(&state->current);
-    dstr_free(&state->next);
-    *state = (acme_list_orders_state_t){0};
-}
-
-void acme_list_orders(
-    acme_t *acme,
-    const acme_account_t acct,
-    acme_list_orders_cb cb,
-    void *cb_data
-){
-    acme_list_orders_state_t *state = &acme->state.list_orders;
-    *state = (acme_list_orders_state_t){
-        .acct = acct,
-        .cb = cb,
-        .cb_data = cb_data,
-    };
-    acme->advance_state = list_orders_advance_state;
-    acme->free_state = list_orders_free_state;
 
     schedule(acme);
 }
@@ -1786,7 +1570,9 @@ static void poll_authz_reader_cb(stream_reader_t *reader, derr_t err){
     }
 
     // look at challenge status
-    if(challenge.status == ACME_PROCESSING){
+    if(challenge.status == ACME_PENDING){
+        // boulder seems to return this instead of ACME_PROCESSING
+    }else if(challenge.status == ACME_PROCESSING){
         // still waiting; continue
     }else if(challenge.status == ACME_VALID){
         // success!

@@ -28,6 +28,9 @@ static string_builder_t am_jwk(acme_manager_t *am){
 static string_builder_t am_acct(acme_manager_t *am){
     return sb_append(&am->acme_dir, SBS("account.json"));
 }
+static string_builder_t am_ordr(acme_manager_t *am){
+    return sb_append(&am->acme_dir, SBS("order.json"));
+}
 
 // error type checks
 static bool is_network(derr_type_t etype){
@@ -134,6 +137,81 @@ fail:
     if(key) key->free(key);
     return e;
 }
+static derr_t write_order(acme_manager_t *am){
+    derr_t e = E_OK;
+
+    new_cert_t *nc = &am->new_cert;
+
+    jdump_i *j = DOBJ(
+        DKEY("fulldomain", DD(am->fulldomain)),
+        DKEY("order", DD(nc->order)),
+    );
+
+    PROP(&e, jdump_path(j, am_ordr(am), 2) );
+
+    return e;
+}
+
+static derr_t load_order(acme_manager_t *am, bool *ok){
+    derr_t e = E_OK;
+
+    *ok = false;
+
+    new_cert_t *nc = &am->new_cert;
+
+    string_builder_t ordr = am_ordr(am);
+
+    // check if the file exists
+    bool exists;
+    PROP(&e, exists_path2(ordr, &exists) );
+    if(!exists) return e;
+
+    // read the file
+    DSTR_VAR(buf, 4096);
+    derr_t e2 = dstr_read_path(&ordr, &buf);
+    CATCH(&e2, E_FIXEDSIZE){
+        DUMP_DEBUG(e2);
+        DROP_VAR(&e2);
+        LOG_ERROR("ignoring too-long order file\n");
+        return e;
+    }else PROP_VAR(&e, &e2);
+
+    // parse the json
+    json_t json;
+    JSON_PREP_PREALLOCATED(json, 4096, 32, true);
+    e2 = json_parse(buf, &json);
+    CATCH(&e2, E_PARAM){
+        DUMP_DEBUG(e2);
+        DROP_VAR(&e2);
+        LOG_ERROR("ignoring corrupted order file\n");
+        return e;
+    }else PROP_VAR(&e, &e2);
+
+    // read the json
+    dstr_t fulldomain;
+    jspec_t *j = JOBJ(true,
+        JKEY("fulldomain", JDREF(&fulldomain)),
+        JKEY("order", JDCPY(&nc->order)),
+    );
+    e2 = jspec_read(j, json.root);
+    CATCH(&e2, E_PARAM){
+        DUMP_DEBUG(e2);
+        DROP_VAR(&e2);
+        LOG_ERROR("ignoring invalid order file\n");
+        return e;
+    }else PROP_VAR(&e, &e2);
+
+    // ignore an order file for a fulldomain other than our own
+    if(!dstr_eq(fulldomain, am->fulldomain)){
+        LOG_ERROR("ignoring stale order file\n");
+        return e;
+    }
+
+    *ok = true;
+
+    return e;
+}
+
 
 static derr_t pre_apic_call(acme_manager_t *am){
     derr_t e = E_OK;
@@ -166,10 +244,6 @@ static void freesteal(dstr_t *dst, dstr_t *src){
 
 static void new_cert_free(new_cert_t *nc){
     DROP_VAR(&nc->e);
-    for(size_t i = 0; i < nc->orders.len; i++){
-        dstr_free(&nc->orders.data[i]);
-    }
-    LIST_FREE(dstr_t, &nc->orders);
     EVP_PKEY_free(nc->pkey);
     dstr_free(&nc->order);
     dstr_free(&nc->authz);
@@ -406,6 +480,8 @@ void am_new_order_done(
     freesteal(&nc->authz, &authorization);
     freesteal(&nc->finalize, &finalize);
 
+    PROP_GO(&nc->e, write_order(am), done);
+
     nc->new_order_done = true;
 
 done:
@@ -425,19 +501,20 @@ void am_get_order_done(
 ){
     new_cert_t *nc = &am->new_cert;
 
-    MULTIPROP_VAR_GO(&nc->e, done, &err);
-
     nc->check_order_done = true;
+
+    // ignore errors, which might include non-existent old orders
+    CATCH_ANY(&err){
+        DUMP_DEBUG(err);
+        DROP_VAR(&err);
+        goto done;
+    }
 
     // ignore orders which aren't our exact domain
     if(!dstr_eq(domain, am->fulldomain)) goto done;
 
-    // ignore this order if it isn't our best status yet, or if it is useless
-    if(status <= nc->best || status < ACME_PENDING) goto done;
-
-    // remember this status and this order url
-    nc->best = status;
-    freesteal(&nc->order, &nc->orders.data[nc->check_order_idx]);
+    // remember this status
+    nc->order_status = status;
 
     switch(status){
         case ACME_INVALID:
@@ -475,19 +552,6 @@ done:
     dstr_free(&authorization);
     dstr_free(&finalize);
     dstr_free(&certurl);
-}
-
-void am_list_orders_done(acme_manager_t *am, derr_t err, LIST(dstr_t) orders){
-    new_cert_t *nc = &am->new_cert;
-    MULTIPROP_VAR_GO(&nc->e, done, &err);
-
-    nc->orders = orders;
-    orders = (LIST(dstr_t)){0};
-    nc->list_orders_done = 1;
-
-done:
-    LIST_FREE(dstr_t, &orders);
-    return;
 }
 
 void am_get_authz_done(
@@ -542,34 +606,6 @@ done:
 
 void am_close_done(acme_manager_t *am){
     am->close_done = true;
-}
-
-// fetch each order, looking for valid (preferred) or processing
-static void advance_check_existing_orders(
-    acme_manager_t *am, bool *done_processing
-){
-    new_cert_t *nc = &am->new_cert;
-    acme_manager_i *ami = am->ami;
-
-    *done_processing = false;
-
-    if(nc->check_order_done){
-        if(nc->best == ACME_VALID) goto done; // stop iteration immediately
-        nc->check_order_sent = false;
-        nc->check_order_done = false;
-        nc->check_order_idx++;
-    }
-    // done iterating yet?
-    if(nc->check_order_idx >= nc->orders.len) goto done;
-    ONCE(nc->check_order_sent){
-        // check the next order
-        dstr_t order = nc->orders.data[nc->check_order_idx];
-        ami->get_order(ami, am->acct, order);
-    }
-    return;
-
-done:
-    *done_processing = true;
 }
 
 static derr_t rename_new_key_and_cert(acme_manager_t *am, bool check){
@@ -631,54 +667,56 @@ static derr_t advance_new_cert(acme_manager_t *am, bool *new_cert_ready){
     }
 
     if(!am->reloaded){
-        // start by listing orders
-        ONCE(nc->list_orders_sent){
-            ami->list_orders(ami, am->acct);
-            nc->best = ACME_INVALID;
-        }
-        if(!nc->list_orders_done) return e;
-        if(!nc->checked_existing_orders){
-            advance_check_existing_orders(am, &ok);
-            if(!ok) return e;
-            // jump ahead to pick up where the last attempt left off
-            if(nc->best == ACME_PENDING){
-                // skip to get_authz
-                nc->new_order_done = true;
-            }else if(nc->best == ACME_READY){
-                // skip to acme_finalize
-                nc->new_order_done = true;
-                nc->get_authz_done = true;
-                nc->prepare_done = true;
-                nc->challenge_done = true;
-            }else if(nc->best == ACME_PROCESSING){
-                // need a key before we can finalize
-                am->min = STATUS_MIN_GENERATE_KEY;
-                if(!nc->keygen_done) return e;
-                // skip to acme_finalize_from_processing
-                am->min = STATUS_MIN_FINALIZE_ORDER;
-                ami->finalize_from_processing(
-                    ami, am->acct, nc->order, nc->retry_after
-                );
-                // skip steps
-                nc->new_order_done = true;
-                nc->get_authz_done = true;
-                nc->prepare_done = true;
-                nc->challenge_done = true;
-                nc->finalize_sent = true;
-            }else if(nc->best == ACME_VALID){
-                // we had an order with status=valid
-                am->min = STATUS_MIN_GENERATE_KEY;
-                if(!nc->keygen_done) return e;
-                am->min = STATUS_MIN_FINALIZE_ORDER;
-                ami->finalize_from_valid(ami, am->acct, nc->certurl);
-                // skip steps
-                nc->new_order_done = true;
-                nc->get_authz_done = true;
-                nc->prepare_done = true;
-                nc->challenge_done = true;
-                nc->finalize_sent = true;
+        ONCE(nc->check_order_sent){
+            am->min = STATUS_MIN_RELOAD;
+            nc->order_status = ACME_INVALID;
+            // try to load the order we have on file
+            PROP_GO(&e, load_order(am, &ok), cu);
+            if(!ok){
+                // no file to load
+                nc->check_order_done = true;
+            }else{
+                ami->get_order(ami, am->acct, nc->order);
             }
-            nc->checked_existing_orders = true;
+        }
+        if(!nc->check_order_done) return e;
+        // jump ahead to pick up where the last attempt left off
+        if(nc->order_status == ACME_PENDING){
+            // skip to get_authz
+            nc->new_order_done = true;
+        }else if(nc->order_status == ACME_READY){
+            // skip to acme_finalize
+            nc->new_order_done = true;
+            nc->get_authz_done = true;
+            nc->prepare_done = true;
+            nc->challenge_done = true;
+        }else if(nc->order_status == ACME_PROCESSING){
+            // need a key before we can finalize
+            am->min = STATUS_MIN_GENERATE_KEY;
+            if(!nc->keygen_done) return e;
+            // skip to acme_finalize_from_processing
+            am->min = STATUS_MIN_FINALIZE_ORDER;
+            ami->finalize_from_processing(
+                ami, am->acct, nc->order, nc->retry_after
+            );
+            // skip steps
+            nc->new_order_done = true;
+            nc->get_authz_done = true;
+            nc->prepare_done = true;
+            nc->challenge_done = true;
+            nc->finalize_sent = true;
+        }else if(nc->order_status == ACME_VALID){
+            // we had an order with status=valid
+            am->min = STATUS_MIN_GENERATE_KEY;
+            if(!nc->keygen_done) return e;
+            am->min = STATUS_MIN_FINALIZE_ORDER;
+            ami->finalize_from_valid(ami, am->acct, nc->certurl);
+            // skip steps
+            nc->new_order_done = true;
+            nc->get_authz_done = true;
+            nc->prepare_done = true;
+            nc->challenge_done = true;
+            nc->finalize_sent = true;
         }
         am->reloaded = true;
     }
@@ -777,6 +815,10 @@ static derr_t advance_new_cert(acme_manager_t *am, bool *new_cert_ready){
 
     // overwrite cert and key
     PROP_GO(&e, rename_new_key_and_cert(am, false), cu);
+
+    // delete the order object we cached
+    string_builder_t ordr = am_ordr(am);
+    PROP_GO(&e, dunlink_path(&ordr), cu);
 
     *new_cert_ready = true;
 
@@ -950,12 +992,13 @@ static derr_t am_advance_good(acme_manager_t *am){
 
            The reason is that the complexity cost outweights the potential
            benefits.  Each ACME call needs to be evaluated for idempotency.
-           For example, list_orders is safe, but new_order is obviously not,
+           For example, get_order is safe, but new_order is obviously not,
            and neither are challenge or finalize.  Also, the logic to recover
            from those failures adds lots of complexity; new_order failures
-           require re-running the list/check logic, challenge failures require
-           rerunning get_authz, finalize requires get_order in a new location
-           that didn't previously exist.
+           require re-running the list/check logic, (which isn't even supported
+           by letsencrypt), challenge failures require rerunning get_authz,
+           finalize requires get_order in a new location that didn't previously
+           exist.
 
            So instead, we just configure one restart loop outside of
            advance_new_cert, and any failure causes the reload logic to
@@ -986,7 +1029,7 @@ static derr_t am_advance_good(acme_manager_t *am){
             LOG_ERROR("trying again in %x %x...\n", FI(display), FS(unit));
             // we'll re-enter the reload logic, since we had a failure
             am->reloaded = false;
-            am->min = STATUS_MIN_RELOAD;
+            am->min = STATUS_MIN_RETRY;
             return e;
         }else PROP_VAR(&e, &e2);
         if(!ok) return e;
@@ -1127,6 +1170,13 @@ derr_t acme_manager_init(
 
     am->accounted = true;
 
+    // do we have an order in-flight?
+    bool order_ok;
+    PROP_GO(&e, exists_path2(am_ordr(am), &order_ok), fail);
+    // will our first new_cert-related status be RELOAD or CREATE_ORDER?
+    status_min_e reload_min =
+        order_ok ? STATUS_MIN_RELOAD : STATUS_MIN_CREATE_ORDER;
+
     // finish renaming if we crashed mid-rename
     PROP_GO(&e, rename_new_key_and_cert(am, true), fail);
 
@@ -1134,11 +1184,11 @@ derr_t acme_manager_init(
     string_builder_t cert = am_cert(am);
     string_builder_t key = am_key(am);
     bool cert_ok, key_ok;
-    PROP_GO(&e, exists_path(&cert, &cert_ok), fail);
-    PROP_GO(&e, exists_path(&key, &key_ok), fail);
+    PROP_GO(&e, exists_path2(cert, &cert_ok), fail);
+    PROP_GO(&e, exists_path2(key, &key_ok), fail);
     if(!cert_ok || !key_ok){
         am->maj = STATUS_MAJ_TLS_FIRST;
-        am->min = STATUS_MIN_RELOAD;
+        am->min = reload_min;
         am->want_cert = true;
         goto done;
     }
@@ -1148,7 +1198,7 @@ derr_t acme_manager_init(
     PROP_GO(&e, check_cert(cert, &am->expiry, am->fulldomain, &ours), fail);
     if(!ours){
         am->maj = STATUS_MAJ_TLS_FIRST;
-        am->min = STATUS_MIN_RELOAD;
+        am->min = reload_min;
         am->want_cert = true;
         goto done;
     }
@@ -1156,7 +1206,7 @@ derr_t acme_manager_init(
     // certificate already expired?
     if(ami->now(ami) >= am->expiry){
         am->maj = STATUS_MAJ_TLS_EXPIRED;
-        am->min = STATUS_MIN_RELOAD;
+        am->min = reload_min;
         am->want_cert = true;
         goto done;
     }
@@ -1172,7 +1222,7 @@ derr_t acme_manager_init(
         // start renewal process, as well as expiry timer
         ami->deadline_cert(ami, am->expiry);
         am->maj = STATUS_MAJ_TLS_RENEW;
-        am->min = STATUS_MIN_RELOAD;
+        am->min = reload_min;
         am->want_cert = true;
         goto done;
     }
