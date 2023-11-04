@@ -625,7 +625,7 @@ if(APPLE)
     set(raw_installer "${PROJECT_BINARY_DIR}/installer/build/install_splintermail-${PROJECT_VERSION}.pkg")
     add_custom_command(
         OUTPUT "${raw_installer}"
-        COMMAND "${MUNKIPKG}" --quiet installer
+        COMMAND "${PYTHON_3_CMD}" "${MUNKIPKG}" --quiet installer
         DEPENDS ${file_deps} ${tgt_deps}
         COMMENT "creating raw installer" VERBATIM
         )
@@ -669,7 +669,7 @@ if(APPLE)
     set(uninstaller_out "uninstaller/build/uninstall_splintermail.pkg")
     add_custom_command(
         OUTPUT "${uninstaller_out}"
-        COMMAND "${MUNKIPKG}" --quiet uninstaller
+        COMMAND "${PYTHON_3_CMD}" "${MUNKIPKG}" --quiet uninstaller
         DEPENDS "${preinstall_out}" "${postinstall_out}" "${buildinfo_out}"
         COMMENT "creating uninstaller" VERBATIM
         )
