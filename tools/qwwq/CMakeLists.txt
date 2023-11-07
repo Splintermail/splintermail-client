@@ -58,6 +58,53 @@ sm_exe(qwwq main.c DEPS qw)
 # the operating system before running qwwq.
 sm_test(test_qw.c DEPS qw FILES ENV "ASAN_OPTIONS=detect_odr_violation=0")
 
+set(qwbin "$<TARGET_FILE:qwwq>")
+set(qwconf "${PROJECT_BINARY_DIR}/qw.conf")
+configure_file("${PROJECT_SOURCE_DIR}/qw.conf" "${qwconf}" @ONLY)
+if(APPLE)
+    SET(qw_os "osx")
+elseif(UNIX)
+    SET(qw_os "linux")
+elseif(WIN32)
+    SET(qw_os "windows")
+endif()
+# "export" variables so qwwq function works from peer directories
+set(qwconf "${qwconf}" PARENT_SCOPE)
+set(qwbin "${qwbin}" PARENT_SCOPE)
+set(qw_os "${qw_os}" PARENT_SCOPE)
+
+# qwwq(input output MODE mode DEPS deps...)
+# MODE will fail on windows
+# DEPS are target-level dependencies; there's no linking of course
+function(qwwq input output)
+    set(options "")
+    set(one_value_args "MODE")
+    set(multi_value_args "DEPS")
+    cmake_parse_arguments(
+        QWWQ
+        "${options}"
+        "${one_value_args}"
+        "${multi_value_args}"
+        "${ARGN}"
+    )
+    get_filename_component(output_dir "${output}" DIRECTORY)
+    if(QWWQ_MODE)
+        set(mode "--mode" "${QWWQ_MODE}")
+    else()
+        set(mode "")
+    endif()
+    add_custom_command(
+        OUTPUT "${output}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${output_dir}"
+        COMMAND ${qwbin} ${qwconf} -i ${input} -o ${output} ${mode} os=${qw_os}
+        DEPENDS qwwq ${qwconf} ${input} ${QWWQ_DEPS}
+        COMMENT prepocessing ${input} VERBATIM
+    )
+endfunction()
+
+# usage: qw_plugin([name] src... DEPS deps...)
+# if the first arg has no file extension it becomes the name, otherwise it is
+# a src and the output name is derived from it automatically.
 function(qw_plugin)
     set(options)
     set(one_value_args)

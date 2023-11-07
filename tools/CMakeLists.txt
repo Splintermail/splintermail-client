@@ -69,32 +69,7 @@ function(re2c tgt input output)
 endfunction()
 
 add_subdirectory(qwwq)
-
-### qwwq ###
-
-set(qwbin "$<TARGET_FILE:qwwq>")
-set(qwconf "${PROJECT_BINARY_DIR}/qw.conf")
-configure_file("${PROJECT_SOURCE_DIR}/qw.conf" "${qwconf}" @ONLY)
-if(APPLE)
-    SET(qw_os "osx")
-elseif(UNIX)
-    SET(qw_os "linux")
-elseif(WIN32)
-    SET(qw_os "windows")
-endif()
-# "export" variables so qwwq function works from peer directories
+# re-export variables to root
 set(qwconf "${qwconf}" PARENT_SCOPE)
 set(qwbin "${qwbin}" PARENT_SCOPE)
 set(qw_os "${qw_os}" PARENT_SCOPE)
-
-# extra arguments become extra dependencies
-function(qwwq input output)
-    get_filename_component(output_dir "${output}" DIRECTORY)
-    add_custom_command(
-        OUTPUT "${output}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${output_dir}"
-        COMMAND ${qwbin} ${qwconf} -i ${input} -o ${output} os=${qw_os}
-        DEPENDS qwwq ${qwconf} ${input} ${ARGN}
-        COMMENT prepocessing ${input} VERBATIM
-    )
-endfunction()

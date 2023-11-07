@@ -14,6 +14,10 @@ static void print_help(void){
         "  -h, --help      Print help information and usage.\n"
         "  -i, --input     Specify an input file.  Default: stdin.\n"
         "  -o, --output    Specify an output file.  Default: stdout.\n"
+        #ifndef _WIN32
+        "      --mode      Specify an output file mode.  Default: copy mode\n"
+        "                  from --input file, if provided.\n"
+        #endif
         "  -s, --stamp     Specify a stamp file.  In cases where the output\n"
         "                  file would be unchanged, touch the stamp file\n"
         "                  instead.  Requires --output.  Default: none.\n"
@@ -51,6 +55,9 @@ int main(int argc, char **argv){
     opt_spec_t o_help  = {'h',  "help",     false};
     opt_spec_t o_in    = {'i',  "input",    true };
     opt_spec_t o_out   = {'o',  "output",   true };
+    #ifndef _WIN32
+    opt_spec_t o_mode  = {'m',  "mode",     true };
+    #endif
     opt_spec_t o_stamp = {'s',  "stamp",    true };
     opt_spec_t o_bound = {'b',  "boundary", true };
     opt_spec_t o_stack = {'\0', "stack",    true };
@@ -60,6 +67,9 @@ int main(int argc, char **argv){
         &o_help,
         &o_in,
         &o_out,
+        #ifndef _WIN32
+        &o_mode,
+        #endif
         &o_stamp,
         &o_bound,
         &o_stack,
@@ -121,6 +131,22 @@ int main(int argc, char **argv){
         }
     }
 
+    #ifndef _WIN32
+    mode_t mode = 0;
+    bool set_mode = false;
+    // handle --mode
+    if(o_mode.found){
+        set_mode = true;
+        unsigned int umode;
+        derr_type_t etype = dstr_tou_quiet(o_mode.val, &umode, 8);
+        if(etype || umode > 0777){
+            FFMT_QUIET(stderr, "invalid --mode: %x\n", FD(o_mode.val));
+            return 1;
+        }
+        mode = (mode_t)umode;
+    }
+    #endif
+
     derr_t e = E_OK;
 
     qw_dynamics_t dynamics = {0};
@@ -152,15 +178,15 @@ int main(int argc, char **argv){
         ftempl = stdin;
     }
     PROP_GO(&e, dstr_fread_all(ftempl, &templ), cu);
-#ifndef _WIN32
-    // unix only: get the intput file mode, so we can make the output match
-    mode_t input_mode = 0;
-    if(o_out.found && o_in.found){
-        compat_stat_t s;
+    #ifndef _WIN32
+    if(!o_mode.found && o_out.found && o_in.found){
+        // unix only: match output mode to input mode
+        set_mode = true;
+        struct stat s;
         PROP_GO(&e, dfstat(fileno(ftempl), &s), cu);
-        input_mode = s.st_mode & 0777;
+        mode = s.st_mode & 0777;
     }
-#endif // _WIN32
+    #endif
     fclose(ftempl); ftempl = NULL;
 
     // calculate output
@@ -188,15 +214,17 @@ int main(int argc, char **argv){
         // try to read output
         PROP_GO(&e, dfopen(o_out.val.data, "r", &fout), cu);
 
-#ifndef _WIN32
+        #ifndef _WIN32
         // unix only: check output mode
-        compat_stat_t s;
-        PROP_GO(&e, dfstat(fileno(fout), &s), cu);
-        if((s.st_mode & 0777) != input_mode){
-            fclose(fout); fout = NULL;
-            goto write_output;
+        if(set_mode){
+            struct stat s;
+            PROP_GO(&e, dfstat(fileno(fout), &s), cu);
+            if((s.st_mode & 0777) != mode){
+                fclose(fout); fout = NULL;
+                goto write_output;
+            }
         }
-#endif // _WIN32
+        #endif
 
         // reuse conf, we don't need that memory anymore
         conf.len = 0;
@@ -220,15 +248,15 @@ write_output:
     }
     PROP_GO(&e, dstr_fwrite(fout, &out), cu);
 
-#ifndef _WIN32
+    #ifndef _WIN32
     // unix only: match output mode to input mode
-    if(o_out.found && o_in.found){
-        int ret = fchmod(fileno(fout), input_mode);
+    if(set_mode){
+        int ret = fchmod(fileno(fout), mode);
         if(ret){
             ORIG_GO(&e, E_OS, "chmod(%x): %x", cu, FD(o_out.val), FE(errno));
         }
     }
-#endif // _WIN32
+    #endif // _WIN32
     FILE *temp = fout; fout = NULL;
     PROP_GO(&e, dfclose(temp), cu);
 
