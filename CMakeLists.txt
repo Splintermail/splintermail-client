@@ -613,9 +613,22 @@ if(APPLE)
     list(APPEND file_deps "${plist_out}")
     list(APPEND file_deps "${man_out}")
 
-    # add the target that gets installed
+    # add the binary that gets installed
     set(splintermail_out "${payload}/usr/local/bin/splintermail")
-    binary_copy("splintermail" "${splintermail_out}")
+    if(OTHER_ARCH)
+        # use lipo to combine amd64 binary and x86_64 binary
+        add_custom_command(
+            OUTPUT "${splintermail_out}"
+            COMMAND lipo -create
+                    -output "${splintermail_out}"
+                    splintermail "${OTHER_ARCH}"
+            DEPENDS splintermail "${OTHER_ARCH}"
+            COMMENT "creating uinversal binary" VERBATIM
+        )
+    else()
+        # just copy the splintermail binary
+        binary_copy("splintermail" "${splintermail_out}")
+    endif()
     # add this target to the list of target dependencies
     list(APPEND tgt_deps splintermail)
     # add the output file to the list of file dependencies
