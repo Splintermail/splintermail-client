@@ -551,8 +551,8 @@ static derr_t test_addrspec(void){
     // scheme://host:port
 
     ok &= do_addrspec_test_case(
-        ":1993",
-        " pppp"
+        ":993",
+        " ppp"
     );
 
     ok &= do_addrspec_test_case(
@@ -575,13 +575,13 @@ static derr_t test_addrspec(void){
     );
 
     ok &= do_addrspec_test_case(
-        "localhost:1993",
-        "hhhhhhhhh pppp"
+        "localhost:993",
+        "hhhhhhhhh ppp"
     );
 
     ok &= do_addrspec_test_case(
-        "[::]:1993",
-        "hhhh pppp"
+        "[::]:993",
+        "hhhh ppp"
     );
 
     ok &= do_addrspec_test_case(
@@ -590,8 +590,8 @@ static derr_t test_addrspec(void){
     );
 
     ok &= do_addrspec_test_case(
-        "tls://:1993",
-        "sss    pppp"
+        "tls://:993",
+        "sss    ppp"
     );
 
     ok &= do_addrspec_test_case(
@@ -614,13 +614,13 @@ static derr_t test_addrspec(void){
     );
 
     ok &= do_addrspec_test_case(
-        "tls://localhost:1993",
-        "sss   hhhhhhhhh pppp"
+        "tls://localhost:993",
+        "sss   hhhhhhhhh ppp"
     );
 
     ok &= do_addrspec_test_case(
-        "tls://[::]:1993",
-        "sss   hhhh pppp"
+        "tls://[::]:993",
+        "sss   hhhh ppp"
     );
 
     if(!ok){

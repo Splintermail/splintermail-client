@@ -4,7 +4,7 @@
 #include "test/certs.h"
 
 // defaults
-DSTR_STATIC(d_listen, "insecure://[::1]:1993");
+DSTR_STATIC(d_listen, "insecure://[::]:1143");
 DSTR_STATIC(d_remote, "tls://splintermail.com:993");
 DSTR_STATIC(d_sm_dir, "/tmp/sm_dir");
 DSTR_STATIC(d_socket, "/tmp/sm.sock");

@@ -19,25 +19,45 @@
       and the order of sockets must match the order of `listen` options in
       the splintermail config file, so this is how we preserve ordering.
     -->
-    <!-- the default starttls://[::]:143 -->
+    <!-- the default starttls://127.0.0.1:143 -->
     <key>listen0</key>
     <dict>
       <key>SockNodeName</key>
-      <string>::</string>
+      <string>127.0.0.1<string>
       <key>SockServiceName</key>
       <integer>143</integer>
       <key>SockFamily</key>
-      <string>IPv4v6</string>
+      <string>IPv4</string>
     </dict>
+    <!-- the default starttls://[::1]:143 -->
     <key>listen1</key>
-    <!-- the default tls://[::]:993 -->
     <dict>
       <key>SockNodeName</key>
-      <string>::</string>
+      <string>::1</string>
+      <key>SockServiceName</key>
+      <integer>143</integer>
+      <key>SockFamily</key>
+      <string>IPv6</string>
+    </dict>
+    <!-- the default tls://127.0.0.1:993 -->
+    <key>listen2</key>
+    <dict>
+      <key>SockNodeName</key>
+      <string>127.0.0.1</string>
       <key>SockServiceName</key>
       <integer>993</integer>
       <key>SockFamily</key>
-      <string>IPv4v6</string>
+      <string>IPv4</string>
+    </dict>
+    <!-- the default tls://[::1]:993 -->
+    <key>listen3</key>
+    <dict>
+      <key>SockNodeName</key>
+      <string>::1</string>
+      <key>SockServiceName</key>
+      <integer>993</integer>
+      <key>SockFamily</key>
+      <string>IPv6</string>
     </dict>
     <!-- status server unix socket -->
     <key>status</key>

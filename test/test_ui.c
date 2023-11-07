@@ -318,8 +318,13 @@ static derr_t run_all_cases(char *tmpconf){
         struct test_case_t test_case, base_case = {
             .call_citm_loop = true,
             .citm_args = {
-                .nlspecs = 2,
-                .lspecs = {"starttls://[::1]:143", "tls://[::1]:993"},
+                .nlspecs = 4,
+                .lspecs = {
+                    "starttls://127.0.0.1:143",
+                    "starttls://[::1]:143",
+                    "tls://127.0.0.1:993",
+                    "tls://[::1]:993",
+                },
                 .key = NULL,
                 .cert = NULL,
                 .remote = "tls://splintermail.com:993",

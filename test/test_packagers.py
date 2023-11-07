@@ -145,7 +145,7 @@ class TestSuite():
         for i in range(10):
             try:
                 with socket() as s:
-                    s.connect(('127.0.0.1', 1993))
+                    s.connect(('127.0.0.1', 143))
                     # we connected, that's all we needed
                     return
             except ConnectionRefusedError:
@@ -156,7 +156,7 @@ class TestSuite():
     def assert_service_stopped(self):
         with socket() as s:
             try:
-                s.connect(('127.0.0.1', 1993))
+                s.connect(('127.0.0.1', 143))
             except ConnectionRefusedError:
                 pass
             else:
@@ -306,7 +306,7 @@ class UnixTestSuite(TestSuite):
         # # previously, we checked lsof to see owner of the port, but that
         # # doesn't seem to work inside rootless podman containers, so now we
         # # check the ownership of the splintermail citm command instead
-        # cmd = ('lsof', '-i', 'TCP:1993', '-F', 'cu')
+        # cmd = ('lsof', '-i', 'TCP:143', '-F', 'cu')
         cmd = ('ps', 'U', self.service_username, '-o', 'pid,command')
         p = Popen(cmd, stdout=PIPE)
         out = p.stdout.read()

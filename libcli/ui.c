@@ -746,11 +746,15 @@ static derr_t citm_main(
     int sockfd = -1;
 
     if(listeners.len == 0){
-        DSTR_STATIC(default_starttls, "starttls://[::1]:143");
-        DSTR_STATIC(default_tls, "tls://[::1]:993");
-        listeners.specs[0] = must_parse_addrspec(&default_starttls);
-        listeners.specs[1] = must_parse_addrspec(&default_tls);
-        listeners.len = 2;
+        DSTR_STATIC(default_starttls4, "starttls://127.0.0.1:143");
+        DSTR_STATIC(default_starttls6, "starttls://[::1]:143");
+        DSTR_STATIC(default_tls4, "tls://127.0.0.1:993");
+        DSTR_STATIC(default_tls6, "tls://[::1]:993");
+        listeners.specs[0] = must_parse_addrspec(&default_starttls4);
+        listeners.specs[1] = must_parse_addrspec(&default_starttls6);
+        listeners.specs[2] = must_parse_addrspec(&default_tls4);
+        listeners.specs[3] = must_parse_addrspec(&default_tls6);
+        listeners.len = 4;
         listeners.key_required = true;
     }
 
