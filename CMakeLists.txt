@@ -635,9 +635,12 @@ if(APPLE)
     set(resources "${PROJECT_BINARY_DIR}/installer/resources")
     set(license_rtf_in "${supp_dir}/static_link_license.rtf")
     set(license_rtf_out "${resources}/static_link_license.rtf")
+    set(conclusion_rtf_in "${supp_dir}/osx/conclusion.rtf")
+    set(conclusion_rtf_out "${resources}/conclusion.rtf")
     set(dist_in "${supp_dir}/osx/dist.xml")
     set(dist_out "${PROJECT_BINARY_DIR}/installer/dist.xml")
     qwwq("${license_rtf_in}" "${license_rtf_out}")
+    qwwq("${conclusion_rtf_in}" "${conclusion_rtf_out}")
     qwwq("${dist_in}" "${dist_out}")
 
     set(installer_out "${PROJECT_BINARY_DIR}/install_splintermail-${PROJECT_VERSION}.pkg")
@@ -647,7 +650,10 @@ if(APPLE)
                 --resources "${resources}"
                 --package-path "${PROJECT_BINARY_DIR}/installer/build"
                 "${installer_out}"
-        DEPENDS "${raw_installer}" "${license_rtf_out}" "${dist_out}"
+        DEPENDS "${raw_installer}"
+                "${license_rtf_out}"
+                "${conclusion_rtf_out}"
+                "${dist_out}"
         COMMENT "creating final installer" VERBATIM
         )
 

@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- https://developer.apple.com/library/archive/documentation/DeveloperTools/Reference/DistributionDefinitionRef/Chapters/Distribution_XML_Ref.html -->
 <installer-gui-script minSpecVersion="1">
   <pkg-ref id="QW osx_pkg_id WQ"/>
   <options customize="never" require-scripts="false"/>
@@ -14,4 +15,5 @@
   <pkg-ref id="QW osx_pkg_id WQ" version="QW version WQ" onConclusion="none">install_QW pkg_name WQ-QW version WQ.pkg</pkg-ref>
   <license file="static_link_license.rtf" mime-type="application/rtf"/>
   <title>QW G."Pkg Name" WQ Installer</title>
+  <conclusion file="conclusion.rtf" mime-type="application/rtf"/>
 </installer-gui-script>
