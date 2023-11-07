@@ -303,16 +303,27 @@ class UnixTestSuite(TestSuite):
         return pwd.getpwnam(username).pw_uid
 
     def assert_service_owner(self):
-        # # previously, we checked lsof to see owner of the port, but that
-        # # doesn't seem to work inside rootless podman containers, so now we
-        # # check the ownership of the splintermail citm command instead
+        # previously, we checked lsof to see owner of the port, but that
+        # doesn't seem to work inside rootless podman containers, so now we
+        # check the ownership of the splintermail citm command instead
         # cmd = ('lsof', '-i', 'TCP:143', '-F', 'cu')
-        cmd = ('ps', 'U', self.service_username, '-o', 'pid,command')
-        p = Popen(cmd, stdout=PIPE)
-        out = p.stdout.read()
-        ret = p.wait()
-        assert ret == 0, "ps exited %d"%ret
-        assert b"splintermail citm" in out, out
+
+        # previously, we expected the service to be already started, but now
+        # that we support on-demain daemons, we allow a short retry window
+        TRIES = 3
+        for i in range(TRIES):
+            try:
+                sleep(i)
+                cmd = ('ps', 'U', self.service_username, '-o', 'pid,command')
+                p = Popen(cmd, stdout=PIPE)
+                out = p.stdout.read()
+                ret = p.wait()
+                assert ret == 0, "ps exited %d"%ret
+                assert b"splintermail citm" in out, out
+            except:
+                if i + 1 == TRIES:
+                    raise
+
 
 
 class BSDTestSuite(UnixTestSuite):
