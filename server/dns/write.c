@@ -205,8 +205,8 @@ size_t write_soa(
     // printf("rdlen=%zu, needed=%zu\n", rdlen, needed);
 
     // checked in tests
-    static const size_t rdlen = 75;
-    static const size_t needed = 108;
+    static const size_t rdlen = 71;
+    static const size_t needed = 104;
 
     if(used + needed > cap) return used + needed;
     used = put_name(ZONE_NAME, ZONE_NAME_COUNT, out, used);
@@ -214,8 +214,8 @@ size_t write_soa(
 
     used = put_name(MNAME, MNAME_COUNT, out, used);
     used = put_name(RNAME, RNAME_COUNT, out, used);
-    // SERIAL, always 0 since it seems to be only useful for zone transfers
-    used = put_uint32(0, out, used);
+    // SERIAL, constant since it seems to be only useful for zone transfers
+    used = put_uint32(SERIAL, out, used);
     // REFRESH: 5 min
     used = put_uint32(300, out, used);
     // RETRY: 1 min
@@ -258,8 +258,8 @@ static size_t _write_ns(
     // printf("rdlen=%zu, needed=%zu\n", rdlen, needed);
 
     // checked in tests
-    static const size_t rdlen = 26;
-    static const size_t needed = 59;
+    static const size_t rdlen = 22;
+    static const size_t needed = 55;
 
     if(used + needed > cap) return used + needed;
     used = put_name(ZONE_NAME, ZONE_NAME_COUNT, out, used);
@@ -282,13 +282,6 @@ size_t write_ns2(
     (void)arg;
     (void)nameoff;
     return _write_ns(NS2_NAME, NS2_NAME_COUNT, out, cap, used);
-}
-size_t write_ns3(
-    void *arg, size_t nameoff, char *out, size_t cap, size_t used
-){
-    (void)arg;
-    (void)nameoff;
-    return _write_ns(NS3_NAME, NS3_NAME_COUNT, out, cap, used);
 }
 
 size_t write_secret(

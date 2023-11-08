@@ -41,7 +41,6 @@ size_t write_soa(void*, size_t, char*, size_t, size_t);
 size_t write_a(void*, size_t, char*, size_t, size_t);
 size_t write_ns1(void*, size_t, char*, size_t, size_t);
 size_t write_ns2(void*, size_t, char*, size_t, size_t);
-size_t write_ns3(void*, size_t, char*, size_t, size_t);
 size_t write_secret(void*, size_t, char*, size_t, size_t);
 size_t write_aaaa(void*, size_t, char*, size_t, size_t);
 size_t write_caa(void*, size_t, char*, size_t, size_t);

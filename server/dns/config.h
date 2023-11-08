@@ -12,17 +12,13 @@ const uint32_t A_TTL = 86400;
 // NS record //
 
 const lstr_t NS1_NAME[] = {
-    LSTR("userns1"), LSTR("splintermail"), LSTR("com")
+    LSTR("ns1"), LSTR("splintermail"), LSTR("com")
 };
 const lstr_t NS2_NAME[] = {
-    LSTR("userns2"), LSTR("splintermail"), LSTR("com")
-};
-const lstr_t NS3_NAME[] = {
-    LSTR("userns3"), LSTR("splintermail"), LSTR("com")
+    LSTR("ns2"), LSTR("splintermail"), LSTR("com")
 };
 const size_t NS1_NAME_COUNT = sizeof(NS1_NAME) / sizeof(*NS1_NAME);
 const size_t NS2_NAME_COUNT = sizeof(NS2_NAME) / sizeof(*NS2_NAME);
-const size_t NS3_NAME_COUNT = sizeof(NS3_NAME) / sizeof(*NS3_NAME);
 
 
 // TXT record //
@@ -41,7 +37,7 @@ const size_t SOA_TTL = 86400;
 
 // MNAME: primary source of data for this zone
 const lstr_t MNAME[] = {
-    LSTR("userns1"), LSTR("splintermail"), LSTR("com")
+    LSTR("ns1"), LSTR("splintermail"), LSTR("com")
 };
 const size_t MNAME_COUNT = sizeof(MNAME) / sizeof(*MNAME);
 
@@ -52,7 +48,7 @@ const lstr_t RNAME[] = {
 const size_t RNAME_COUNT = sizeof(RNAME) / sizeof(*RNAME);
 
 // SERIAL, constant since it seems to be only useful for zone transfers
-const uint32_t SERIAL = 20220806;
+const uint32_t SERIAL = 20231108;
 // REFRESH: 5 min
 const uint32_t REFRESH = 300;
 // RETRY: 1 min

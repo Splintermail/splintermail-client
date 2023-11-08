@@ -17,7 +17,6 @@ static derr_t test_predicted_lengths(void){
     ASSERT(write_a(NULL, 0, buf, 0, 0) == write_a(NULL, 0, buf, cap, 0));
     ASSERT(write_ns1(NULL, 0, buf, 0, 0) == write_ns1(NULL, 0, buf, cap, 0));
     ASSERT(write_ns2(NULL, 0, buf, 0, 0) == write_ns2(NULL, 0, buf, cap, 0));
-    ASSERT(write_ns3(NULL, 0, buf, 0, 0) == write_ns3(NULL, 0, buf, cap, 0));
     ASSERT(write_aaaa(NULL, 0, buf, 0, 0) == write_aaaa(NULL, 0, buf, cap, 0));
     ASSERT(write_caa(NULL, 0, buf, 0, 0) == write_caa(NULL, 0, buf, cap, 0));
 

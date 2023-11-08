@@ -161,7 +161,7 @@ size_t respond_root(void *arg, const dns_pkt_t pkt, char *out, size_t cap){
     }
 
     if(pkt.qstn.qtype == NS){
-        return POSITIVE_RESP(write_ns1, write_ns2, write_ns3);
+        return POSITIVE_RESP(write_ns1, write_ns2);
     }
 
     // no matching record
