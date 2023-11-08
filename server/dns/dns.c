@@ -10,7 +10,7 @@ size_t norespond(void *arg, const dns_pkt_t pkt, char *out, size_t cap){
     (void)pkt;
     (void)out;
     (void)cap;
-    printf("no response\n");
+    LOG_DEBUG("no response\n");
     return 0;
 }
 
@@ -268,7 +268,7 @@ size_t handle_packet(
         return 0;
     }
 
-    // print_pkt(pkt);
+    LOG_DEBUG("%x", FPKT(pkt));
 
     lstr_t rname[5] = {0};
     size_t cap = sizeof(rname) / sizeof(*rname);

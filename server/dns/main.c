@@ -156,6 +156,8 @@ static derr_t on_recv_dns(
 ){
     derr_t e = E_OK;
 
+    LOG_DEBUG("-- udp from %x --\n", FNTOP(src));
+
     // check rrl
     bool ok = rrl_check(&g->rrl, src, g->now);
     if(!ok){
@@ -535,6 +537,7 @@ static void print_help(FILE *f){
         "\n"
         "Where OPTIONS may be any of the following:\n"
         "\n"
+        "--debug         Turn on debug logging.\n"
         "--sync SPEC     Configure how the kvpsync will listen to its\n"
         "                peers.  Required.\n"
         "--peer SPEC     Add a peer that kvpsync should talk to.  May\n"
@@ -627,7 +630,7 @@ int main(int argc, char **argv){
     int kvp_fd = -1;
 
     signal(SIGPIPE, SIG_IGN);
-    PROP_GO(&e, logger_add_fileptr(LOG_LVL_DEBUG, stderr), fail);
+    PROP_GO(&e, logger_add_fileptr(LOG_LVL_INFO, stderr), fail);
 
     opt_spec_t o_help = {'h',  "help", false};
     opt_spec_t o_conf = {'c',  "config", true};
@@ -657,12 +660,14 @@ int main(int argc, char **argv){
     opt_spec_t o_peer = {'\0', "peer", true, on_peer, &peers};
     opt_spec_t o_rrl  = {'\0', "rrl", true};
     opt_spec_t o_dns  = {'\0', "dns", true};
+    opt_spec_t o_dbg  = {'d', "debug", false};
 
     opt_spec_t* spec[] = {
         &o_sync,
         &o_peer,
         &o_rrl,
         &o_dns,
+        &o_dbg,
     };
     size_t speclen = sizeof(spec) / sizeof(*spec);
 
@@ -684,6 +689,11 @@ int main(int argc, char **argv){
     if(newargc > 1){
         print_help(stderr);
         return 1;
+    }
+
+    if(o_dbg.found){
+        logger_clear_outputs();
+        PROP_GO(&e, logger_add_fileptr(LOG_LVL_DEBUG, stderr), fail);
     }
 
     PROP_GO(&e, detect_sd_fds(&udp_fd, &tcp_fd, &kvp_fd), fail);

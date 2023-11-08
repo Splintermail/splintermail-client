@@ -17,6 +17,31 @@ derr_type_t _fmt_lstr_dbg(const fmt_i *iface, writer_i *out){
     return fmt_strn_dbg(l.str, l.len, out);
 }
 
+static derr_type_t fmt_bytes(writer_i *out, const char *bytes, size_t len){
+    derr_type_t etype;
+    writer_t w = *out->w;
+    etype = w.puts(out, "  ", 2);
+    if(etype) return etype;
+    for(size_t i = 0; i < len; i++){
+        if(i == 0){
+        }else if(i > 0 && i%16 == 0){
+            etype = w.puts(out, "\n  ", 3);
+            if(etype) return etype;
+        }else if(i%4 == 0){
+            etype = w.puts(out, "  ", 2);
+            if(etype) return etype;
+        }else{
+            etype = w.putc(out, ' ');
+            if(etype) return etype;
+        }
+        char buf[3];
+        unsigned char c = ((unsigned char*)bytes)[i];
+        snprintf(buf, sizeof(buf), "%.2x", (unsigned int)c);
+        etype = w.puts(out, buf, 2);
+        if(etype) return etype;
+    }
+    return E_NONE;
+}
 
 bool is_bad_parse(size_t n){
     return n >= BP_MINVAL;
@@ -137,21 +162,38 @@ static size_t parse_hdr(
     return used + 12;
 }
 
-static void print_hdr(const dns_hdr_t hdr){
-    printf("id=%x ", (unsigned)hdr.id);
-    printf("qr=%u ", (unsigned)hdr.qr);
-    printf("opcode=%u ", (unsigned)hdr.opcode);
-    printf("aa=%u ", (unsigned)hdr.aa);
-    printf("tc=%u ", (unsigned)hdr.tc);
-    printf("rd=%u ", (unsigned)hdr.rd);
-    printf("ra=%u ", (unsigned)hdr.ra);
-    printf("z=%u ", (unsigned)hdr.z);
-    printf("rcode=%u ", (unsigned)hdr.rcode);
-    printf("qdcount=%u ", (unsigned)hdr.qdcount);
-    printf("ancount=%u ", (unsigned)hdr.ancount);
-    printf("nscount=%u ", (unsigned)hdr.nscount);
-    printf("arcount=%u ", (unsigned)hdr.arcount);
-    printf("\n");
+static derr_type_t fmt_hdr(writer_i *out, const dns_hdr_t hdr){
+    derr_type_t etype;
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%x", (unsigned)hdr.id);
+    if(len < 0 || len > (int)sizeof(buf)) return E_INTERNAL;
+    etype = FMT_UNLOCKED(out, "id=%x ", FSN(buf, (size_t)len));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "qr=%x ", FU(hdr.qr));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "opcode=%x ", FU(hdr.opcode));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "aa=%x ", FU(hdr.aa));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "tc=%x ", FU(hdr.tc));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "rd=%x ", FU(hdr.rd));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "ra=%x ", FU(hdr.ra));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "z=%x ", FU(hdr.z));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "rcode=%x ", FU(hdr.rcode));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "qdcount=%x ", FU(hdr.qdcount));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "ancount=%x ", FU(hdr.ancount));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "nscount=%x ", FU(hdr.nscount));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "arcount=%x\n", FU(hdr.arcount));
+    if(etype) return etype;
+    return E_NONE;
 }
 
 // read labels until the zero label
@@ -308,20 +350,27 @@ static size_t parse_qstn(
     return used;
 }
 
-static void print_qstn(const dns_qstn_t qstn){
+static derr_type_t fmt_qstn(writer_i *out, const dns_qstn_t qstn){
+    derr_type_t etype;
+    writer_t w = *out->w;
     // print each label
     size_t used = qstn.off;
     for(uint16_t i = 0; i < qstn.qdcount; i++){
-        printf("qname=");
+        etype = w.puts(out, "qname=", 6);
+        if(etype) return etype;
         labels_t labels;
         lstr_t *lstr = labels_iter(&labels, qstn.ptr, used);
         for(; lstr; lstr = labels_next(&labels)){
-            printf("%.*s.", (int)lstr->len, lstr->str);
+            etype = w.puts(out, lstr->str, lstr->len);
+            if(etype) return etype;
         }
         used = labels.used;
     }
-    printf("\nqtype=%u", (unsigned)qstn.qtype);
-    printf("\nqclass=%u", (unsigned)qstn.qclass);
+    etype = FMT_UNLOCKED(out, "\nqtype=%x", FU(qstn.qtype));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, "\nqclass=%x", FU(qstn.qclass));
+    if(etype) return etype;
+    return E_NONE;
 }
 
 // really just validation; we re-parse it on the fly.
@@ -399,21 +448,31 @@ rr_t *rrs_next(rrs_t *it){
 }
 
 
-static void print_rr(const dns_rr_t dns_rr){
+static derr_type_t fmt_rr(writer_i *out, const dns_rr_t dns_rr){
+    derr_type_t etype;
+    writer_t w = *out->w;
     rrs_t it;
     for(rr_t *rr = dns_rr_iter(&it, dns_rr); rr; rr = rrs_next(&it)){
-        printf("name=");
+        etype = w.puts(out, "name=", 5);
+        if(etype) return etype;
         labels_t labels = {0};
         lstr_t *lstr = labels_iter(&labels, rr->ptr, rr->nameoff);
         for(; lstr; lstr = labels_next(&labels)){
-            printf("%.*s.", (int)lstr->len, lstr->str);
+            etype = w.puts(out, lstr->str, lstr->len);
+            if(etype) return etype;
         }
-        printf(" type=%u", rr->type);
-        printf(" class=%u", rr->class);
-        printf(" ttl=%u", rr->ttl);
-        printf(" rdlen=%u\n", rr->rdlen);
-        print_bytes(rr->ptr + rr->rdoff, rr->rdlen);
+        etype = FMT_UNLOCKED(out, " type=%x", FU(rr->type));
+        if(etype) return etype;
+        etype = FMT_UNLOCKED(out, " class=%x", FU(rr->class));
+        if(etype) return etype;
+        etype = FMT_UNLOCKED(out, " ttl=%x", FU(rr->ttl));
+        if(etype) return etype;
+        etype = FMT_UNLOCKED(out, " rdlen=%x\n", FU(rr->rdlen));
+        if(etype) return etype;
+        etype = fmt_bytes(out, rr->ptr + rr->rdoff, rr->rdlen);
+        if(etype) return etype;
     }
+    return E_NONE;
 }
 
 // returns 0 if not found, 1 if found, BP_DOUBLE_EDNS if more than one found
@@ -484,22 +543,32 @@ opt_t *opts_next(opts_t *it){
 }
 
 
-static void print_edns(const edns_t edns){
+static derr_type_t fmt_edns(writer_i *out, const edns_t edns){
+    derr_type_t etype;
+    writer_t w = *out->w;
     if(!edns.found){
-        printf("(not found)");
-        return;
+        return w.puts(out, "(not found)", 11);
     }
-    printf("extended-rcode=%u", (unsigned)edns.extrcode);
-    printf(" version=%u", (unsigned)edns.version);
-    printf(" dnssec_ok=%u", (unsigned)edns.dnssec_ok);
-    printf(" z=%u", (unsigned)edns.z);
-    printf(" udp_size=%u", (unsigned)edns.udp_size);
-    printf(" optcount=%zu", edns.optcount);
+    etype = FMT_UNLOCKED(out, "extended-rcode=%x", FU(edns.extrcode));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, " version=%x", FU(edns.version));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, " dnssec_ok=%x", FU(edns.dnssec_ok));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, " z=%x", FU(edns.z));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, " udp_size=%x", FU(edns.udp_size));
+    if(etype) return etype;
+    etype = FMT_UNLOCKED(out, " optcount=%x", FU(edns.optcount));
+    if(etype) return etype;
     opts_t opts;
     for(opt_t *opt = opts_iter(&opts, edns); opt; opt = opts_next(&opts)){
-        printf("\noption-code=%u:\n", (unsigned)opt->code);
-        print_bytes(opt->ptr + opt->off, opt->len);
+        etype = FMT_UNLOCKED(out, "\noption-code=%x:\n", FU(opt->code));
+        if(etype) return etype;
+        etype = fmt_bytes(out, opt->ptr + opt->off, opt->len);
+        if(etype) return etype;
     }
+    return E_NONE;
 }
 
 // returns 0 if ok, or bad_parse_e if not ok
@@ -526,33 +595,39 @@ size_t parse_pkt(dns_pkt_t *pkt, const char *ptr, size_t len){
     return 0;
 };
 
-void print_pkt(const dns_pkt_t pkt){
-    print_hdr(pkt.hdr);
-    print_qstn(pkt.qstn);
+static derr_type_t fmt_pkt(writer_i *out, const dns_pkt_t pkt){
+    derr_type_t etype;
+    writer_t w = *out->w;
 
-    printf("\nANSWER ");
-    print_rr(pkt.ans);
-    printf("\nAUTHORITY ");
-    print_rr(pkt.auth);
-    printf("\nADDITIONAL ");
-    print_rr(pkt.addl);
-    printf("\nEDNS ");
-    print_edns(pkt.edns);
-    printf("\n");
+    etype = fmt_hdr(out, pkt.hdr);
+    if(etype) return etype;
+    etype = fmt_qstn(out, pkt.qstn);
+    if(etype) return etype;
+
+    etype = w.puts(out, "\nANSWER ", 8);
+    if(etype) return etype;
+    etype = fmt_rr(out, pkt.ans);
+    if(etype) return etype;
+    etype = w.puts(out, "\nAUTHORITY ", 11);
+    if(etype) return etype;
+    etype = fmt_rr(out, pkt.auth);
+    if(etype) return etype;
+    etype = w.puts(out, "\nADDITIONAL ", 12);
+    if(etype) return etype;
+    etype = fmt_rr(out, pkt.addl);
+    if(etype) return etype;
+    etype = w.puts(out, "\nEDNS ", 6);
+    if(etype) return etype;
+    etype = fmt_edns(out, pkt.edns);
+    if(etype) return etype;
+    etype = w.putc(out, '\n');
+    if(etype) return etype;
+
+    return E_NONE;
 }
 
-void print_bytes(const char *bytes, size_t len){
-    printf("  ");
-    for(size_t i = 0; i < len; i++){
-        if(i == 0){
-        }else if(i > 0 && i%16 == 0){
-            printf("\n  ");
-        }else if(i%4 == 0){
-            printf("  ");
-        }else{
-            printf(" ");
-        }
-        unsigned char c = ((unsigned char*)bytes)[i];
-        printf("%.2x", (unsigned int)c);
-    }
+DEF_CONTAINER_OF(_fmt_pkt_t, iface, fmt_i)
+
+derr_type_t _fmt_pkt(const fmt_i *iface, writer_i *out){
+    return fmt_pkt(out, CONTAINER_OF(iface, _fmt_pkt_t, iface)->pkt);
 }

@@ -195,6 +195,12 @@ const char *qtype_tostr(int qtype);
 
 // returns 0 if ok, or BAD_PARSE if not ok
 size_t parse_pkt(dns_pkt_t *pkt, const char *ptr, size_t len);
-void print_pkt(const dns_pkt_t pkt);
 
-void print_bytes(const char *bytes, size_t len);
+typedef struct {
+    fmt_i iface;
+    const dns_pkt_t pkt;
+} _fmt_pkt_t;
+
+derr_type_t _fmt_pkt(const fmt_i *iface, writer_i *out);
+
+#define FPKT(pkt)(&(_fmt_pkt_t){ {_fmt_pkt}, pkt }.iface)
