@@ -255,7 +255,6 @@ def set_challenge(
         return API.error("command requires an argument")
     challenge = arg
     smsql.set_challenge(uuid, challenge)
-    log.info(f"len(uuid) = {len(uuid)}")
     hex_uuid = codecs.encode(uuid, "hex")
 
     with socket.socket(family=socket.AF_UNIX, type=socket.SOCK_STREAM) as sock:
