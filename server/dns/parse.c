@@ -67,8 +67,8 @@ const char *bp2str(bad_parse_e bp){
     return "parse was ok";
 }
 
-bool lstr_eq(const lstr_t a, const lstr_t b){
-    return a.len == b.len && strncmp(a.str, b.str, a.len) == 0;
+bool lstr_ieq(const lstr_t a, const lstr_t b){
+    return a.len == b.len && strncasecmp(a.str, b.str, a.len) == 0;
 }
 
 char *UNKNOWN = "unknown";

@@ -19,7 +19,7 @@ respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n);
 struct kvp_i;
 typedef struct kvp_i kvp_i;
 struct kvp_i {
-    const dstr_t *(*get)(kvp_i*, lstr_t user);
+    const dstr_t *(*iget)(kvp_i*, lstr_t iuser);
 };
 
 // returns zero to not respond

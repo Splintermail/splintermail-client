@@ -27,26 +27,26 @@ static derr_t test_labels_iter(void){
     labels_t labels;
     lstr_t *lstr = labels_iter(&labels, buf, used);
     ASSERT(lstr);
-    ASSERT(lstr_eq(*lstr, LSTR("a")));
+    ASSERT(lstr_ieq(*lstr, LSTR("a")));
     lstr = labels_next(&labels);
     ASSERT(lstr);
-    ASSERT(lstr_eq(*lstr, LSTR("bb")));
+    ASSERT(lstr_ieq(*lstr, LSTR("bB")));
     lstr = labels_next(&labels);
     ASSERT(lstr);
-    ASSERT(lstr_eq(*lstr, LSTR("ccc")));
+    ASSERT(lstr_ieq(*lstr, LSTR("cCc")));
     lstr = labels_next(&labels);
     ASSERT(!lstr);
 
     used += labels.used;
     lstr = labels_iter(&labels, buf, used);
     ASSERT(lstr);
-    ASSERT(lstr_eq(*lstr, LSTR("z")));
+    ASSERT(lstr_ieq(*lstr, LSTR("z")));
     lstr = labels_next(&labels);
     ASSERT(lstr);
-    ASSERT(lstr_eq(*lstr, LSTR("bb")));
+    ASSERT(lstr_ieq(*lstr, LSTR("bb")));
     lstr = labels_next(&labels);
     ASSERT(lstr);
-    ASSERT(lstr_eq(*lstr, LSTR("ccc")));
+    ASSERT(lstr_ieq(*lstr, LSTR("ccc")));
     lstr = labels_next(&labels);
     ASSERT(!lstr);
 
@@ -96,29 +96,29 @@ static derr_t test_labels_read(void){
     // test reading
     n = labels_read(buf, 0, name, cap);
     ASSERT(n == 3);
-    ASSERT(lstr_eq(name[0], LSTR("a")));
-    ASSERT(lstr_eq(name[1], LSTR("bb")));
-    ASSERT(lstr_eq(name[2], LSTR("ccc")));
+    ASSERT(lstr_ieq(name[0], LSTR("a")));
+    ASSERT(lstr_ieq(name[1], LSTR("bb")));
+    ASSERT(lstr_ieq(name[2], LSTR("ccc")));
 
     // test reversing (odd)
     labels_reverse(name, n);
-    ASSERT(lstr_eq(name[0], LSTR("ccc")));
-    ASSERT(lstr_eq(name[1], LSTR("bb")));
-    ASSERT(lstr_eq(name[2], LSTR("a")));
+    ASSERT(lstr_ieq(name[0], LSTR("ccc")));
+    ASSERT(lstr_ieq(name[1], LSTR("bb")));
+    ASSERT(lstr_ieq(name[2], LSTR("a")));
 
     n = labels_read(buf, 10, name, cap);
     ASSERT(n == 4);
-    ASSERT(lstr_eq(name[0], LSTR("z")));
-    ASSERT(lstr_eq(name[1], LSTR("a")));
-    ASSERT(lstr_eq(name[2], LSTR("bb")));
-    ASSERT(lstr_eq(name[3], LSTR("ccc")));
+    ASSERT(lstr_ieq(name[0], LSTR("z")));
+    ASSERT(lstr_ieq(name[1], LSTR("a")));
+    ASSERT(lstr_ieq(name[2], LSTR("bb")));
+    ASSERT(lstr_ieq(name[3], LSTR("ccc")));
 
     // test reversing (even)
     labels_reverse(name, n);
-    ASSERT(lstr_eq(name[0], LSTR("ccc")));
-    ASSERT(lstr_eq(name[1], LSTR("bb")));
-    ASSERT(lstr_eq(name[2], LSTR("a")));
-    ASSERT(lstr_eq(name[3], LSTR("z")));
+    ASSERT(lstr_ieq(name[0], LSTR("ccc")));
+    ASSERT(lstr_ieq(name[1], LSTR("bb")));
+    ASSERT(lstr_ieq(name[2], LSTR("a")));
+    ASSERT(lstr_ieq(name[3], LSTR("z")));
 
     #undef ASSERT
 

@@ -306,14 +306,17 @@ buf_return:
 }
 
 // implements the kvp_i->get
-static const dstr_t *globals_kvp_get(kvp_i *iface, lstr_t user){
+static const dstr_t *globals_kvp_iget(kvp_i *iface, lstr_t iuser){
     globals_t *g = CONTAINER_OF(iface, globals_t, iface);
-    // make a copy of username to get around const requirements
-    if(user.len > 63) LOG_FATAL("username too long");
+    /* make a copy of username to get around const requirements, and also to
+       make lower-casing easy */
+    if(iuser.len > 63) LOG_FATAL("username too long");
     char userbuf[63];
-    memcpy(userbuf, user.str, user.len);
+    memcpy(userbuf, iuser.str, iuser.len);
+
     dstr_t key;
-    DSTR_WRAP(key, userbuf, user.len, false);
+    DSTR_WRAP(key, userbuf, iuser.len, false);
+    dstr_lower(&key);
 
     /* If we have multiple kvpsync_recv_t's which are both OK but only one has
        received the challenge, prefer the confident yes to the confident no.
@@ -455,7 +458,7 @@ static derr_t dns_main(
 
     globals_t g = {
         .iface = {
-            .get = globals_kvp_get,
+            .iget = globals_kvp_iget,
         },
         .peers = peers,
         .npeers = npeers,

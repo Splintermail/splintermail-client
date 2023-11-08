@@ -15,7 +15,7 @@ derr_type_t _fmt_lstr_dbg(const fmt_i *iface, writer_i *out);
 #define FL(l) (&(_fmt_lstr_t){ {_fmt_lstr}, l }.iface)
 #define FL_DBG(l) (&(_fmt_lstr_t){ {_fmt_lstr_dbg}, l }.iface)
 
-bool lstr_eq(const lstr_t a, const lstr_t b);
+bool lstr_ieq(const lstr_t a, const lstr_t b);
 
 typedef enum {
     BP_MINVAL                = (size_t)-13,

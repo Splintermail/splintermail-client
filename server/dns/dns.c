@@ -228,9 +228,9 @@ respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
 
     // refuse to respond for domains to we're not responsible for
     if(n < 3) return respond_refused;
-    if(!lstr_eq(rname[0], LSTR("com"))) return respond_refused;
-    if(!lstr_eq(rname[1], LSTR("splintermail"))) return respond_refused;
-    if(!lstr_eq(rname[2], LSTR("user"))) return respond_refused;
+    if(!lstr_ieq(rname[0], LSTR("com"))) return respond_refused;
+    if(!lstr_ieq(rname[1], LSTR("splintermail"))) return respond_refused;
+    if(!lstr_ieq(rname[2], LSTR("user"))) return respond_refused;
 
     // we only implement the basic qtypes from rfc1035 + AAAA + CAA
     uint16_t qtype = pkt.qstn.qtype;
@@ -244,7 +244,7 @@ respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
         // matched: *.user.splintermail.com
         return respond_user;
     }
-    if(n == 5 && lstr_eq(rname[4], LSTR("_acme-challenge"))){
+    if(n == 5 && lstr_ieq(rname[4], LSTR("_acme-challenge"))){
         // matched: _acme-challenge.*.user.splintermail.com
         return respond_acme;
     }
@@ -281,7 +281,7 @@ size_t handle_packet(
         // username would be at index 3: com.splintermail.user.*
         if(n < 4) LOG_FATAL("respond_acme doesn't have enough labels\n");
         lstr_t user = rname[3];
-        const dstr_t *dsecret = kvp->get(kvp, user);
+        const dstr_t *dsecret = kvp->iget(kvp, user);
         if(dsecret == UNSURE){
             secret.str = &C_UNSURE;
         }else if(dsecret){
