@@ -304,7 +304,6 @@ static derr_t pre_starttls_respond(imap_server_t *s, imap_cmd_t *cmd){
             PROP_GO(&e, respond_too_early(tag, out), cu);
             break;
 
-        case IMAP_CMD_AUTH:
         case IMAP_CMD_XKEYSYNC:
         case IMAP_CMD_XKEYSYNC_DONE:
         case IMAP_CMD_XKEYADD:

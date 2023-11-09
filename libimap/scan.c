@@ -279,7 +279,6 @@ std_mode:
         ":"                     { type = IMAP_COLON; goto done; }
         "\\"                    { type = IMAP_BACKSLASH; goto done; }
         "\""                    { type = IMAP_DQUOTE; goto done; }
-        "/"                     { type = IMAP_SLASH; goto done; }
         "?"                     { type = IMAP_QUESTION; goto done; }
         "="                     { type = IMAP_EQ; goto done; }
         "-"                     { type = IMAP_DASH; goto done; }
@@ -375,6 +374,7 @@ std_mode:
         'parse'                 { type = IMAP_PARSE; goto done; }
         'peek'                  { type = IMAP_PEEK; goto done; }
         'permanentflags'        { type = IMAP_PERMANENTFLAGS; goto done; }
+        'plain'                 { type = IMAP_PLAIN; goto done; }
         'preauth'               { type = IMAP_PREAUTH; goto done; }
         'priv'                  { type = IMAP_PRIV; goto done; }
         'qresync'               { type = IMAP_QRESYNC; goto done; }

@@ -57,7 +57,6 @@ DSTR_STATIC(IMAP_CMD_CAPA_dstr, "CAPABILITY");
 DSTR_STATIC(IMAP_CMD_NOOP_dstr, "NOOP");
 DSTR_STATIC(IMAP_CMD_LOGOUT_dstr, "LOGOUT");
 DSTR_STATIC(IMAP_CMD_STARTTLS_dstr, "STARTTLS");
-DSTR_STATIC(IMAP_CMD_AUTH_dstr, "AUTH");
 DSTR_STATIC(IMAP_CMD_LOGIN_dstr, "LOGIN");
 DSTR_STATIC(IMAP_CMD_SELECT_dstr, "SELECT");
 DSTR_STATIC(IMAP_CMD_EXAMINE_dstr, "EXAMINE");
@@ -93,7 +92,6 @@ dstr_t imap_cmd_type_to_dstr(imap_cmd_type_t type){
         case IMAP_CMD_NOOP:          return IMAP_CMD_NOOP_dstr;
         case IMAP_CMD_LOGOUT:        return IMAP_CMD_LOGOUT_dstr;
         case IMAP_CMD_STARTTLS:      return IMAP_CMD_STARTTLS_dstr;
-        case IMAP_CMD_AUTH:          return IMAP_CMD_AUTH_dstr;
         case IMAP_CMD_LOGIN:         return IMAP_CMD_LOGIN_dstr;
         case IMAP_CMD_SELECT:        return IMAP_CMD_SELECT_dstr;
         case IMAP_CMD_EXAMINE:       return IMAP_CMD_EXAMINE_dstr;
@@ -2888,12 +2886,11 @@ ie_copy_cmd_t *ie_copy_cmd_copy(derr_t *e, const ie_copy_cmd_t *old){
 static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
     switch(type){
         case IMAP_CMD_ERROR:         ie_dstr_free(arg.error); break;
-        case IMAP_CMD_PLUS_REQ:      break;
+        case IMAP_CMD_PLUS_REQ:      ie_dstr_free(arg.plus); break;
         case IMAP_CMD_CAPA:          break;
         case IMAP_CMD_NOOP:          break;
         case IMAP_CMD_LOGOUT:        break;
         case IMAP_CMD_STARTTLS:      break;
-        case IMAP_CMD_AUTH:          ie_dstr_free(arg.auth); break;
         case IMAP_CMD_LOGIN:         ie_login_cmd_free(arg.login); break;
         case IMAP_CMD_SELECT:        ie_select_cmd_free(arg.select); break;
         case IMAP_CMD_EXAMINE:       ie_select_cmd_free(arg.examine); break;
@@ -2955,12 +2952,11 @@ static imap_cmd_arg_t imap_cmd_arg_copy(derr_t *e, imap_cmd_type_t type,
     imap_cmd_arg_t arg = {0};
     switch(type){
         case IMAP_CMD_ERROR:         arg.error = ie_dstr_copy(e, old.error); break;
-        case IMAP_CMD_PLUS_REQ:      break;
+        case IMAP_CMD_PLUS_REQ:      arg.plus = ie_dstr_copy(e, old.plus); break;
         case IMAP_CMD_CAPA:          break;
         case IMAP_CMD_NOOP:          break;
         case IMAP_CMD_LOGOUT:        break;
         case IMAP_CMD_STARTTLS:      break;
-        case IMAP_CMD_AUTH:          arg.auth = ie_dstr_copy(e, old.auth); break;
         case IMAP_CMD_LOGIN:         arg.login = ie_login_cmd_copy(e, old.login); break;
         case IMAP_CMD_SELECT:        arg.select = ie_select_cmd_copy(e, old.select); break;
         case IMAP_CMD_EXAMINE:       arg.examine = ie_select_cmd_copy(e, old.examine); break;

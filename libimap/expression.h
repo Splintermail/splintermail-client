@@ -573,7 +573,7 @@ typedef enum {
     IMAP_CMD_NOOP,
     IMAP_CMD_LOGOUT,
     IMAP_CMD_STARTTLS,
-    IMAP_CMD_AUTH,
+    // no AUTH; we only have AUTH=PLAIN and we emit it as LOGIN
     IMAP_CMD_LOGIN,
     IMAP_CMD_SELECT,
     IMAP_CMD_EXAMINE,
@@ -673,12 +673,11 @@ DEF_STEAL_PTR(ie_copy_cmd_t)
 
 typedef union {
     ie_dstr_t *error; // any syntax error, except mid-IDLE
-    // nothing for plus
+    ie_dstr_t *plus; // an optional required continuation msg, for AUTH=LOGIN
     // nothing for capability
     // nothing for noop
     // nothing for logout
     // nothing for starttls
-    ie_dstr_t *auth;
     ie_login_cmd_t *login;
     ie_select_cmd_t *select;
     ie_select_cmd_t *examine;

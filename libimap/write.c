@@ -1099,11 +1099,6 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
             STATIC_SKIP_FILL("STARTTLS");
             break;
 
-        case IMAP_CMD_AUTH:
-            STATIC_SKIP_FILL("AUTHENTICATE ");
-            PROP(&e, atom_skip_fill(sf, arg.auth->dstr) );
-            break;
-
         case IMAP_CMD_LOGIN:
             STATIC_SKIP_FILL("LOGIN ");
             PROP(&e, astring_skip_fill(sf, arg.login->user->dstr) );

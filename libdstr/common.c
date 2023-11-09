@@ -1253,7 +1253,12 @@ derr_type_t b642bin_quiet(const dstr_t* b64, dstr_t* bin, size_t *consumed){
             if(skip > 0) break;
         }
     }
-    if(consumed) *consumed = total_read;
+    if(consumed){
+        *consumed = total_read;
+    }else if(total_read != b64->len || ch_idx != 0){
+        // consumed wasn't set, but we didn't get a complete b64 string
+        return E_PARAM;
+    }
     return E_NONE;
 }
 
@@ -1261,6 +1266,7 @@ derr_t b642bin(const dstr_t *b64, dstr_t *bin){
     derr_t e = E_OK;
 
     derr_type_t type = b642bin_quiet(b64, bin, NULL);
+    if(type == E_PARAM) ORIG(&e, type, "invalid base64");
     if(type) ORIG(&e, type, "failed to append to output");
 
     return e;
@@ -1271,6 +1277,7 @@ derr_t b642bin_stream(dstr_t* b64, dstr_t* bin){
 
     size_t consumed = 0;
     derr_type_t type = b642bin_quiet(b64, bin, &consumed);
+    if(type == E_PARAM) ORIG(&e, type, "invalid base64");
     if(type) ORIG(&e, type, "failed to append to output");
 
     dstr_leftshift(b64, consumed);

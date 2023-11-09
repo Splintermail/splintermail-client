@@ -23,7 +23,7 @@ derr_t respond_st(
     respond_st(IE_ST_BYE, tagp, NULL, DSTR_LIT(text), (out))
 
 derr_t respond_error(ie_dstr_t **tagp, ie_dstr_t **errorp, link_t *out);
-derr_t respond_plus(link_t *out);
+derr_t respond_plus(link_t *out, ie_dstr_t **msg);
 derr_t respond_noop(ie_dstr_t **tagp, link_t *out);
 derr_t respond_capas(
     ie_dstr_t **tagp, ie_dstr_t*(*capas_fn)(derr_t*), link_t *out

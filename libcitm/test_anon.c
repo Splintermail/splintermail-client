@@ -32,8 +32,16 @@ static void cb(
     *ptrs->logout = !is_error(e) && !c && !s;
 }
 
-static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
+// mode = 0: LOGIN
+// mode = 1: LOGOUT
+// mode = 2: AUTH=PLAIN
+// mode = 3: AUTH=LOGIN
+static derr_t do_test_anon(int mode, size_t cancel_after, bool *finished){
     derr_t e = E_OK;
+
+    bool logout = mode == 1;
+    bool auth_plain = mode == 2;
+    bool auth_login = mode == 3;
 
     /* pipeline diagram:
                     ________________
@@ -125,7 +133,6 @@ static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
     BOUNCE("B BUG\r\n", "B BAD syntax error at input: BUG\\r\\n\r\n");
     BOUNCE("C STARTTLS\r\n", "C BAD this port was configured as insecure\r\n");
     BOUNCE("C SELECT INBOX\r\n", "C BAD it's too early for that\r\n");
-    BOUNCE("D AUTHENTICATE auth\r\n", "D BAD command not supported\r\n");
     BOUNCE("E CAPABILITY\r\n",
         "* CAPABILITY IMAP4rev1 IDLE AUTH=PLAIN LOGIN\r\n"
         "E OK now you know, and knowing is half the battle\r\n"
@@ -147,7 +154,22 @@ static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
         return e;
     }
 
-    CMD("2 LOGIN a b\r\n", "anon2 LOGIN a b\r\n");
+    if(auth_plain){
+        // AUTH=PLAIN
+        BOUNCE("2 AUTHENTICATE PLAIN\r\n", "+ spit it out\r\n");
+        // b64("\0a\0b")
+        CMD("AGEAYg==\r\n", "anon2 LOGIN a b\r\n");
+    }else if(auth_login){
+        // AUTH=LOGIN ... b64("Username:")
+        BOUNCE("2 AUTHENTICATE LOGIN\r\n", "+ VXNlcm5hbWU6\r\n");
+        // b64("a") ... b64("Password:")
+        BOUNCE("YQ==\r\n", "+ UGFzc3dvcmQ6\r\n");
+        // b64("b")
+        CMD("Yg==\r\n", "anon2 LOGIN a b\r\n");
+    }else{
+        // normal LOGIN
+        CMD("2 LOGIN a b\r\n", "anon2 LOGIN a b\r\n");
+    }
     RESP(
         "anon2 OK [CAPABILITY IMAP4rev1 ENABLE UNSELECT IDLE UIDPLUS QRESYNC "
         "CONDSTORE XKEY] logged in\r\n",
@@ -190,13 +212,19 @@ static derr_t test_anon(void){
     size_t cancel_after = 0;
     bool finished = false;
     while(!finished){
-        IF_PROP(&e, do_test_anon(false, cancel_after++, &finished) ){
+        // mode = LOGIN
+        IF_PROP(&e, do_test_anon(0, cancel_after++, &finished) ){
             TRACE(&e, "cancel_after was %x\n", FU(cancel_after));
             return e;
         }
     }
 
-    PROP(&e, do_test_anon(true, cancel_after, &finished) );
+    // mode = LOGOUT
+    PROP(&e, do_test_anon(1, SIZE_MAX, &finished) );
+    // mode = AUTH=PLAIN
+    PROP(&e, do_test_anon(2, SIZE_MAX, &finished) );
+    // mode = AUTH=LOGIN
+    PROP(&e, do_test_anon(3, SIZE_MAX, &finished) );
 
     return e;
 }

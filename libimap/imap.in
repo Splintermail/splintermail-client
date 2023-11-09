@@ -36,7 +36,12 @@ static void send_resp(derr_t *E, imap_args_t *a, imap_resp_t *resp){
 } while(0)
 
 #define THROW_SYNTAX_ERROR(reason) do { \
-    trace_imap_error(E, dtoken, a, reason); \
+    trace_imap_error(E, dtoken, a, reason, true); \
+    return IMAP_STATUS_SYNTAX_ERROR; \
+} while(0)
+
+#define THROW_SYNTAX_ERROR_NOLOC(reason) do { \
+    trace_imap_error(E, dtoken, a, reason, false); \
     return IMAP_STATUS_SYNTAX_ERROR; \
 } while(0)
 
@@ -59,7 +64,11 @@ static void send_resp(derr_t *E, imap_args_t *a, imap_resp_t *resp){
 } while(0)
 
 static void trace_imap_error(
-    derr_t *E, const dstr_t *dtoken, imap_args_t *a, const char *reason
+    derr_t *E,
+    const dstr_t *dtoken,
+    imap_args_t *a,
+    const char *reason,
+    bool with_loc
 ){
     // skip if E was not provided
     if(!E) return;
@@ -69,18 +78,18 @@ static void trace_imap_error(
 
     // prepare message buffer
     DSTR_VAR(buf, 64);
-    DROP_CMD(
-        FMT(&buf,
-            "%x at input: %x%x",
-            FS(reason),
+    FMT_QUIET(&buf, "%x", FS(reason));
+    if(with_loc){
+        FMT_QUIET(&buf,
+            " at input: %x%x",
             FD_DBG(*dtoken),
             FD_DBG(scannable)
-        )
-    );
+        );
+    }
     // truncate message
     if(buf.len == buf.size){
         buf.len = MIN(buf.len, buf.size - 4);
-        DROP_CMD( FMT(&buf, "...") );
+        FMT_QUIET(&buf, "...");
     }
 
     if(a->is_client){
@@ -118,7 +127,7 @@ static void imap_handle_error(
     // fprintf(stderr, "\n but got %s\n", imap_token_name(imap_token));
     // fprintf(stderr, "@ %s\n", loc_summary);
 
-    trace_imap_error(E, dtoken, a, "syntax error");
+    trace_imap_error(E, dtoken, a, "syntax error", true);
     MODE(STD);
 }
 
@@ -153,7 +162,6 @@ SEMI;
 COLON;
 BACKSLASH;
 DQUOTE;
-SLASH;
 QUESTION;
 EQ;
 DASH;
@@ -241,6 +249,10 @@ TRYCREATE;
 UIDNEXT;
 UIDVALIDITY;
 UNSEEN;
+
+# AUTHENTICATE extensions
+PLAIN;
+# LOGIN; (listed above)
 
 # status attributes
 MESSAGES;
@@ -471,6 +483,7 @@ CREATED;
     ON
     OR
     PEEK
+    PLAIN
     PREAUTH
     PRIV
     QRESYNC
@@ -578,6 +591,16 @@ CREATED;
 atom_char = ATOMRAW | NUM;
 atom:dstr =
     1*( atom_char { $$ = ie_dstr_append(E, $$, dtoken, KEEP_RAW); } )
+;
+
+b64_char = TAGRAW | NUM | EQ;
+b640:dstr0 =
+    1*(
+        b64_char
+        {{  $$ = ie_dstr_append0(E, $$, dtoken, KEEP_RAW);
+            *zeroize = true;
+        }}
+    )
 ;
 
 # astring allows additional characters not in atom (!)
@@ -1052,13 +1075,136 @@ starttls_cmd(tag:dstr, out:imap_cmd) =
 
 ### AUTHENTICATE COMMAND
 
+# Annoyingly, every IMAP document seems to suggest a wrong syntax somehow.
+#
+# rfc2595 (imap-tls) suggests that this is valid:
+#
+#   C: a003 AUTHENTICATE PLAIN {21+}
+#   C: <NUL>tim<nul>tanstaaftanstaaf
+#   S: a003 OK
+#
+# But that doesn't make sense in light of the rfc3501 (imap) syntax requirement
+#
+#   authenticate = "AUTHENTICATE" SP auth-type *(CRLF base64)
+#
+# The updated rfc4616 (AUTH=PLAIN) suggests that this is valid:
+#
+#   C: a002 AUTHENTICATE "PLAIN"
+#   S: + ""
+#   C: {21+}
+#   C: <NUL>tim<NUL>tanstaaftanstaaf
+#   S: a002 OK "Authenticated"
+#
+# At least rfc4616 is SASL-specific, not IMAP-specific.
+#
+# It seems clients that use AUTHENTICATE know to use base64 for their
+# followon lines, in spite of the low-quality SASL rfcs.
 authenticate_cmd(tag:dstr, out:imap_cmd) =
-    AUTHENTICATE SP atom:a
-    {{  $out = imap_cmd_new(E,
-            STEAL(ie_dstr_t, &$tag),
-            IMAP_CMD_AUTH,
-            (imap_cmd_arg_t){ .auth = STEAL(ie_dstr_t, &$a) }
-        );
+    AUTHENTICATE SP (
+      | PLAIN auth_plain!(tag, out)
+      | LOGIN auth_login!(tag, out)
+    )
+;
+
+# AUTH=PLAIN
+auth_plain(tag:dstr, out:imap_cmd) =
+    EOL
+    # send a normal "+"
+    {{  imap_cmd_arg_t arg = {0};
+        imap_cmd_t *cmd = imap_cmd_new(E, NULL, IMAP_CMD_PLUS_REQ, arg);
+        send_cmd(E, a, cmd);
+    }}
+    b640:b64
+    {{  if(!is_error(*E)){
+            // decode the base64
+            DSTR_VAR(bin, 256);
+            derr_type_t etype = b642bin_quiet(&$b64->dstr, &bin, NULL);
+            if(etype){
+                THROW_SYNTAX_ERROR_NOLOC(
+                     "invalid AUTH=PLAIN; invalid base64"
+                );
+            }
+            // split the literal into its three parts
+            dstr_t authz, authn, pass, junk;
+            size_t n;
+            dstr_split2_soft(
+                bin, DSTR_LIT("\0"), &n, &authz, &authn, &pass, &junk
+            );
+            if(n != 3){
+                dstr_zeroize(&bin);
+                THROW_SYNTAX_ERROR_NOLOC(
+                     "invalid AUTH=PLAIN; exactly two NULs are required"
+                );
+            }
+            if(authz.len && !dstr_eq(authz, authn)){
+                dstr_zeroize(&bin);
+                THROW_SYNTAX_ERROR_NOLOC(
+                     "unsupported AUTH=PLAIN; authz id differs from authn id"
+                );
+            }
+            // convert to a LOGIN command; the rest of the system doesn't care
+            ie_login_cmd_t *login = ie_login_cmd_new(E,
+                ie_dstr_new2(E, authn),
+                ie_dstr_new2(E, pass)
+            );
+            dstr_zeroize(&bin);
+            $out = imap_cmd_new(E,
+                STEAL(ie_dstr_t, &$tag),
+                IMAP_CMD_LOGIN,
+                (imap_cmd_arg_t){ .login = login }
+            );
+        }
+    }}
+;
+
+# AUTH=LOGIN
+auth_login(tag:dstr, out:imap_cmd) =
+    EOL
+    # send special bin2b64("Username:") continuation
+    {{  ie_dstr_t *plus1 = ie_dstr_new2(E, DSTR_LIT("VXNlcm5hbWU6"));
+        imap_cmd_arg_t arg1 = { .plus = plus1 };
+        imap_cmd_t *cmd1 = imap_cmd_new(E, NULL, IMAP_CMD_PLUS_REQ, arg1);
+        send_cmd(E, a, cmd1);
+    }}
+    b640:u
+    EOL
+    # send special bin2b64("Password:") continuation
+    {{  ie_dstr_t *plus2 = ie_dstr_new2(E, DSTR_LIT("UGFzc3dvcmQ6"));
+        imap_cmd_arg_t arg2 = { .plus = plus2 };
+        imap_cmd_t *cmd2 = imap_cmd_new(E, NULL, IMAP_CMD_PLUS_REQ, arg2);
+        send_cmd(E, a, cmd2);
+    }}
+    b640:p
+    {{  if(!is_error(*E)){
+            // decode the base64
+            DSTR_VAR(user, 128);
+            DSTR_VAR(pass, 128);
+            derr_type_t etype = b642bin_quiet(&$u->dstr, &user, NULL);
+            if(etype){
+                THROW_SYNTAX_ERROR_NOLOC(
+                     "invalid AUTH=LOGIN; invalid username base64"
+                );
+            }
+            etype = b642bin_quiet(&$p->dstr, &pass, NULL);
+            if(etype){
+                dstr_zeroize(&user);
+                THROW_SYNTAX_ERROR_NOLOC(
+                     "invalid AUTH=LOGIN; invalid password base64"
+                );
+            }
+            // convert to a LOGIN command; the rest of the system doesn't care
+            ie_login_cmd_t *login = ie_login_cmd_new(E,
+                ie_dstr_new2(E, user),
+                ie_dstr_new2(E, pass)
+            );
+            dstr_zeroize(&user);
+            dstr_zeroize(&pass);
+            $out = imap_cmd_new(E,
+                STEAL(ie_dstr_t, &$tag),
+                IMAP_CMD_LOGIN,
+                (imap_cmd_arg_t){ .login = login }
+            );
+         }
     }}
 ;
 

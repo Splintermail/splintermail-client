@@ -50,10 +50,12 @@ derr_t respond_error(ie_dstr_t **tagp, ie_dstr_t **errorp, link_t *out){
     return e;
 }
 
-derr_t respond_plus(link_t *out){
+derr_t respond_plus(link_t *out, ie_dstr_t **msg){
     derr_t e = E_OK;
 
-    ie_dstr_t *text = ie_dstr_new2(&e, DSTR_LIT("spit it out"));
+    ie_dstr_t *text = STEAL(ie_dstr_t, msg);
+    if(!text) text = ie_dstr_new2(&e, DSTR_LIT("spit it out"));
+
     ie_plus_resp_t *plus = ie_plus_resp_new(&e, NULL, text);
     imap_resp_arg_t arg = { .plus = plus };
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_PLUS, arg);
@@ -159,6 +161,7 @@ ie_dstr_t *build_capas_prestarttls(derr_t *e){
 ie_dstr_t *build_capas_prelogin(derr_t *e){
     ie_dstr_t *capas = build_capas_common(e);
     capas = ie_dstr_add(e, capas, ie_dstr_new2(e, DSTR_LIT("AUTH=PLAIN")));
+    capas = ie_dstr_add(e, capas, ie_dstr_new2(e, DSTR_LIT("AUTH=LOGIN")));
     capas = ie_dstr_add(e, capas, ie_dstr_new2(e, DSTR_LIT("LOGIN")));
     return capas;
 }

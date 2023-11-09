@@ -236,7 +236,7 @@ static derr_t process_login_cmd(anon_t *anon, bool *ok){
             break;
 
         case IMAP_CMD_PLUS_REQ:
-            PROP_GO(&e, respond_plus(out), cu);
+            PROP_GO(&e, respond_plus(out, &arg->plus), cu);
             break;
 
         case IMAP_CMD_CAPA:
@@ -290,7 +290,6 @@ static derr_t process_login_cmd(anon_t *anon, bool *ok){
             PROP_GO(&e, respond_too_early(tag, out), cu);
             break;
 
-        case IMAP_CMD_AUTH:
         case IMAP_CMD_XKEYSYNC:
         case IMAP_CMD_XKEYSYNC_DONE:
         case IMAP_CMD_XKEYADD:

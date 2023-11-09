@@ -851,7 +851,7 @@ static derr_t handle_cmd(sc_t *sc, bool *ok){
             PROP(&e, respond_error(tagp, &arg->error, out) );
             break;
         case IMAP_CMD_PLUS_REQ:
-            PROP(&e, respond_plus(out) );
+            PROP(&e, respond_plus(out, &arg->plus) );
             break;
         case IMAP_CMD_CAPA:
             if(sc->dn_active){
@@ -958,7 +958,6 @@ static derr_t handle_cmd(sc_t *sc, bool *ok){
             bool insec = sc->s->conn->security == IMAP_SEC_INSECURE;
             PROP(&e, respond_bad_starttls(tagp, insec, &sc->resps) );
         } break;
-        case IMAP_CMD_AUTH:
         case IMAP_CMD_LOGIN:
             PROP(&e, RESP_BAD(tagp, "already logged in", out) );
             break;

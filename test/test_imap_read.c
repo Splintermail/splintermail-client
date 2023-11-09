@@ -621,6 +621,112 @@ static derr_t test_commands(void){
                 ),
             },
             {
+                // AUTH=PLAIN, with empty authorization id
+                // b64("\0usr\0pwd")
+                .in=DSTR_LIT("tag AUTHENTICATE PLAIN\r\nAHVzcgBwd2Q=\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_LOGIN, -1},
+                .buf=DSTR_LIT("tag LOGIN usr pwd\r\n"),
+                .zin=DSTR_LIT(
+                    "tag AUTHENTICATE PLAIN\r\n\0\0\0\0\0\0\0\0\0\0\0\0\r\n"
+                ),
+            },
+            {
+                // AUTH=PLAIN, with duplicate authorization id
+                // b64("usr\0usr\0pwd")
+                .in=DSTR_LIT(
+                    "tag AUTHENTICATE PLAIN\r\ndXNyAHVzcgBwd2Q=\r\n"
+                ),
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_LOGIN, -1},
+                .buf=DSTR_LIT("tag LOGIN usr pwd\r\n"),
+                .zin=DSTR_LIT(
+                    "tag AUTHENTICATE PLAIN\r\n"
+                    "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\r\n"
+                ),
+            },
+            {
+                // AUTH=PLAIN, with invalid base64
+                .in=DSTR_LIT(
+                    "tag AUTHENTICATE PLAIN\r\naaa\r\n"
+                ),
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_ERROR, -1},
+                .buf=DSTR_LIT(
+                    "ERROR:tag invalid AUTH=PLAIN; invalid base64\r\n"
+                ),
+                .zin=DSTR_LIT(
+                    "tag AUTHENTICATE PLAIN\r\n\0\0\0\r\n"
+                ),
+            },
+            {
+                // AUTH=PLAIN, with invalid challenge
+                // b64("\0usr\0pwd\0")
+                .in=DSTR_LIT(
+                    "tag AUTHENTICATE PLAIN\r\nAHVzcgBwd2QA\r\n"
+                ),
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_ERROR, -1},
+                .buf=DSTR_LIT(
+                    "ERROR:tag invalid AUTH=PLAIN; "
+                    "exactly two NULs are required\r\n"
+                ),
+                .zin=DSTR_LIT(
+                    "tag AUTHENTICATE PLAIN\r\n\0\0\0\0\0\0\0\0\0\0\0\0\r\n"
+                ),
+            },
+            {
+                // AUTH=PLAIN, with rejected, non-duplicate authorization id
+                // b64("mallory\0usr\0pwd")
+                .in=DSTR_LIT(
+                    "tag AUTHENTICATE PLAIN\r\nbWFsbG9yeQB1c3IAcHdk\r\n"
+                ),
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_ERROR, -1},
+                .buf=DSTR_LIT(
+                    "ERROR:tag unsupported AUTH=PLAIN; "
+                    "authz id differs from authn id\r\n"
+                ),
+                .zin=DSTR_LIT(
+                    "tag AUTHENTICATE PLAIN\r\n"
+                    "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\r\n"
+                ),
+            },
+            {
+                // AUTH=LOGIN, with empty authorization id
+                // b64("usr")
+                // b64("pwd")
+                .in=DSTR_LIT("tag AUTHENTICATE LOGIN\r\ndXNy\r\ncHdk\r\n"),
+                .cmd_calls=(int[]){
+                    IMAP_CMD_PLUS_REQ, IMAP_CMD_PLUS_REQ, IMAP_CMD_LOGIN, -1
+                },
+                .buf=DSTR_LIT("tag LOGIN usr pwd\r\n"),
+                .zin=DSTR_LIT(
+                    "tag AUTHENTICATE LOGIN\r\n\0\0\0\0\r\n\0\0\0\0\r\n"
+                ),
+            },
+            {
+                // AUTH=LOGIN, invalid username b64
+                .in=DSTR_LIT("tag AUTHENTICATE LOGIN\r\nabc\r\ncHdk\r\n"),
+                .cmd_calls=(int[]){
+                    IMAP_CMD_PLUS_REQ, IMAP_CMD_PLUS_REQ, IMAP_CMD_ERROR, -1
+                },
+                .buf=DSTR_LIT(
+                    "ERROR:tag invalid AUTH=LOGIN; invalid username base64\r\n"
+                ),
+                .zin=DSTR_LIT(
+                    "tag AUTHENTICATE LOGIN\r\n\0\0\0\r\n\0\0\0\0\r\n"
+                ),
+            },
+            {
+                // AUTH=LOGIN, invalid password b64
+                .in=DSTR_LIT("tag AUTHENTICATE LOGIN\r\ndXNy\r\nabc\r\n"),
+                .cmd_calls=(int[]){
+                    IMAP_CMD_PLUS_REQ, IMAP_CMD_PLUS_REQ, IMAP_CMD_ERROR, -1
+                },
+                .buf=DSTR_LIT(
+                    "ERROR:tag invalid AUTH=LOGIN; invalid password base64\r\n"
+                ),
+                .zin=DSTR_LIT(
+                    "tag AUTHENTICATE LOGIN\r\n\0\0\0\0\r\n\0\0\0\r\n"
+                ),
+            },
+            {
                 .in=DSTR_LIT("tag SELECT inbox\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SELECT, -1},
                 .buf=DSTR_LIT("tag SELECT INBOX\r\n"),
@@ -1289,8 +1395,7 @@ static derr_t test_command_error_reporting(void){
         {
             .in=DSTR_LIT("(junk)\r\n"),
             .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
-            .buf=DSTR_LIT("ERROR:* syntax error at input: (junk)\\r\\n\r\n"
-            )
+            .buf=DSTR_LIT("ERROR:* syntax error at input: (junk)\\r\\n\r\n")
         },
         // next command works fine
         {
