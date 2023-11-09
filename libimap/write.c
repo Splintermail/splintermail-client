@@ -1347,10 +1347,11 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
     if(enforce_output && sf->passed == *skip){
         ORIG(&e,
             E_INTERNAL,
-            "failed to print anything from command of type command=%x "
-            "at skip=%x\n",
+            "failed to print anything from command=%x "
+            "at skip=%x\n---\n\n%x\n---",
             FD(imap_cmd_type_to_dstr(cmd->type)),
-            FU(*skip)
+            FU(*skip),
+            FICMD(cmd)
         );
     }
     // set the outputs
@@ -2032,10 +2033,11 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
     if(enforce_output && sf->passed == *skip){
         ORIG(&e,
             E_INTERNAL,
-            "failed to print anything from response of type response=%x "
-            "at skip=%x\n",
+            "failed to print anything from response=%x "
+            "at skip=%x\n---\n\n%x\n---",
             FD(imap_resp_type_to_dstr(resp->type)),
-            FU(*skip)
+            FU(*skip),
+            FIRESP(resp)
         );
     }
     // set the outputs
@@ -2047,7 +2049,11 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
 derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
         size_t *want, const extensions_t *exts){
     derr_t e = E_OK;
-    bool enforce_output = true;
+    /* enforce_output is meant as a check to detect if we accidentally decide
+       to write nothing for no good reason, but we only turn that check on
+       if something ought to fit, otherwise we would effectively require the
+       calling code to do length checks before calling us */
+    bool enforce_output = out->size - out->len > 2;
     PROP(&e, do_imap_cmd_write(cmd, out, skip, want, exts, enforce_output) );
     return e;
 }
@@ -2055,7 +2061,7 @@ derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
 derr_t imap_resp_write(const imap_resp_t *resp, dstr_t *out, size_t *skip,
         size_t *want, const extensions_t *exts){
     derr_t e = E_OK;
-    bool enforce_output = true;
+    bool enforce_output = out->size - out->len > 2;
     PROP(&e, do_imap_resp_write(resp, out, skip, want, exts, enforce_output) );
     return e;
 }
