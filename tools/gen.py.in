@@ -61,6 +61,7 @@ import collections
 import contextlib
 import io
 import math
+import os
 import re
 import string
 import sys
@@ -2338,7 +2339,7 @@ class C:
                 if opt:
                     self.fprint("        case 0x%x: goto %s;"%(opt, label))
                 else:
-                    for t in b.first:
+                    for t in sorted(b.first):
                         fallbacks = set()
                         if self.fallbacks:
                             # calculate fallback types
@@ -4633,6 +4634,10 @@ def gen(
             sys.exit(1)
         action()
 
+def touch(file):
+    with open(file, "w") as f:
+        pass
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -4644,10 +4649,15 @@ if __name__ == "__main__":
     parser.add_argument("-g", "--generator")
     parser.add_argument("-a", "--action", default="gen_file")
     parser.add_argument("-I", "--inspect", action="append", default=[])
+    parser.add_argument("-s", "--stamp", default=[])
     parser.add_argument("kwarg", nargs="*")
     args = parser.parse_args()
 
     assert not args.check or args.output, "--check requires --output"
+    assert not args.stamp or args.output, "--stamp requires --output"
+    assert not args.stamp or not args.check, (
+        "--stamp and --check are mutually exclusive"
+    )
 
     if args.input is None:
         text = sys.stdin.read()
@@ -4674,16 +4684,30 @@ if __name__ == "__main__":
         print(e, file=sys.stderr)
         sys.exit(1)
 
+    result = out.getvalue()
+
     if args.check:
+        if not os.path.exists(args.output):
+            print(args.output + " does not exist", file=sys.stderr)
+            sys.exit(1)
         with open(args.output) as f:
             old = f.read()
-        if out.getvalue() == old:
+        if result == old:
             sys.exit(0)
         print(args.output + " would be modified", file=sys.stderr)
         sys.exit(1)
 
     if args.output is not None:
+        if args.stamp and os.path.exists(args.output):
+            with open(args.output) as f:
+                old = f.read()
+            if result == old:
+                print(args.output + " is up to date", file=sys.stderr)
+                touch(args.stamp)
+                sys.exit(0)
         with open(args.output, "w") as f:
-            f.write(out.getvalue())
+            f.write(result)
+        if args.stamp:
+            touch(args.stamp)
     else:
-        print(out.getvalue(), end="", flush=True)
+        print(result, end="", flush=True)

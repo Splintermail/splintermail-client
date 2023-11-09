@@ -23,20 +23,22 @@ function(gen_parser tgt grammar cfile hfile)
         set(DEBUG_FLAG "")
     endif()
     add_custom_command(
-        OUTPUT "${cfile}"
+        OUTPUT "${cfile}.stamp" "${cfile}"
         COMMAND "${PYTHON_3_CMD}" "${gen_py_out}" -o "${cfile}"
                 --action gen_body "${grammar}" ${DEBUG_FLAG}
+                --stamp "${cfile}.stamp"
         DEPENDS "${grammar}" "${gen_py_out}"
         COMMENT "generating parser ${cfile}" VERBATIM
     )
     add_custom_command(
-        OUTPUT "${hfile}"
+        OUTPUT "${hfile}.stamp" "${hfile}"
         COMMAND "${PYTHON_3_CMD}" "${gen_py_out}" -o "${hfile}"
                 --action gen_header "${grammar}" ${DEBUG_FLAG}
+                --stamp "${hfile}.stamp"
         DEPENDS "${grammar}" "${gen_py_out}"
         COMMENT "generating parser header ${hfile}" VERBATIM
     )
-    add_custom_target("${tgt}" DEPENDS "${cfile}" "${hfile}")
+    add_custom_target("${tgt}" DEPENDS "${cfile}.stamp" "${hfile}.stamp")
 endfunction()
 
 sm_test(test_gen "${PYTHON_3_CMD}" "${CMAKE_CURRENT_SOURCE_DIR}/test_gen.py")
