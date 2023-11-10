@@ -5,9 +5,6 @@
 
 #include "test_utils.h"
 
-// path to where the test files can be found
-static const char* g_test_files;
-
 // handle NULL strings intelligently
 static int same_as(const char* a, const char* b){
     if(a == NULL && b == NULL) return 1;
@@ -230,29 +227,34 @@ static derr_t test_conf_parse(void){
                           &o_flag3};
     size_t speclen = sizeof(spec) / sizeof(*spec);
 
-    DSTR_VAR(goodconf, 4096);
-    DSTR_VAR(goodconf2, 4096);
-    DSTR_VAR(badconf1, 4096);
-    DSTR_VAR(badconf2, 4096);
-    DSTR_VAR(badconf3, 4096);
-    PROP(&e, FMT(&goodconf, "%x/opt_parse/goodconf", FS(g_test_files)) );
-    PROP(&e, FMT(&goodconf2, "%x/opt_parse/goodconf2", FS(g_test_files)) );
-    PROP(&e, FMT(&badconf1, "%x/opt_parse/badconf1", FS(g_test_files)) );
-    PROP(&e, FMT(&badconf2, "%x/opt_parse/badconf2", FS(g_test_files)) );
-    PROP(&e, FMT(&badconf3, "%x/opt_parse/badconf3", FS(g_test_files)) );
+    DSTR_STATIC(goodconf,
+        "option1 hey there buddy\n"
+        "    option2      white   space	 test\n"
+        "flag1\n"
+    );
+    DSTR_STATIC(goodconf2,
+        "option1 should be overridden\n"
+        "option3 is new\n"
+        "flag2\n"
+    );
+    DSTR_STATIC(badconf1,
+        "badoption whatever argument\n"
+    );
+    DSTR_STATIC(badconf2,
+        "option1\n"
+    );
+    DSTR_STATIC(badconf3,
+        "flag1 should not have argument\n"
+    );
 
     // read one config file to make sure we are parsing right
-    DSTR_VAR(text1, 4096);
-    PROP(&e, dstr_read_file(goodconf.data, &text1) );
-    PROP(&e, conf_parse(&text1, spec, speclen) );
+    PROP(&e, conf_parse(&goodconf, spec, speclen) );
     EXPECT("option1 hey there buddy\n"
            "option2 white   space\t test\n"
            "flag1\n");
 
     // read another config file to make sure we overwrite existing values
-    DSTR_VAR(text2, 4096);
-    PROP(&e, dstr_read_file(goodconf2.data, &text2) );
-    PROP(&e, conf_parse(&text2, spec, speclen) );
+    PROP(&e, conf_parse(&goodconf2, spec, speclen) );
     EXPECT("option1 should be overridden\n"
            "option2 white   space\t test\n"
            "option3 is new\n"
@@ -261,38 +263,32 @@ static derr_t test_conf_parse(void){
 
     // now make sure that we can't read any bad config files
     {
-        DSTR_VAR(text, 4096);
-        PROP(&e, dstr_read_file(badconf1.data, &text) );
-        e2 = conf_parse(&text, spec, speclen);
+        e2 = conf_parse(&badconf1, spec, speclen);
         CATCH(&e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
             DROP_VAR(&e2);
         }else{
-            TRACE(&e2, "conf parse should have puked on: %x\n", FD(text));
+            TRACE(&e2, "conf parse should have puked on: %x\n", FD(badconf1));
             RETHROW(&e, &e2, E_VALUE);
         }
     }
     {
-        DSTR_VAR(text, 4096);
-        PROP(&e, dstr_read_file(badconf2.data, &text) );
-        e2 = conf_parse(&text, spec, speclen);
+        e2 = conf_parse(&badconf2, spec, speclen);
         CATCH(&e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
             DROP_VAR(&e2);
         }else{
-            TRACE(&e2, "conf parse should have puked on: %x\n", FD(text));
+            TRACE(&e2, "conf parse should have puked on: %x\n", FD(badconf2));
             RETHROW(&e, &e2, E_VALUE);
         }
     }
     {
-        DSTR_VAR(text, 4096);
-        PROP(&e, dstr_read_file(badconf3.data, &text) );
-        e2 = conf_parse(&text, spec, speclen);
+        e2 = conf_parse(&badconf3, spec, speclen);
         CATCH(&e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
             DROP_VAR(&e2);
         }else{
-            TRACE(&e2, "conf parse should have puked on: %x\n", FD(text));
+            TRACE(&e2, "conf parse should have puked on: %x\n", FD(badconf3));
             RETHROW(&e, &e2, E_VALUE);
         }
     }
@@ -304,7 +300,7 @@ static derr_t test_conf_parse(void){
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
-    PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
+    PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 
     // hide the hard-coded error printouts from opt_parse.c for testing
     // TODO: figure out why uncommenting this causes test to crash in windows

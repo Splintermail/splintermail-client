@@ -54,9 +54,6 @@ static derr_t stop_async_reader(dstr_t** out){
     return ar_return;
 }
 
-// path to where the test files can be found
-static const char* g_test_files;
-
 static int real_stdout_fd;
 
 struct test_case_t {
@@ -193,7 +190,7 @@ cleanup:
 }
 
 
-static derr_t run_all_cases(void){
+static derr_t run_all_cases(char *tmpconf){
     derr_t e = E_OK;
 
     // non-citm, non-api call tests
@@ -220,9 +217,6 @@ static derr_t run_all_cases(void){
         PROP(&e, run_test_case(test_case) );
         test_case.expect_out = NULL;
 
-        // prep a config file
-        DSTR_VAR(configpath, 4096);
-        PROP(&e, FMT(&configpath, "%x/test_ui/testconf", FS(g_test_files)) );
         // prepare the expected stdout
         test_case.test_name = "config";
         test_case.expect_out =
@@ -233,7 +227,7 @@ static derr_t run_all_cases(void){
         test_case.argv = (char*[]){
             SM,
             "--config",
-            configpath.data,
+            tmpconf,
             "--dump-conf",
             "--listen",
             "insecure://H:2",
@@ -243,7 +237,7 @@ static derr_t run_all_cases(void){
         test_case.argv = (char*[]){
             SM,
             "-c",
-            configpath.data,
+            tmpconf,
             "--dump-conf",
             "--listen",
             "insecure://H:2",
@@ -723,10 +717,25 @@ cu:
 
 int main(int argc, char** argv){
     derr_t e = E_OK;
-    PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
+    PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 
     logger_add_fileptr(TEST_LOG_LEVEL, stderr);
-    PROP_GO(&e, dstr_new(&reason_log, 4096), fail_0);
+
+    DSTR_VAR(tmppath, 4096);
+    DSTR_VAR(tmpconf, 4096);
+    int retval = 1;
+
+    PROP_GO(&e, dstr_new(&reason_log, 4096), fail);
+
+    // create a temp config file
+    PROP_GO(&e, mkdir_temp("test-ui", &tmppath), fail);
+    PROP_GO(&e, FMT(&tmpconf, "%x/config", FD(tmppath)), fail);
+    DSTR_STATIC(conftext,
+        "splintermail-dir 12345\n"
+        "listen starttls://h:1\n"
+    );
+    PROP_GO(&e, dstr_write_file2(conftext, tmpconf.data), fail);
+
     // first save the stdout file descriptor
     real_stdout_fd = compat_dup(1);
     if(real_stdout_fd < 0){
@@ -734,18 +743,20 @@ int main(int argc, char** argv){
         goto fail;
     }
 
-    PROP_GO(&e, run_all_cases(), fail);
+    PROP_GO(&e, run_all_cases(tmpconf.data), fail);
     PROP_GO(&e, test_trim_logfile(), fail);
 
     LOG_ERROR("PASS\n");
-    dstr_free(&reason_log);
-    return 0;
+    retval = 0;
+    goto done;
 
 fail:
-    dstr_free(&reason_log);
-fail_0:
     DUMP(e);
     DROP_VAR(&e);
     LOG_ERROR("FAIL\n");
-    return 1;
+
+done:
+    if(tmppath.len) DROP_CMD( rm_rf(tmppath.data) );
+    dstr_free(&reason_log);
+    return retval;
 }

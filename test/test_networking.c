@@ -14,6 +14,7 @@ derr_t ssl_context_load_from_os(ssl_context_t* ctx);
 
 #include "test/test_utils.h"
 #include "test/bioconn.h"
+#include "test/certs.h"
 
 #define NOSSL2  SSL_OP_NO_SSLv2
 #define NOSSL3  SSL_OP_NO_SSLv3
@@ -31,9 +32,6 @@ derr_t ssl_context_load_from_os(ssl_context_t* ctx);
     #define NOPROTOCOLS (NOSSL2|NOSSL3|NOTLS1|NOTLS11|NOTLS12)
 #endif
 
-
-// path to where the test files can be found
-static const char* g_test_files;
 
 static derr_t print_protocol_and_cipher(connection_t* conn){
     derr_t e = E_OK;
@@ -62,9 +60,16 @@ static derr_t print_protocol_and_cipher(connection_t* conn){
     return e;
 }
 
+typedef enum {
+    KP_GOOD = 0,
+    KP_EXPRIRED,
+    KP_WRONGHOST,
+    KP_UNKNOWN,
+} keypair_e;
+
 typedef struct {
     // which files to use (can be NULL)
-    const char* keypair;
+    keypair_e keypair;
     // which port to run on?
     unsigned int port;
     // use the networking.c implementation or a customizable one?
@@ -96,30 +101,27 @@ static void* ssl_server_thread(void* arg){
 
     derr_t *e = &spec->error;
 
-    DSTR_VAR(certfile, 4096);
-    DSTR_VAR(keyfile, 4096);
-    PROP_GO(e, FMT(&certfile, "%x/ssl/%x-cert.pem", FS(g_test_files),
-                 FS(spec->keypair ? spec->keypair : "good")), exit);
-    PROP_GO(e, FMT(&keyfile, "%x/ssl/%x-key.pem", FS(g_test_files),
-                 FS(spec->keypair ? spec->keypair : "good")), exit);
-    if(!file_r_access(certfile.data)){
-        ORIG_GO(e, E_FS, "unable to access certfile", exit);
-    }
-    if(!file_r_access(keyfile.data)){
-        ORIG_GO(e, E_FS, "unable to access keyfile", exit);
-    }
-
     // create the context, either a vanilla one or a customizable
     ssl_context_t ctx;
     ctx.ctx = NULL;
 
     // vanilla server context for testing the server implementation
     if(spec->vanilla == true){
-
         // prepare ssl context
-        PROP_GO(e,
-            ssl_context_new_server(&ctx, certfile.data, keyfile.data),
-        signal_client);
+        switch(spec->keypair){
+            case KP_GOOD:
+                PROP_GO(e, good_127_0_0_1_server(&ctx.ctx), signal_client);
+                break;
+            case KP_EXPRIRED:
+                PROP_GO(e, good_expired_server(&ctx.ctx), signal_client);
+                break;
+            case KP_WRONGHOST:
+                PROP_GO(e, good_nobody_server(&ctx.ctx), signal_client);
+                break;
+            case KP_UNKNOWN:
+                PROP_GO(e, bad_127_0_0_1_server(&ctx.ctx), signal_client);
+                break;
+        }
     }
     // custom server context for testing the client implementation
     else{
@@ -147,19 +149,32 @@ static void* ssl_server_thread(void* arg){
             );
         }
 
+
         // set key and cert
-        int ret = SSL_CTX_use_certificate_chain_file(ctx.ctx, certfile.data);
-        if(ret != 1){
-            ORIG_GO(e, E_SSL, "could not set certificate: %x", ctx_fail, FSSL);
+        dstr_t key, cert;
+        switch(spec->keypair){
+            case KP_GOOD:
+                key = good_127_0_0_1_key;
+                cert = good_127_0_0_1_cert;
+                break;
+            case KP_EXPRIRED:
+                key = good_expired_key;
+                cert = good_expired_cert;
+                break;
+            case KP_WRONGHOST:
+                key = good_nobody_key;
+                cert = good_nobody_cert;
+                break;
+            case KP_UNKNOWN:
+                key = bad_127_0_0_1_key;
+                cert = bad_127_0_0_1_cert;
+                break;
         }
-        ret = SSL_CTX_use_PrivateKey_file(
-            ctx.ctx, keyfile.data, SSL_FILETYPE_PEM
-        );
-        if(ret != 1){
-            ORIG_GO(e, E_SSL, "could not set private key: %x", ctx_fail, FSSL);
-        }
+        PROP_GO(e, ssl_ctx_read_private_key(ctx.ctx, key), ctx_fail);
+        PROP_GO(e, ssl_ctx_read_cert_chain(ctx.ctx, cert), ctx_fail);
+
         // make sure the key matches the certificate
-        ret = SSL_CTX_check_private_key(ctx.ctx);
+        int ret = SSL_CTX_check_private_key(ctx.ctx);
         if(ret != 1){
             ORIG_GO(e,
                 E_SSL,
@@ -232,7 +247,6 @@ c_listener:
     listener_close(&listener);
 c_ctx:
     ssl_context_free(&ctx);
-exit:
     return NULL;
 }
 
@@ -357,6 +371,9 @@ ctx_fail:
             goto c_server;
         }
     }
+
+    // trust our good certificate
+    PROP_GO(&e, trust_good(ctx.ctx), c_ctx);
 
     // setup a connection
     connection_t conn;
@@ -555,21 +572,27 @@ static derr_t test_ssl_client(void){
     // more client testing: make sure bad server certs are properly rejected
     {
         char *name = "vanilla client vs expired cert";
-        server_spec_t srv_spec = {.vanilla=true, .port=2010, .keypair="expired"};
+        server_spec_t srv_spec = {
+            .vanilla=true, .port=2010, .keypair=KP_EXPRIRED
+        };
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
         EXPECT_ERRORS(name, E_SSL, E_CONN);
     }
     {
         char *name = "vanilla client vs wronghost cert";
-        server_spec_t srv_spec = {.vanilla=true, .port=2010, .keypair="wronghost"};
+        server_spec_t srv_spec = {
+            .vanilla=true, .port=2010, .keypair=KP_WRONGHOST
+        };
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
         EXPECT_ERRORS(name, E_SSL, E_CONN);
     }
     {
         char *name = "vanilla client vs unknown cert";
-        server_spec_t srv_spec = {.vanilla=true, .port=2010, .keypair="unknown"};
+        server_spec_t srv_spec = {
+            .vanilla=true, .port=2010, .keypair=KP_UNKNOWN
+        };
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
         EXPECT_ERRORS(name, E_SSL, E_CONN);
@@ -582,77 +605,6 @@ static derr_t test_ssl_client(void){
     return e;
 }
 
-/*static derr_t test_ssl_server(void){
-    derr_t error;
-    // setup the context (context-specific step)
-    ssl_context_t ctx;
-    PROP(& ssl_context_new_server(&ctx, "test/files/cert.pem",
-                                       "test/files/key.pem",
-                                       "test/files/dh_4096.pem") );
-
-    // open an ssl listener
-    listener_t listener;
-    PROP_GO(&e, listener_new_ssl(&listener, &ctx, "0.0.0.0", 12345), cleanup_1);
-
-    // accept a connection
-    connection_t conn;
-    PROP_GO(&e, listener_accept(&listener, &conn), cleanup_2);
-
-    DSTR_STATIC(writeme, "hello world!\n");
-    PROP_GO(&e, connection_write(&conn, &writeme), cleanup_3 );
-
-    DSTR_VAR(buffer, 4096);
-    PROP_GO(&e, connection_read(&conn, &buffer, NULL), cleanup_3 );
-    PFMT("read: %x", FD(buffer));
-
-cleanup_3:
-    connection_close(&conn);
-cleanup_2:
-    listener_close(&listener);
-cleanup_1:
-    ssl_context_free(&ctx);
-    return error;
-}
-
-static derr_t test_server_repeatedly(void){
-    derr_t error;
-    // setup the context (context-specific step)
-    ssl_context_t ctx;
-    PROP(& ssl_context_new_server(&ctx, "test/files/cert.pem",
-                                       "test/files/key.pem",
-                                       "test/files/dh_4096.pem") );
-
-    // open an ssl listener
-    listener_t listener;
-    PROP_GO(&e, listener_new_ssl(&listener, &ctx, "0.0.0.0", 12345), cleanup_1);
-
-    while(1){
-        // accept a connection
-        connection_t conn;
-        error = listener_accept(&listener, &conn);
-        if(error){
-            continue;
-        }
-
-        DSTR_VAR(buffer, 4096);
-        error = connection_read(&conn, &buffer, NULL);
-        if(error){
-            connection_close(&conn);
-            continue;
-        }
-        LOG_INFO("read: %x", FD(buffer));
-
-        connection_close(&conn);
-    }
-
-// TODO: currently you have to kill the program to get to exit the loop
-//     listener_close(&listener);
-cleanup_1:
-    ssl_context_free(&ctx);
-    return error;
-} */
-
-
 int main(int argc, char** argv){
 
 #ifndef _WIN32
@@ -661,7 +613,7 @@ int main(int argc, char** argv){
 
     derr_t e = E_OK;
     // parse options and set default log level
-    PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
+    PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 
     // setup the library (application-wide step)
     PROP_GO(&e, ssl_library_init(), test_fail);

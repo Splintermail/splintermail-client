@@ -1109,8 +1109,9 @@ authenticate_cmd(tag:dstr, out:imap_cmd) =
 # AUTH=PLAIN
 auth_plain(tag:dstr, out:imap_cmd) =
     EOL
-    # send a normal "+"
-    {{  imap_cmd_arg_t arg = {0};
+    # some clients expect base64 here, so send bin2b64("Plain:")
+    {{  ie_dstr_t *plus = ie_dstr_new2(E, DSTR_LIT("UGxhaW46"));
+        imap_cmd_arg_t arg = { .plus = plus };
         imap_cmd_t *cmd = imap_cmd_new(E, NULL, IMAP_CMD_PLUS_REQ, arg);
         send_cmd(E, a, cmd);
     }}

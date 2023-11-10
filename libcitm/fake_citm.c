@@ -3,6 +3,7 @@
 #include "libcitm/fake_citm.h"
 
 #include "test/test_utils.h"
+#include "test/certs.h"
 
 DEF_CONTAINER_OF(fake_citm_conn_t, iface, citm_conn_t)
 DEF_CONTAINER_OF(fake_citm_connect_t, iface, citm_connect_i)
@@ -315,7 +316,7 @@ derr_t fake_keydir_add_peer(fake_keydir_t *fkd, const dstr_t pem){
 
 // libcitm test utilities
 
-derr_t ctx_setup(const char *test_files, SSL_CTX **s_out, SSL_CTX **c_out){
+derr_t ctx_setup(SSL_CTX **s_out, SSL_CTX **c_out){
     derr_t e = E_OK;
 
     *s_out = NULL;
@@ -324,12 +325,9 @@ derr_t ctx_setup(const char *test_files, SSL_CTX **s_out, SSL_CTX **c_out){
     ssl_context_t sctx = {0};
     ssl_context_t cctx = {0};
 
-    DSTR_VAR(cert, 4096);
-    DSTR_VAR(key, 4096);
-    PROP_GO(&e, FMT(&cert, "%x/ssl/good-cert.pem", FS(test_files)), fail);
-    PROP_GO(&e, FMT(&key, "%x/ssl/good-key.pem", FS(test_files)), fail);
-    PROP_GO(&e, ssl_context_new_server(&sctx, cert.data, key.data), fail);
+    PROP_GO(&e, good_127_0_0_1_server(&sctx.ctx), fail);
     PROP_GO(&e, ssl_context_new_client(&cctx), fail);
+    PROP_GO(&e, trust_good(cctx.ctx), fail);
 
     *s_out = sctx.ctx;
     *c_out = cctx.ctx;
@@ -362,7 +360,7 @@ derr_t establish_imap_server(manual_scheduler_t *m, fake_stream_t *fs){
     EXPECT_B(&e, "want write greeting", fake_stream_want_write(fs), true);
     dstr_t msg = fake_stream_pop_write(fs);
     DSTR_STATIC(exp,
-        "* OK [CAPABILITY IMAP4rev1 IDLE AUTH=PLAIN LOGIN] "
+        "* OK [CAPABILITY IMAP4rev1 IDLE AUTH=PLAIN AUTH=LOGIN LOGIN] "
         "greetings, friend!\r\n"
     );
     EXPECT_D3(&e, "greeting", msg, exp);

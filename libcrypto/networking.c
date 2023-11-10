@@ -131,7 +131,7 @@ derr_t ssl_context_new_client(ssl_context_t* ctx){
 }
 
 // loosely based on openssl's ssl/ssl_rsa.c::use_certificate_chain_file()
-static derr_t ssl_ctx_read_cert_chain(SSL_CTX *ctx, dstr_t chain){
+derr_t ssl_ctx_read_cert_chain(SSL_CTX *ctx, dstr_t chain){
     derr_t e = E_OK;
 
     BIO *bio = NULL;
@@ -205,7 +205,7 @@ cu:
     return e;
 }
 
-static derr_t ssl_ctx_read_private_key(SSL_CTX *ctx, dstr_t key){
+derr_t ssl_ctx_read_private_key(SSL_CTX *ctx, dstr_t key){
     derr_t e = E_OK;
 
     BIO *bio = NULL;

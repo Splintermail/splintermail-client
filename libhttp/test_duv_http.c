@@ -4,8 +4,7 @@
 
 #include "test/test_utils.h"
 #include "test/bioconn.h"
-
-static const char* g_test_files;
+#include "test/certs.h"
 
 /* python's http.server is an HTTP/1.0 server, which is the only HTTP server
    available to us without introducing additional external dependencies.  So we
@@ -128,15 +127,9 @@ static void *server_run(void *arg){
 
     test_server_t s = {0};
 
-    DSTR_VAR(cert, 4096);
-    DSTR_VAR(key, 4096);
-
-    PROP_GO(&e, FMT(&cert, "%x/ssl/good-cert.pem", FS(g_test_files)), done);
-    PROP_GO(&e, FMT(&key, "%x/ssl/good-key.pem", FS(g_test_files)), done);
-
     // configure listeners before any testing begins
     ssl_context_t ctx;
-    PROP_GO(&e, ssl_context_new_server(&ctx, cert.data, key.data), done);
+    PROP_GO(&e, good_127_0_0_1_server(&ctx.ctx), done);
     PROP_GO(&e, listener_new(&s.l, "127.0.0.1", 48123), done);
     PROP_GO(&e, listener_new_ssl(&s.ltls, &ctx, "127.0.0.1", 48124), done);
 
@@ -857,7 +850,12 @@ static derr_t test_duv_http(void){
 
     // done configuring globals
 
-    PROP(&e, dmutex_init(&comm.mutex) );
+    ssl_context_t client_ctx = {0};
+
+    PROP(&e, ssl_context_new_client(&client_ctx) );
+    PROP_GO(&e, trust_good(client_ctx.ctx), fail_ctx);
+
+    PROP_GO(&e, dmutex_init(&comm.mutex), fail_ctx);
     PROP_GO(&e, dcond_init(&comm.cond), fail_mutex);
 
     dthread_t thread;
@@ -880,7 +878,7 @@ static derr_t test_duv_http(void){
     PROP_GO(&e, duv_loop_init(&loop), die);
     PROP_GO(&e, duv_scheduler_init(&scheduler, &loop), die);
 
-    PROP_GO(&e, duv_http_init(&http, &loop, &scheduler, NULL), die);
+    PROP_GO(&e, duv_http_init(&http, &loop, &scheduler, client_ctx.ctx), die);
 
     // start the first request
     start_next_request();
@@ -912,6 +910,9 @@ fail_mutex:
     if(!is_error(e) && !success){
         ORIG(&e, E_INTERNAL, "no error, but was not successful");
     }
+
+fail_ctx:
+    ssl_context_free(&client_ctx);
 
     return e;
 
@@ -955,7 +956,7 @@ fail:
 int main(int argc, char **argv){
     derr_t e = E_OK;
     // parse options and set default log level
-    PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
+    PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
 #endif

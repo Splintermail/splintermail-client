@@ -352,9 +352,8 @@ int main(int argc, char** argv){
     derr_t e = E_OK;
     int exit_code = 0;
 
-    const char* test_files;
     // parse options and set default log level
-    PARSE_TEST_OPTIONS(argc, argv, &test_files, LOG_LVL_INFO);
+    PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
 #endif
@@ -362,7 +361,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, ssl_library_init(), cu);
 
     // set up some SSL_CTXs to be shared across tests
-    PROP_GO(&e, ctx_setup(test_files, &sctx, &cctx), cu);
+    PROP_GO(&e, ctx_setup(&sctx, &cctx), cu);
 
     PROP_GO(&e, test_starttls(sctx, cctx), cu);
     PROP_GO(&e, test_writes(), cu);

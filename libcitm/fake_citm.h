@@ -70,7 +70,7 @@ derr_t fake_keydir_add_peer(fake_keydir_t *fkd, const dstr_t pem);
 
 // libcitm test utilities
 
-derr_t ctx_setup(const char *test_files, SSL_CTX **s_out, SSL_CTX **c_out);
+derr_t ctx_setup(SSL_CTX **s_out, SSL_CTX **c_out);
 
 derr_t establish_imap_client(manual_scheduler_t *m, fake_stream_t *fs);
 

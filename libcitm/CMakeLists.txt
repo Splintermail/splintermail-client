@@ -22,10 +22,10 @@ sm_lib(
 
 sm_exe(citm main.c DEPS libcitm certs TEST)
 
-sm_lib(fake_citm.c DEPS libcitm TEST)
+sm_lib(fake_citm.c DEPS libcitm certs TEST)
 
-sm_test(test_imap_server.c DEPS fakestream fake_citm FILES)
-sm_test(test_imap_client.c DEPS fakestream fake_citm FILES)
+sm_test(test_imap_server.c DEPS fakestream fake_citm)
+sm_test(test_imap_client.c DEPS fakestream fake_citm)
 sm_test(test_io_pair.c DEPS fakestream fake_citm)
 sm_test(test_anon.c DEPS fakestream fake_citm)
 sm_test(test_preuser.c DEPS fakestream fake_citm)

@@ -29,3 +29,7 @@ derr_t ssl_context_new_server_path(
 derr_t ssl_library_init(void);
 void ssl_library_close(void);
 void ssl_context_free(ssl_context_t* ctx);
+
+// helpers, exposed for testing
+derr_t ssl_ctx_read_cert_chain(SSL_CTX *ctx, dstr_t chain);
+derr_t ssl_ctx_read_private_key(SSL_CTX *ctx, dstr_t key);

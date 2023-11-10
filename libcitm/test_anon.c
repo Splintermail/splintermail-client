@@ -134,7 +134,7 @@ static derr_t do_test_anon(int mode, size_t cancel_after, bool *finished){
     BOUNCE("C STARTTLS\r\n", "C BAD this port was configured as insecure\r\n");
     BOUNCE("C SELECT INBOX\r\n", "C BAD it's too early for that\r\n");
     BOUNCE("E CAPABILITY\r\n",
-        "* CAPABILITY IMAP4rev1 IDLE AUTH=PLAIN LOGIN\r\n"
+        "* CAPABILITY IMAP4rev1 IDLE AUTH=PLAIN AUTH=LOGIN LOGIN\r\n"
         "E OK now you know, and knowing is half the battle\r\n"
     );
 
@@ -156,7 +156,7 @@ static derr_t do_test_anon(int mode, size_t cancel_after, bool *finished){
 
     if(auth_plain){
         // AUTH=PLAIN
-        BOUNCE("2 AUTHENTICATE PLAIN\r\n", "+ spit it out\r\n");
+        BOUNCE("2 AUTHENTICATE PLAIN\r\n", "+ UGxhaW46\r\n");
         // b64("\0a\0b")
         CMD("AGEAYg==\r\n", "anon2 LOGIN a b\r\n");
     }else if(auth_login){

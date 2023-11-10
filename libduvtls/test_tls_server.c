@@ -4,9 +4,7 @@
 #include "libduvtls/libduvtls.h"
 
 #include "test/test_utils.h"
-
-// path to where the test files can be found
-static const char* g_test_files;
+#include "test/certs.h"
 
 static derr_t E = {0};
 static size_t rbuf_len;
@@ -43,14 +41,9 @@ static derr_t test_tls_server(bool with_preinput){
     ssl_context_t server_ctx = {0};
     ssl_context_t client_ctx = {0};
 
-    DSTR_VAR(cert, 4096);
-    DSTR_VAR(key, 4096);
-    PROP_GO(&e, FMT(&cert, "%x/ssl/good-cert.pem", FS(g_test_files)), cu);
-    PROP_GO(&e, FMT(&key, "%x/ssl/good-key.pem", FS(g_test_files)), cu);
-    PROP_GO(&e,
-        ssl_context_new_server(&server_ctx, cert.data, key.data),
-    cu);
+    PROP_GO(&e, good_127_0_0_1_server(&server_ctx.ctx), cu);
     PROP_GO(&e, ssl_context_new_client(&client_ctx), cu);
+    PROP_GO(&e, trust_good(client_ctx.ctx), cu);
 
     if(!with_preinput){
         PROP_GO(&e,
@@ -228,7 +221,7 @@ cu:
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
-    PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
+    PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
 #endif

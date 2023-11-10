@@ -7,9 +7,7 @@
 
 #include "test/test_utils.h"
 #include "test/bioconn.h"
-
-// path to where the test files can be found
-static const char* g_test_files;
+#include "test/certs.h"
 
 #define MANY 16
 static char bytes[] = "abcdefghijklmnopqrstuvwxyz";
@@ -54,14 +52,7 @@ static void *peer_thread(void *arg){
     listener_t listener = {0};
     connection_t conn = {0};
 
-    DSTR_VAR(cert, 4096);
-    DSTR_VAR(key, 4096);
-    PROP_GO(&e, FMT(&cert, "%x/ssl/good-cert.pem", FS(g_test_files)), done);
-    PROP_GO(&e, FMT(&key, "%x/ssl/good-key.pem", FS(g_test_files)), done);
-
-    PROP_GO(&e,
-        ssl_context_new_server(&server_ctx, cert.data, key.data),
-    done);
+    PROP_GO(&e, good_127_0_0_1_server(&server_ctx.ctx), done);
 
     PROP_GO(&e,
         listener_new_ssl(&listener, &server_ctx, "127.0.0.1", 4810),
@@ -601,6 +592,7 @@ static derr_t test_tls_client(void){
     derr_t e = E_OK;
 
     PROP(&e, ssl_context_new_client(&client_ctx) );
+    PROP_GO(&e, trust_good(client_ctx.ctx), fail_ctx);
 
     PROP_GO(&e, dthread_create(&thread, peer_thread, NULL), fail_ctx);
 
@@ -644,7 +636,7 @@ fail_thread:
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
-    PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
+    PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
 #endif

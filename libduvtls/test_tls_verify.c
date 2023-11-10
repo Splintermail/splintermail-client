@@ -4,9 +4,7 @@
 
 #include "test/test_utils.h"
 #include "test/bioconn.h"
-
-// path to where the test files can be found
-static const char* g_test_files;
+#include "test/certs.h"
 
 // globals
 static derr_t E = {0};
@@ -41,18 +39,15 @@ static void *peer_thread(void *arg){
     listener_t listener = {0};
     connection_t conn = {0};
 
-    DSTR_VAR(cert, 4096);
-    DSTR_VAR(key, 4096);
-    PROP_GO(&e,
-        FMT(&cert, "%x/ssl/%x-cert.pem", FS(g_test_files), FS(keypair)),
-    done);
-    PROP_GO(&e,
-        FMT(&key, "%x/ssl/%x-key.pem", FS(g_test_files), FS(keypair)),
-    done);
-
-    PROP_GO(&e,
-        ssl_context_new_server(&server_ctx, cert.data, key.data),
-    done);
+    if(strcmp(keypair, "good") == 0){
+        PROP_GO(&e, good_127_0_0_1_server(&server_ctx.ctx), done);
+    }else if(strcmp(keypair, "expired") == 0){
+        PROP_GO(&e, good_expired_server(&server_ctx.ctx), done);
+    }else if(strcmp(keypair, "unknown") == 0){
+        PROP_GO(&e, bad_127_0_0_1_server(&server_ctx.ctx), done);
+    }else{
+        LOG_FATAL("unrecognized keypair \"%x\"\n", FS(keypair));
+    }
 
     PROP_GO(&e,
         listener_new_ssl(&listener, &server_ctx, "127.0.0.1", 4811),
@@ -218,6 +213,7 @@ static derr_t do_verify_test(
     connect_name = hostname;
 
     PROP(&e, ssl_context_new_client(&client_ctx) );
+    PROP_GO(&e, trust_good(client_ctx.ctx), fail_ctx);
 
     PROP_GO(&e, dthread_create(&thread, peer_thread, keypair), fail_ctx);
 
@@ -276,7 +272,7 @@ static derr_t test_tls_verify(void){
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
-    PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
+    PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
 #endif
