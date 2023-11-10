@@ -1,4 +1,5 @@
-#define LETSENCRYPT "https://acme-staging-v02.api.letsencrypt.org/directory"
+// #define LETSENCRYPT "https://acme-staging-v02.api.letsencrypt.org/directory"
+#define LETSENCRYPT "https://acme-v02.api.letsencrypt.org/directory"
 
 struct acme_t;
 typedef struct acme_t acme_t;
