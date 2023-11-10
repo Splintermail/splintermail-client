@@ -18,6 +18,8 @@ typedef struct {
 static derr_t parse_timestamp(dstr_t d, time_t *out){
     derr_t e = E_OK;
 
+    *out = 0;
+
     // calculate seconds offset between localtime and UTC with stdlib functions
     static time_t offset = LONG_MAX;
     if(offset == LONG_MAX){

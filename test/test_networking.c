@@ -151,7 +151,8 @@ static void* ssl_server_thread(void* arg){
 
 
         // set key and cert
-        dstr_t key, cert;
+        dstr_t key = {0};
+        dstr_t cert = {0};
         switch(spec->keypair){
             case KP_GOOD:
                 key = good_127_0_0_1_key;

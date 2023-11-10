@@ -507,9 +507,7 @@ static derr_t rm_rf_hook(
         // then delete the directory itself
         PROP(&e, drmdir_path(&path) );
     }else{
-        // make sure we have write permissions to delete the file
-        PROP(&e, chmod_path(&path, 0600) );
-        // now delete the file
+        // delete this file
         PROP(&e, dunlink_path(&path) );
     }
 
