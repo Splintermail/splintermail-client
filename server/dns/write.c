@@ -337,7 +337,7 @@ size_t write_caa(
     // rr header
     used = put_rr_hdr(CAA, CAA_TTL, rdlen, out, used);
     // critical byte
-    used = put_uint8(1, out, used);
+    used = put_uint8(CAA_FLAGS, out, used);
     // tag len and tag
     used = put_uint8(CAA_TAG.len, out, used);
     used = put_lstr(CAA_TAG, out, used);

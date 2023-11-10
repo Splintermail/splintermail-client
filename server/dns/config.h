@@ -60,7 +60,7 @@ const uint32_t MINIMUM = 60;
 
 // CAA record //
 
-const uint32_t CAA_TTL = 86400;
-const uint8_t CAA_FLAGS = 1;  // critical bit is set
+const uint32_t CAA_TTL = 60;
+const uint8_t CAA_FLAGS = 128;  // critical bit is set
 const lstr_t CAA_TAG = LSTR("issue");
-const lstr_t CAA_VALUE = LSTR("letsencrypt.com");
+const lstr_t CAA_VALUE = LSTR("letsencrypt.org");

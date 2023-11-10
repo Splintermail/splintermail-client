@@ -164,6 +164,10 @@ size_t respond_root(void *arg, const dns_pkt_t pkt, char *out, size_t cap){
         return POSITIVE_RESP(write_ns1, write_ns2);
     }
 
+    if(pkt.qstn.qtype == CAA){
+        return POSITIVE_RESP(write_caa);
+    }
+
     // no matching record
     return norecord_resp(pkt, out, cap);
 }
