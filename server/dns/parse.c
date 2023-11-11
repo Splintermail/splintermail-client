@@ -360,13 +360,21 @@ static derr_type_t fmt_qstn(writer_i *out, const dns_qstn_t qstn){
         if(etype) return etype;
         labels_t labels;
         lstr_t *lstr = labels_iter(&labels, qstn.ptr, used);
+        bool first = true;
         for(; lstr; lstr = labels_next(&labels)){
+            if(first){
+                first = false;
+            }else{
+                w.putc(out, '.');
+            }
             etype = w.puts(out, lstr->str, lstr->len);
             if(etype) return etype;
         }
         used = labels.used;
     }
-    etype = FMT_UNLOCKED(out, "\nqtype=%x", FU(qstn.qtype));
+    const char *qtypestr = qtype_tostr(qstn.qtype);
+    fmt_i *fqtype = qtypestr == UNKNOWN ? FU(qstn.qtype) : FS(qtypestr);
+    etype = FMT_UNLOCKED(out, "\nqtype=%x", fqtype);
     if(etype) return etype;
     etype = FMT_UNLOCKED(out, "\nqclass=%x", FU(qstn.qclass));
     if(etype) return etype;
@@ -453,7 +461,7 @@ static derr_type_t fmt_rr(writer_i *out, const dns_rr_t dns_rr){
     writer_t w = *out->w;
     rrs_t it;
     for(rr_t *rr = dns_rr_iter(&it, dns_rr); rr; rr = rrs_next(&it)){
-        etype = w.puts(out, "name=", 5);
+        etype = w.puts(out, "\n  name=", 8);
         if(etype) return etype;
         labels_t labels = {0};
         lstr_t *lstr = labels_iter(&labels, rr->ptr, rr->nameoff);
@@ -467,7 +475,7 @@ static derr_type_t fmt_rr(writer_i *out, const dns_rr_t dns_rr){
         if(etype) return etype;
         etype = FMT_UNLOCKED(out, " ttl=%x", FU(rr->ttl));
         if(etype) return etype;
-        etype = FMT_UNLOCKED(out, " rdlen=%x\n", FU(rr->rdlen));
+        etype = FMT_UNLOCKED(out, " rdlen=%x", FU(rr->rdlen));
         if(etype) return etype;
         etype = fmt_bytes(out, rr->ptr + rr->rdoff, rr->rdlen);
         if(etype) return etype;

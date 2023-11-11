@@ -161,7 +161,8 @@ static derr_t on_recv_dns(
     // check rrl
     bool ok = rrl_check(&g->rrl, src, g->now);
     if(!ok){
-        // only report every hour
+        LOG_DEBUG("dropping due to rate limit\n");
+        // INFO-level report every hour
         if(g->now > g->last_report + 60*60*SECOND){
             g->last_report = g->now;
             LOG_INFO("dropping packets due to rate limit\n");
@@ -180,7 +181,10 @@ static derr_t on_recv_dns(
     );
 
     // do we have a a response?
-    if(!rlen) return e;
+    if(!rlen){
+        LOG_DEBUG("no response\n");
+        return e;
+    }
 
     uv_buf_t uvbuf = { .base = membuf->resp, .len = rlen };
     PROP(&e,

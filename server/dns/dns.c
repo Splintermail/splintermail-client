@@ -10,7 +10,6 @@ size_t norespond(void *arg, const dns_pkt_t pkt, char *out, size_t cap){
     (void)pkt;
     (void)out;
     (void)cap;
-    LOG_DEBUG("no response\n");
     return 0;
 }
 
@@ -230,11 +229,12 @@ respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
     // 0 is not a valid qtype
     if(pkt.qstn.qtype == 0) return norespond;
 
-    // refuse to respond for domains to we're not responsible for
-    if(n < 3) return respond_refused;
-    if(!lstr_ieq(rname[0], LSTR("com"))) return respond_refused;
-    if(!lstr_ieq(rname[1], LSTR("splintermail"))) return respond_refused;
-    if(!lstr_ieq(rname[2], LSTR("user"))) return respond_refused;
+    /* no response for domains we're not responsible for; these queries are up
+       to no good */
+    if(n < 3) return norespond;
+    if(!lstr_ieq(rname[0], LSTR("com"))) return norespond;
+    if(!lstr_ieq(rname[1], LSTR("splintermail"))) return norespond;
+    if(!lstr_ieq(rname[2], LSTR("user"))) return norespond;
 
     // we only implement the basic qtypes from rfc1035 + AAAA + CAA
     uint16_t qtype = pkt.qstn.qtype;
