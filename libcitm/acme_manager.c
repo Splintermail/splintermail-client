@@ -1145,6 +1145,8 @@ derr_t acme_manager_init(
         .cb_data = cb_data,
     };
 
+    PROP_GO(&e, mkdirs_path(&acme_dir, 0700), fail);
+
     // do we have an installation?
     bool ok;
     PROP_GO(&e, load_installation(am, &ok), fail);
