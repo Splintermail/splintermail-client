@@ -7,7 +7,6 @@ Build-Depends: debhelper (>= 10), libssl-dev, cmake (>= 3.1), python3 (>= 3.6)
 
 Package: QW pkgname WQ
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, libssl1.1, ca-certificates
-Pre-Depends: openssl, ca-certificates
+Depends: ${shlibs:Depends}, ${misc:Depends}, libssl3, libuv1, ca-certificates
 Description: QW pkgdescr_short WQ
 QW pkgdescr_long("70").pre(" ") WQ

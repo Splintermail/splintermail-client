@@ -8,9 +8,8 @@ License:    Unlicense
 URL:        https://github.com/splintermail/splintermail-client
 # No `Source:`, we're using a pre-configured source and build directory
 
-BuildRequires:  cmake openssl-devel systemd
-Requires(post): shadow-utils openssl
-#Requires:      openssl-libs
+BuildRequires:  cmake openssl-devel systemd-devel libuv-devel
+Requires(post): shadow-utils openssl libuv systemd
 
 %description
 QW pkgdescr_long("72") WQ
@@ -37,17 +36,32 @@ DESTDIR="%{buildroot}" cmake --build "QW build_dir WQ" --target install
 %{_datadir}/bash-completion/completions/splintermail
 %{_datadir}/zsh/site-functions/_splintermail
 %{_unitdir}/splintermail.service
+%{_unitdir}/splintermail.socket
 %{_mandir}/man1/splintermail.1.gz
 
 %post
 # install if $1==1, upgrade if $1==0
-# this just enables/disables the service according to the preset policy
+# This just enables/disables the service according to the preset policy.
+# To test the enabled behavior, you can:
+#
+#     mkdir -p /etc/systemd/system-preset
+#     echo enable splintermail.socket > \
+#         /etc/systemd/system-preset/01-splintermail.preset
+#
+# As far as I can tell, even then this will only enable the socket, not
+# actually start it, so no effect occurs until reboot.
+#
+# See also:
+#   - www.freedesktop.org/software/systemd/man/latest/systemd.preset.html
+#   - docs.fedoraproject.org/en-US/packaging-guidelines/Scriptlets
 %systemd_post splintermail.socket
+
 # create service user
 getent group splintermail >/dev/null || groupadd -r splintermail
 getent passwd splintermail >/dev/null || \
     useradd -r -g splintermail -d "QW sm_dir WQ" -s /sbin/nologin \
     -c "Splintermail service account" splintermail
+
 # create the splintermail directory
 if [ ! -d "QW sm_dir WQ" ] ; then
     mkdir -p "QW sm_dir WQ"
@@ -59,11 +73,13 @@ exit 0
 %preun
 # upgrade if $1==1, uninstall if $1==0
 # this stops/disables the service on package removal
+%systemd_preun splintermail.socket
 %systemd_preun splintermail.service
 
 %postun
 # upgrade if $1=1, uninstall if $1==0
 # this restarts the service if it is running
+%systemd_postun_with_restart splintermail.socket
 %systemd_postun_with_restart splintermail.service
 if [ "$1" == 0 ] ; then
     # remove the splintermail directory
@@ -72,5 +88,10 @@ fi
 exit 0
 
 %changelog
+* Sat Nov 11 2023 Splintermail Dev <dev@splintermail.com> - 0.4.0-1
+  - Use ACME to obtain TLS certificates.
+  - Expand IMAP support.
+* Tue Oct 1 2019 Splintermail Dev <dev@splintermail.com> - 0.3.0-1
+  - Partial IMAP support.
 * Mon Sep 3 2018 Splintermail Dev <dev@splintermail.com> - 0.2.0-1
-  - Initial packaging
+  - Initial packaging.

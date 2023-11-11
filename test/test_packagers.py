@@ -337,6 +337,10 @@ class OSXTestSuite(BSDTestSuite):
             raise ValueError("--osx arg must be INSTALLER:UNINSTALLER")
         self.installer, self.uninstaller = installer.split(":")
         self.service_username = '_splintermail'
+        # include /usr/local/bin on the PATH, if it isn't already, so we can
+        # automate this test from non-interactive ssh, which restricts PATH
+        if "/usr/local/bin" not in os.environ["PATH"]:
+            os.environ["PATH"] = os.environ["PATH"] + ":/usr/local/bin"
         super().__init__()
 
     def get_user_uid(self, username):
