@@ -1,6 +1,6 @@
 #include "libcitm/libcitm.h"
 
-#include <version.h>
+#include <config.h>
 
 DEF_CONTAINER_OF(status_client_t, schedulable, schedulable_t)
 
@@ -151,9 +151,9 @@ static derr_t advance_checks(status_client_t *sc){
 }
 
 static bool version_matches(status_client_t *sc){
-    return sc->version_maj == SPLINTERMAIL_VERSION_MAJOR
-        && sc->version_min == SPLINTERMAIL_VERSION_MINOR
-        && sc->version_patch == SPLINTERMAIL_VERSION_PATCH;
+    return sc->version_maj == SM_VER_MAJ
+        && sc->version_min == SM_VER_MIN
+        && sc->version_patch == SM_VER_PAT;
 }
 
 static derr_t handle_response(status_client_t *sc, dstr_t line, json_t json){
@@ -191,9 +191,9 @@ static derr_t handle_response(status_client_t *sc, dstr_t line, json_t json){
             FI(sc->version_maj),
             FI(sc->version_min),
             FI(sc->version_patch),
-            FI(SPLINTERMAIL_VERSION_MAJOR),
-            FI(SPLINTERMAIL_VERSION_MINOR),
-            FI(SPLINTERMAIL_VERSION_PATCH),
+            FI(SM_VER_MAJ),
+            FI(SM_VER_MIN),
+            FI(SM_VER_PAT),
         );
     }
 

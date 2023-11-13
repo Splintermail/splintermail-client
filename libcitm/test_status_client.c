@@ -1,5 +1,7 @@
 #include "libcli/libcli.h"
 
+#include <config.h>
+
 #include "test/test_utils.h"
 
 typedef struct {
@@ -137,9 +139,9 @@ static derr_t test_client_advance_up(advancer_t *advancer){
         PROP(&e,
             citm_status_init(
                 &tc->exp_status,
-                SPLINTERMAIL_VERSION_MAJOR,
-                SPLINTERMAIL_VERSION_MINOR,
-                SPLINTERMAIL_VERSION_PATCH,
+                SM_VER_MAJ,
+                SM_VER_MIN,
+                SM_VER_PAT,
                 DSTR_LIT("yo.com"),
                 status_maj_dstr(STATUS_MAJ_TLS_RENEW),
                 status_min_dstr(STATUS_MIN_CREATE_ORDER),
@@ -173,9 +175,9 @@ static derr_t test_client_advance_up(advancer_t *advancer){
         PROP(&e,
             citm_status_init(
                 &tc->exp_status,
-                SPLINTERMAIL_VERSION_MAJOR,
-                SPLINTERMAIL_VERSION_MINOR,
-                SPLINTERMAIL_VERSION_PATCH,
+                SM_VER_MAJ,
+                SM_VER_MIN,
+                SM_VER_PAT,
                 DSTR_LIT("yo.com"),
                 status_maj_dstr(STATUS_MAJ_TLS_RENEW),
                 status_min_dstr(STATUS_MIN_GET_AUTHZ),

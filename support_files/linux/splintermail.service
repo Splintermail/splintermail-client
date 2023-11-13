@@ -6,7 +6,7 @@ Wants=splintermail.socket
 [Service]
 Type=notify
 Restart=always
-ExecStart=QW install_prefix WQ/bin/splintermail citm
+ExecStart=QW install_prefix WQ/bin/splintermail citm --system
 User=splintermail
 Group=splintermail
 

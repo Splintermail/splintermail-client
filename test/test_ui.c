@@ -1,23 +1,18 @@
-#include <errno.h>
+#include "libcli/libcli.h"
 
-#include <libcli/libcli.h>
+#include <config.h>
 
 #include "dummy_ui_harness.h"
 #include "test_utils.h"
+
+#include <errno.h>
 
 #define TEST_LOG_LEVEL LOG_LVL_DEBUG
 
 #define SM "splintermail"
 
-#ifdef _WIN32
-// windows
-static char *default_status_sock = "\\\\.\\pipe\\splintermail-citm";
-static char *default_sm_dir = "C:/ProgramData/splintermail";
-#else
-// unix
-static char *default_status_sock = "/var/run/splintermail.sock";
-static char *default_sm_dir = "/var/lib/splintermail";
-#endif
+static char *default_sm_dir = SM_SM_DIR;
+static char *default_status_sock = SM_STATUS_SOCK;
 
 // read from our process's dup'd stdout asynchronously:
 static dthread_t ar_thread;

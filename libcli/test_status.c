@@ -1,5 +1,7 @@
 #include "libcli/libcli.h"
 
+#include <config.h>
+
 #include "test/test_utils.h"
 
 static status_update_cb g_update_cb = NULL;
@@ -115,9 +117,9 @@ static derr_t test_status(bool follow){
     // send an update
     PROP_GO(&e,
         citm_status_init(&status,
-            SPLINTERMAIL_VERSION_MAJOR,
-            SPLINTERMAIL_VERSION_MINOR,
-            SPLINTERMAIL_VERSION_PATCH,
+            SM_VER_MAJ,
+            SM_VER_MIN,
+            SM_VER_PAT,
             dstr_from_cstr("dom"),
             dstr_from_cstr("maj"),
             dstr_from_cstr("min"),
@@ -133,7 +135,7 @@ static derr_t test_status(bool follow){
         EXPECT_I_GO(&e, "g_close_called", g_close_called, 1, cu);
 
         EXPECT_LINES_GO(&e, "g_msg", g_msg, cu,
-            "splintermail server version: " SPLINTERMAIL_VERSION_STRING,
+            "splintermail server version: " SM_VER_STR,
             "subdomain: dom",
             "status: maj: min",
         );
@@ -150,7 +152,7 @@ static derr_t test_status(bool follow){
     EXPECT_I_GO(&e, "g_close_called", g_close_called, 0, cu);
 
     EXPECT_LINES_GO(&e, "g_msg", g_msg, cu,
-        "splintermail server version: " SPLINTERMAIL_VERSION_STRING,
+        "splintermail server version: " SM_VER_STR,
         "subdomain: dom",
         "status: maj: min",
         "---",
@@ -160,9 +162,9 @@ static derr_t test_status(bool follow){
     // send two updates in quick succession
     PROP_GO(&e,
         citm_status_init(&status,
-            SPLINTERMAIL_VERSION_MAJOR,
-            SPLINTERMAIL_VERSION_MINOR,
-            SPLINTERMAIL_VERSION_PATCH,
+            SM_VER_MAJ,
+            SM_VER_MIN,
+            SM_VER_PAT,
             dstr_from_cstr("x"),
             dstr_from_cstr("y"),
             dstr_from_cstr("z"),
@@ -174,9 +176,9 @@ static derr_t test_status(bool follow){
 
     PROP_GO(&e,
         citm_status_init(&status,
-            SPLINTERMAIL_VERSION_MAJOR,
-            SPLINTERMAIL_VERSION_MINOR,
-            SPLINTERMAIL_VERSION_PATCH,
+            SM_VER_MAJ,
+            SM_VER_MIN,
+            SM_VER_PAT,
             dstr_from_cstr("DOM"),
             dstr_from_cstr("MAJ"),
             dstr_from_cstr("MIN"),

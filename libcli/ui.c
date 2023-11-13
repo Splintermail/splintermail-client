@@ -1,6 +1,7 @@
 #include "libcli/libcli.h"
 
 #include <libcli/print_help.h>
+#include <config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,12 +11,10 @@
 #include <errno.h>
 
 // os-specific defaults
-#ifdef _WIN32
-DSTR_STATIC(os_default_sm_dir, "C:/ProgramData/splintermail");
-DSTR_STATIC(os_default_sock, "\\\\.\\pipe\\splintermail-citm");
-#else
-DSTR_STATIC(os_default_sm_dir, "/var/lib/splintermail");
-DSTR_STATIC(os_default_sock, "/var/run/splintermail.sock");
+DSTR_STATIC(os_default_sm_dir, SM_SM_DIR);
+DSTR_STATIC(os_default_sock, SM_STATUS_SOCK);
+
+#ifndef _WIN32
 static derr_t detect_system_fds(listener_list_t l, int *sockfd);
 #endif
 
@@ -1267,12 +1266,7 @@ int do_main(const ui_i ui, int argc, char* argv[], bool windows_service){
 
     // version option
     if(o_version.found){
-        printf(
-            "%d.%d.%d\n",
-            SPLINTERMAIL_VERSION_MAJOR,
-            SPLINTERMAIL_VERSION_MINOR,
-            SPLINTERMAIL_VERSION_PATCH
-        );
+        printf(SM_VER_STR "\n");
         retval = 0;
         goto cu;
     }

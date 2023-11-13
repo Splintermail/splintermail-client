@@ -73,12 +73,12 @@ set(qwconf "${qwconf}" PARENT_SCOPE)
 set(qwbin "${qwbin}" PARENT_SCOPE)
 set(qw_os "${qw_os}" PARENT_SCOPE)
 
-# qwwq(input output MODE mode DEPS deps...)
+# qwwq(input output MODE mode DEPS deps... TARGET tgtname)
 # MODE will fail on windows
 # DEPS are target-level dependencies; there's no linking of course
 function(qwwq input output)
     set(options "")
-    set(one_value_args "MODE")
+    set(one_value_args "MODE" "TARGET")
     set(multi_value_args "DEPS")
     cmake_parse_arguments(
         QWWQ
@@ -100,6 +100,9 @@ function(qwwq input output)
         DEPENDS qwwq ${qwconf} ${input} ${QWWQ_DEPS}
         COMMENT prepocessing ${input} VERBATIM
     )
+    if(QWWQ_TARGET)
+        add_custom_target("${QWWQ_TARGET}" DEPENDS "${output}")
+    endif()
 endfunction()
 
 # usage: qw_plugin([name] src... DEPS deps...)

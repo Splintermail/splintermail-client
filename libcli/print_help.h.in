@@ -4,8 +4,11 @@ static void print_help(void){
 "\n"
 QW printf_escape(pkgdescr_long("78")).pre('"  ').post('\\n"') WQ
 "\n"
-"usage: splintermail citm [OPTIONS]\n"
-"       splintermail API_COMMAND [OPTIONS]\n"
+"usage: " QW printf_escape(
+    "\n\n       "^[
+        for cmd=subcommands -> "splintermail %s [OPTIONS]"%cmd
+    ]
+).pre('"').post('\\n"') WQ
 "\n"
 "\n"
 "OPTIONS:\n"
@@ -16,11 +19,19 @@ QW print_help.opts_from_list(opts_common) WQ
 "\n"
 QW print_help.opts_from_list(opts_citm) WQ
 "\n"
-"OPTIONS, api_command-specific:\n"
+"OPTIONS, configure-specific:\n"
+"\n"
+QW print_help.opts_from_list(opts_configure) WQ
+"\n"
+"OPTIONS, status-specific:\n"
+"\n"
+QW print_help.opts_from_list(opts_status) WQ
+"\n"
+"OPTIONS, ACCOUNT_COMMANDS-specific:\n"
 "\n"
 QW print_help.opts_from_list(opts_apis) WQ
 "\n"
-"API_COMMANDS:\n"
+"ACCOUNT_COMMANDS:\n"
 "\n"
 QW
     printf_escape(

@@ -31,11 +31,6 @@ project(
     LANGUAGES C
     VERSION 0.4.0
 )
-configure_file(
-    "${PROJECT_SOURCE_DIR}/version.h.in"
-    "${PROJECT_BINARY_DIR}/version.h"
-    @ONLY
-)
 
 set(MAINTAINER_NAME "Splintermail Dev")
 set(MAINTAINER_EMAIL "dev@splintermail.com")
@@ -495,6 +490,13 @@ function(sm_exe)
 endfunction()
 
 add_subdirectory(tools)
+
+# config.h contains information exported from qw.conf
+qwwq(
+    "${CMAKE_CURRENT_SOURCE_DIR}/config.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/config.h"
+    TARGET config_h
+)
 
 add_subdirectory(libdstr)
 add_subdirectory(libduv)

@@ -12,6 +12,4 @@
 #include "libcli/configure.h"
 #include "libcli/uv_configure.h"
 
-#include <version.h>
-
 #endif // LIBCLI_H

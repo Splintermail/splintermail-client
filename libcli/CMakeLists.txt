@@ -12,6 +12,7 @@ sm_lib(cli
     "${print_help_out}"
     DEPS http libcitm api_client
 )
+add_dependencies(cli config_h)
 
 if(WIN32)
     # additional dependencies for windows

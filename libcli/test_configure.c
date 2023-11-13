@@ -1,5 +1,7 @@
 #include "libcli/libcli.h"
 
+#include <config.h>
+
 #include "test/test_utils.h"
 
 typedef enum {
@@ -440,9 +442,9 @@ static void tforceclose(test_t *t){
 
 #define MKSTATUS(s, dom, smaj, smin, conf, rdy) \
     citm_status_init(s, \
-        SPLINTERMAIL_VERSION_MAJOR, \
-        SPLINTERMAIL_VERSION_MINOR, \
-        SPLINTERMAIL_VERSION_PATCH, \
+        SM_VER_MAJ, \
+        SM_VER_MIN, \
+        SM_VER_PAT, \
         dstr_from_cstr(dom), \
         dstr_from_cstr(smaj), \
         dstr_from_cstr(smin), \

@@ -34,7 +34,7 @@ done
 
 # list of options common to all completions
 optspecs=(
-    QW "\n    "^[for o=optlist -> *optcall(
+    QW "\n    "^[for o=uniqopts -> *optcall(
         func(long short arg summary detail default completion ->
             [for x=[long null2skip(short)] ->
                 zsh.comp_opt(x summary long arg completion)
@@ -46,14 +46,20 @@ optspecs=(
 case "$prevargs" in
     "")
     _arguments $optspecs \
-        '::device commands:(( \
-            QW " \\\n            "^zsh.comp_apis(apis_devices) WQ))' \
-        '::token commands:(( \
-            QW " \\\n            "^zsh.comp_apis(apis_tokens) WQ))' \
+        '::citm commands:(( \
+            citm\:"Run the local decrypting email server." \
+            configure\:"Configure the local citm server." \
+            status\:"Report the status of the the local citm server."' \
+        '::general commands:(( \
+            QW " \\\n            "^zsh.comp_apis(apis_general) WQ))' \
         '::alias commands:(( \
             QW " \\\n            "^zsh.comp_apis(apis_aliases) WQ))' \
-        '::account commands:(( \
-            QW " \\\n            "^zsh.comp_apis(apis_account) WQ))' \
+        '::token commands:(( \
+            QW " \\\n            "^zsh.comp_apis(apis_tokens) WQ))' \
+        '::device commands:(( \
+            QW " \\\n            "^zsh.comp_apis(apis_devices) WQ))' \
+        '::installation commands:(( \
+            QW " \\\n            "^zsh.comp_apis(apis_inst) WQ))' \
         ;;
     QW
         "\n    "^[for a=apis_w_arg ->

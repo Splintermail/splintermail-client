@@ -134,7 +134,7 @@ WQ
     # otherwise check if there is an option to complete
     if [[ "$curtok" =~ ^-.* ]] ; then
         choices=(
-QW "\n"^[for o=optlist -> '            "%s:%s"'%[o opts.get(o).summary]] WQ
+QW "\n"^[for o=uniqopts -> '            "%s:%s"'%[o opts.get(o).summary]] WQ
         )
         __splintermail_format_completion "$@" "${choices[@]}"
         return
@@ -143,7 +143,9 @@ QW "\n"^[for o=optlist -> '            "%s:%s"'%[o opts.get(o).summary]] WQ
     # if we have no arguments so far, offer a CITM or an API command
     if [ "${#prevargs[@]}" -eq 0 ] ; then
         choices=(
-            "citm:Run the local decrypting email server"
+            "citm:Run the local decrypting email server."
+            "configure:Configure the local citm server."
+            "status:Report the status of the local citm server."
 QW "\n"^[for a=apilist -> '            "%s:%s"'%[a apis.get(a).short]] WQ
             )
         __splintermail_format_completion "$@" "${choices[@]}"

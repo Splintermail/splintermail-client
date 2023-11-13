@@ -1,5 +1,7 @@
 #include "libcli/libcli.h"
 
+#include <config.h>
+
 #include "test/test_utils.h"
 
 typedef enum {
@@ -244,9 +246,9 @@ static derr_t test_server_advance_up(advancer_t *advancer){
                     "\"configured\":\"no\","
                     "\"tls_ready\":\"no\""
                 "}\n",
-                FI(SPLINTERMAIL_VERSION_MAJOR),
-                FI(SPLINTERMAIL_VERSION_MINOR),
-                FI(SPLINTERMAIL_VERSION_PATCH),
+                FI(SM_VER_MAJ),
+                FI(SM_VER_MIN),
+                FI(SM_VER_PAT),
                 FD(status_maj_dstr(STATUS_MAJ_NEED_CONF)),
                 FD(status_min_dstr(STATUS_MIN_NONE))
             )

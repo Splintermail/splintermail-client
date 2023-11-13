@@ -7,11 +7,7 @@
 \"
 .SH SYNOPSIS
 \"
-.B splintermail
-citm [OPTIONS]
-.PP
-.B splintermail
-API_COMMAND [OPTIONS]
+QW "\n.PP\n"^[for c=subcommands -> ".B splintermail\n%s [OPTIONS]"%c] WQ
 .SH DESCRIPTION
 QW man_escape(pkgdescr_long(width="10000" joiner="\n\n")) WQ
 \"
@@ -21,13 +17,23 @@ QW man_escape("\n"^[for o=opts_common -> optcall(manopt o)]) WQ
 .SS CITM-specific options:
 \d
 QW man_escape("\n"^[for o=opts_citm -> optcall(manopt o)]) WQ
-.SS API_COMMAND-specific options:
+.SS CONFIGURE-specific options:
+\d
+QW man_escape("\n"^[for o=opts_configure -> optcall(manopt o)]) WQ
+.SS STATUS-specific options:
+\d
+QW man_escape("\n"^[for o=opts_status -> optcall(manopt o)]) WQ
+.SS ACCOUNT_COMMANDS-specific options:
 \d
 QW man_escape("\n"^[for o=opts_apis -> optcall(manopt o)]) WQ
 \"
-.SH API COMMANDS
+.SH ACCCOUNT COMMANDS
 \fBsplintermail\fR can be used to control nearly all the aspects of your
-account from the command line, by making calls to the Splintermail.com API.
+account from the command line.
+\"
+.SS General Commands
+\"
+QW man_escape("\n"^[for a=apis_general -> apicall(manapi a)]) WQ
 \"
 .SS Alias Commands
 Splintermail supports two different types of aliases: Random Aliases and
@@ -67,10 +73,13 @@ deleting the corresponding token.
 \"
 QW man_escape("\n"^[for a=apis_tokens -> apicall(manapi a)]) WQ
 \"
+.SS Installation Commands
+QW apis.list_installations.long WQ
+
+QW apis.delete_installation.long WQ
 \"
-.SS Account Commands
+QW man_escape("\n"^[for a=apis_inst -> apicall(manapi a)]) WQ
 \"
-QW man_escape("\n"^[for a=apis_account -> apicall(manapi a)]) WQ
 \"
 .SH FILES
 \"
@@ -85,27 +94,6 @@ QW manfile(files.citm) WQ
 .SS Per-User API Tokens
 \"
 QW manfile(files.accounts) WQ
-\"
-.SH NOTES
-\"
-As soon as your email is received by the Splintermail.com email server, it is
-encrypted in a way that it can only be decrypted by one of your devices.
-\fBsplintermail\fR works by downloading the encrypted emails from the server,
-decrypting them on your computer, and creating a mini email "server" on your
-computer, to which your email client can connect.
-
-While TLS encryption is only meaningful when connecting two computers across a
-network, most email clients will insist on using encrypted connections for
-fetching email, even if the email client is fetching email from the
-\fBsplintermail\fR application running on the same computer.
-
-Therefore, upon installation, \fBsplintermail\fR will generate and trust an TLS certificate
-for the IP address "127.0.0.1" (127.0.0.1 is the special address for a computer
-to talk to itself).  This "dummy" TLS certificates is useless for any security
-purpose, but makes most email clients happier.
-
-Nonetheless, Thunderbird, will still complain about the dummy TLS certificate
-because Mozilla products maintain their own list of trusted certificates.
 \" see `man 7 man-pages` for official header list of style guide
 \" see "Macro Package", should be using the groff an.tmac package
 \"

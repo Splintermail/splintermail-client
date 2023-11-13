@@ -1,0 +1,10 @@
+// select information exported from qw.conf
+
+#define SM_VER_MAJ QW pkgvermaj WQ
+#define SM_VER_MIN QW pkgvermin WQ
+#define SM_VER_PAT QW pkgverbld WQ
+#define SM_VER_STR QW '"'+version+'"' WQ
+
+#define SM_SM_DIR QW '"'+sm_dir+'"' WQ
+
+#define SM_STATUS_SOCK QW '"'+status_sock_path+'"' WQ

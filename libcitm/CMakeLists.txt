@@ -22,6 +22,7 @@ sm_lib(
     uv.c
     DEPS dstr crypto web duv duvtls imap imaildir acme api_client
 )
+add_dependencies(libcitm config_h)
 
 sm_exe(citm main.c DEPS libcitm certs TEST)
 
