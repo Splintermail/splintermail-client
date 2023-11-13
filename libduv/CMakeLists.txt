@@ -40,7 +40,7 @@ foreach(lib ${libs})
         target_compile_options("${lib}" PRIVATE -fno-strict-aliasing)
     elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
         # additional dependencies for windows
-        target_link_libraries("${lib}" PUBLIC ws2_32 iphlpapi userenv)
+        target_link_libraries("${lib}" PUBLIC ws2_32 iphlpapi userenv dbghelp)
     endif()
 endforeach()
 

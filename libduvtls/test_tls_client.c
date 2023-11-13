@@ -594,11 +594,12 @@ static derr_t test_tls_client(void){
     PROP(&e, ssl_context_new_client(&client_ctx) );
     PROP_GO(&e, trust_good(client_ctx.ctx), fail_ctx);
 
+    PROP_GO(&e, duv_loop_init(&loop), fail_ctx);
+
+    PROP_GO(&e, duv_async_init(&loop, &async, async_cb), fail_ctx);
+
+    // start thread after async so we don't miss an async signal
     PROP_GO(&e, dthread_create(&thread, peer_thread, NULL), fail_ctx);
-
-    PROP_GO(&e, duv_loop_init(&loop), fail_thread);
-
-    PROP_GO(&e, duv_async_init(&loop, &async, async_cb), fail_thread);
 
     PROP_GO(&e, duv_scheduler_init(&scheduler, &loop), fail_thread);
 
