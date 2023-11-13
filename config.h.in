@@ -7,4 +7,4 @@
 
 #define SM_SM_DIR QW '"'+sm_dir+'"' WQ
 
-#define SM_STATUS_SOCK QW '"'+status_sock_path+'"' WQ
+#define SM_STATUS_SOCK QW '"'+status_sock_path.repl("\\" "\\\\")+'"' WQ

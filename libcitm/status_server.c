@@ -1,6 +1,6 @@
 #include "libcitm/libcitm.h"
 
-#include <version.h>
+#include <config.h>
 
 DEF_CONTAINER_OF(status_server_t, schedulable, schedulable_t)
 
@@ -243,9 +243,9 @@ static derr_t write_new(status_server_t *ss, ss_client_t *c){
     derr_t e = E_OK;
 
     jdump_i *j = DOBJ(
-        DKEY("version_maj", DI(SPLINTERMAIL_VERSION_MAJOR)),
-        DKEY("version_min", DI(SPLINTERMAIL_VERSION_MINOR)),
-        DKEY("version_patch", DI(SPLINTERMAIL_VERSION_PATCH)),
+        DKEY("version_maj", DI(SM_VER_MAJ)),
+        DKEY("version_min", DI(SM_VER_MIN)),
+        DKEY("version_patch", DI(SM_VER_PAT)),
         DSTATUS_KEYS(ss)
     );
 
