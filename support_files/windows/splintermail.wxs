@@ -124,7 +124,11 @@
         <!--create the folder-->
         <Component Id='splintermail_dir_component'
                    Guid='7e787993-3803-4664-bdab-63bad30e1abc'>
-          <CreateFolder />
+          <!--disallow access to non-administrators-->
+          <CreateFolder>
+            <Permission User="Users" GenericAll="no"/>
+            <Permission User="Administrators" GenericAll="yes"/>
+          </CreateFolder>
         </Component>
       </Directory>
     </StandardDirectory>
