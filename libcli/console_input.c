@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <stdlib.h>
 
 #include "console_input.h"
 #include "libdstr/libdstr.h"
@@ -16,12 +17,12 @@ derr_t get_password(dstr_t* password){
         // https://msdn.microsoft.com/en-us/library/078sfkak.aspx
         // also, this seems to totally fail on UTF-8/Unicode.  Ascii-only :(
         int c = _getch();
-        // IDK why, but you have to call _getch() twice and throw away a zero:
-        // WTF microsoft??
-        _getch();
         // now we need to handle backspaces and newlines
         bool linebreak = false;
         switch(c){
+            case 3: // ctrl+c
+                fprintf(stderr, "interrupted\n");
+                exit(3);
             case '\b':
                 if(i == 0){
                     // underflow should not cause problems here
