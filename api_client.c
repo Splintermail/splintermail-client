@@ -54,7 +54,7 @@ derr_t api_token_read(const char *path, api_token_t *token){
 cu:
     dstr_zeroize(&creds);
     dstr_zeroize(&jmem);
-    api_token_free0(token);
+    if(is_error(e)) api_token_free0(token);
 
     return e;
 }
