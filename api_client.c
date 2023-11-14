@@ -565,13 +565,16 @@ static derr_t apic_body(
 ){
     derr_t e = E_OK;
 
+    /* the windows macro system doesn't like `nonce ? DU(*nonce) : NULL`; it
+       ends up dereferencing nonce no matter what */
+    uint64_t dnonce = nonce ? *nonce : 0;
     jdump_i *obj = DOBJ(
         // path is required
         DKEY("path", DD(path)),
         // arg may be null
         DKEY("arg", arg.len ? DD(arg) : DNULL),
-        // nonce may be missing
-        DKEY("nonce", nonce ? DU(*nonce) : NULL),
+        // nonce may be missing, but don't let windows deference a NULL
+        DKEY("nonce", nonce ? DU(dnonce) : NULL),
     );
 
     // encode as b64 for easy signature verification
