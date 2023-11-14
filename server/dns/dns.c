@@ -274,9 +274,15 @@ size_t handle_packet(
 
     LOG_DEBUG("%x", FPKT(pkt));
 
-    lstr_t rname[5] = {0};
+    /* save one label more than we'll ever read, so that sort_pkt can be aware
+       of junk queries which are only junk because of the extra labels */
+    lstr_t rname[6] = {0};
     size_t cap = sizeof(rname) / sizeof(*rname);
     size_t n = labels_read_reverse(pkt.qstn.ptr, pkt.qstn.off, rname, cap);
+    if(n > cap){
+        // too many labels; but we don't actually care
+        n = cap;
+    }
     respond_f respond = sort_pkt(pkt, rname, n);
 
     void *arg = NULL;

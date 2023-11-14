@@ -133,12 +133,11 @@ typedef struct {
 lstr_t *labels_iter(labels_t *it, const char *ptr, size_t start);
 lstr_t *labels_next(labels_t *it);
 
-void labels_reverse(lstr_t *lstrs, size_t n);
-
 // returns size_t nlabels; nlabels > cap indicates an error
 size_t labels_read(const char *ptr, size_t start, lstr_t *lstrs, size_t cap);
 
-// like lables_read, but reverse name before returning
+/* like labels_read, but return them in reverse, and in particular, keep the
+   final $cap labels rather than the first $cap */
 size_t labels_read_reverse(
     const char *ptr, size_t start, lstr_t *lstrs, size_t cap
 );

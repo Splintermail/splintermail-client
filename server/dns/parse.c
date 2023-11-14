@@ -293,33 +293,44 @@ lstr_t *labels_next(labels_t *it){
     }
 }
 
-void labels_reverse(lstr_t *lstrs, size_t n){
-    // operate on 0 to n/2; if n is odd the middle is untouched
-    size_t end = n/2;
-    for(size_t i = 0; i < end; i++){
-        lstr_t temp = lstrs[i];
-        lstrs[i] = lstrs[n-i-1];
-        lstrs[n-i-1] = temp;
-    }
-}
-
 // returns size_t nlabels; nlabels > cap indicates an error
 size_t labels_read(const char *ptr, size_t start, lstr_t *lstrs, size_t cap){
     labels_t it;
     size_t n = 0;
-    for(lstr_t *l = labels_iter(&it, ptr, start); l; l = labels_next(&it)){
-        if(n == cap) return cap+1;
-        lstrs[n++] = *l;
+    for(lstr_t *l = labels_iter(&it, ptr, start); l; n++, l = labels_next(&it)){
+        if(n < cap) lstrs[n] = *l;
     }
     return n;
 }
 
+/* like labels_read, but return them in reverse, and in particular, keep the
+   final $cap labels rather than the first $cap */
 size_t labels_read_reverse(
     const char *ptr, size_t start, lstr_t *lstrs, size_t cap
 ){
-    size_t n = labels_read(ptr, start, lstrs, cap);
-    labels_reverse(lstrs, n);
-    return n;
+    // Implement the easy solution in two passes: a counting and a saving pass.
+    /* A faster impementation would involve writing to modulo indices follwed
+       by an O(1)-memory memrotate that I don't care to write or debug. */
+    labels_t it;
+
+    size_t total = 0;
+    lstr_t *l = labels_iter(&it, ptr, start);
+    for(; l; l = labels_next(&it)){
+        total++;
+    }
+
+    // we might skip saving the first few
+    size_t skip = total > cap ? total - cap : 0;
+    // and we might bump some labels forward if we can't fill the buffer
+    size_t bump = cap > total ? cap - total : 0;
+
+    l = labels_iter(&it, ptr, start);
+    for(size_t n = 0; l; n++, l = labels_next(&it)){
+        if(n < skip) continue;
+        lstrs[(cap + skip) - 1 - n - bump] = *l;
+    }
+
+    return total;
 }
 
 static size_t parse_qstn(
