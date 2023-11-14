@@ -1,4 +1,17 @@
-splintermail (QW version WQ-1) UNRELEASED; urgency=medium
+splintermail (0.4.0-1) UNRELEASED; urgency=medium
+
+  * Use ACME to obtain TLS certificates.
+  * Expand IMAP support.
+
+ -- QW maintainer.string WQ  Tue, 14 Nov 2023 00:00:00 +0000
+
+splintermail (0.3.0-1) UNRELEASED; urgency=medium
+
+  * Partial IMAP support.
+
+ -- QW maintainer.string WQ  Tue, 1 Oct 2019 00:00:00 +0000
+
+splintermail (0.2.0-1) UNRELEASED; urgency=medium
 
   * Initial release.  Closes: #51234. (not a real number, just for lintian)
 
