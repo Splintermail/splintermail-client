@@ -315,6 +315,10 @@ derr_t duv_pipe_open(uv_pipe_t *pipe, uv_file file){
     UV_CALL(uv_pipe_open, pipe, file);
 }
 
+derr_t duv_pipe_chmod(uv_pipe_t *pipe, int flags){
+    UV_CALL(uv_pipe_chmod, pipe, flags);
+}
+
 derr_t duv_pipe_bind(uv_pipe_t *pipe, const char *name){
     UV_CALL(uv_pipe_bind, pipe, name);
 }

@@ -164,6 +164,7 @@ derr_t duv_udp_send(
 derr_t duv_async_init(uv_loop_t *loop, uv_async_t *async, uv_async_cb cb);
 derr_t duv_pipe_init(uv_loop_t *loop, uv_pipe_t *pipe, int ipc);
 derr_t duv_pipe_open(uv_pipe_t *pipe, uv_file file);
+derr_t duv_pipe_chmod(uv_pipe_t *pipe, int flags);
 derr_t duv_pipe_bind(uv_pipe_t *pipe, const char *name);
 derr_t duv_pipe_bind_path(uv_pipe_t *pipe, string_builder_t sb);
 #ifndef _WIN32
