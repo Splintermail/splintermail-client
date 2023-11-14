@@ -23,7 +23,7 @@
     <key>listen0</key>
     <dict>
       <key>SockNodeName</key>
-      <string>127.0.0.1<string>
+      <string>127.0.0.1</string>
       <key>SockServiceName</key>
       <integer>143</integer>
       <key>SockFamily</key>
