@@ -1294,7 +1294,7 @@ static derr_t test_am_advance_state(void){
     PROP_GO(&e, g_keygen_done(&g, E_NONE, k1), cu);
 
     time_t expiry = g.now + 90*DAY;
-    time_t renewal = g.now + 75*DAY;
+    time_t renewal = g.now + 60*DAY;
     PROP_GO(&e, mkcert(k1, dstr_from_cstr(fulldomain), expiry, &c1), cu);
     EXPECT_UPDATE(&g, true);
     EXPECT_DEADLINE_CERT(&g, renewal);
@@ -1362,7 +1362,7 @@ static derr_t test_acme_manager_init(void){
     derr_t e = E_OK;
 
     time_t expiry = 90*DAY;
-    time_t renewal = 75*DAY;
+    time_t renewal = 60*DAY;
     DSTR_VAR(mycert, 4096);
     DSTR_VAR(notmycert, 4096);
     PROP(&e, mkcert(k1, dstr_from_cstr(fulldomain), expiry, &mycert) );
@@ -1673,7 +1673,7 @@ static derr_t test_advance_new_cert(void){
     time_t expiry = g.now + 90*DAY;
     PROP_GO(&e, mkcert(k1, dstr_from_cstr(fulldomain), expiry, &c1), cu);
     EXPECT_UPDATE(&g, true);
-    EXPECT_DEADLINE_CERT(&g, g.now + 75*DAY);
+    EXPECT_DEADLINE_CERT(&g, g.now + 60*DAY);
     EXPECT_UNPREPARE(&g);
     EXPECT_STATUS(&g, TLS_GOOD, NONE, fulldomain);
     PROP_GO(&e, g_finalize_done(&g, E_NONE, c1), cu);
@@ -1790,7 +1790,7 @@ static derr_t test_retries(void){
 
     // test unprepare has independent timeout
     time_t expiry = 90*DAY;
-    time_t renewal = 75*DAY;
+    time_t renewal = 60*DAY;
     DSTR_VAR(mycert, 4096);
     PROP(&e, mkcert(k1, dstr_from_cstr(fulldomain), expiry, &mycert) );
     PROP_GO(&e, dstr_write_path2(dstr_from_cstr(k1), key), cu);
@@ -1850,7 +1850,7 @@ static derr_t test_retries(void){
     DSTR_VAR(c1, 4096);
     PROP_GO(&e, mkcert(k1, dstr_from_cstr(fulldomain), g.now + 90*DAY, &c1), cu);
     EXPECT_UPDATE(&g, true);
-    EXPECT_DEADLINE_CERT(&g, g.now + 75*DAY);
+    EXPECT_DEADLINE_CERT(&g, g.now + 60*DAY);
     EXPECT_UNPREPARE(&g);  // this is the key!
     EXPECT_STATUS(&g, TLS_GOOD, NONE, fulldomain);
     PROP_GO(&e, g_finalize_done(&g, E_NONE, c1), cu);

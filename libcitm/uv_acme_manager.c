@@ -23,34 +23,42 @@ static void uvam_timer_cb(uv_timer_t *timer){
     am_advance_state(&uvam->am);
 }
 
-static time_t uvam_now(acme_manager_i *iface){
-    uv_acme_manager_t *uvam = CONTAINER_OF(iface, uv_acme_manager_t, iface);
-    uint64_t now_ms = uv_now(uvam->loop);
-    return (time_t)(now_ms / 1000);
+static time_t must_now(void){
+    time_t out;
+    derr_t e = dtime(&out);
+    CATCH_ANY(&e){
+        DUMP(e);
+        LOG_FATAL("unable to read clock!\n");
+    }
+    return MAX(out, 0);
 }
 
-static void do_deadline(
-    uv_acme_manager_t *uvam, time_t deadline, uv_timer_t *timer
-){
-    uint64_t now_ms = uv_now(uvam->loop);
-    uint64_t deadline_ms = (uint64_t)(deadline * 1000);
+static time_t uvam_now(acme_manager_i *iface){
+    (void)iface;
+    return must_now();
+}
+
+static void do_deadline(time_t deadline, uv_timer_t *timer){
+    time_t now = must_now();
+    uint64_t now_ms = (uint64_t)(now) * 1000;
+    uint64_t deadline_ms = (uint64_t)(deadline) * 1000;
     uint64_t delay_ms = now_ms > deadline_ms ? 0 : deadline_ms - now_ms;
     duv_timer_must_start(timer, uvam_timer_cb, delay_ms);
 }
 
 static void uvam_deadline_cert(acme_manager_i *iface, time_t deadline){
     uv_acme_manager_t *uvam = CONTAINER_OF(iface, uv_acme_manager_t, iface);
-    do_deadline(uvam, deadline, &uvam->timer_cert);
+    do_deadline(deadline, &uvam->timer_cert);
 }
 
 static void uvam_deadline_backoff(acme_manager_i *iface, time_t deadline){
     uv_acme_manager_t *uvam = CONTAINER_OF(iface, uv_acme_manager_t, iface);
-    do_deadline(uvam, deadline, &uvam->timer_backoff);
+    do_deadline(deadline, &uvam->timer_backoff);
 }
 
 static void uvam_deadline_unprepare(acme_manager_i *iface, time_t deadline){
     uv_acme_manager_t *uvam = CONTAINER_OF(iface, uv_acme_manager_t, iface);
-    do_deadline(uvam, deadline, &uvam->timer_unprepare);
+    do_deadline(deadline, &uvam->timer_unprepare);
 }
 
 static void uvam_prepare_cb(void *data, derr_t err, json_t *json){

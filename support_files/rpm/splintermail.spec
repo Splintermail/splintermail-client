@@ -88,7 +88,9 @@ fi
 exit 0
 
 %changelog
-* Sat Nov 11 2023 Splintermail Dev <dev@splintermail.com> - 0.4.0-1
+* Sat Feb 3 2024 Splintermail Dev <dev@splintermail.com> - 0.4.1-1
+  - Fix ACME timer to properly renew letsencrypt certs.
+* Tue Nov 14 2023 Splintermail Dev <dev@splintermail.com> - 0.4.0-1
   - Use ACME to obtain TLS certificates.
   - Expand IMAP support.
 * Tue Oct 1 2019 Splintermail Dev <dev@splintermail.com> - 0.3.0-1

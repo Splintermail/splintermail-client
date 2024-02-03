@@ -1,3 +1,9 @@
+splintermail (0.4.1-1) UNRELEASED; urgency=medium
+
+  * Fix ACME timer to properly renew letsencrypt certs.
+
+ -- QW maintainer.string WQ  Sat, 3 Feb 2024 00:00:00 +0000
+
 splintermail (0.4.0-1) UNRELEASED; urgency=medium
 
   * Use ACME to obtain TLS certificates.

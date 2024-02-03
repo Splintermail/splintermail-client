@@ -313,8 +313,12 @@ static derr_t check_expiry(string_builder_t path, time_t *expiry){
 }
 
 static time_t get_renewal(time_t expiry){
-    if(expiry < 15*DAY) return 0;
-    return expiry - 15*DAY;
+    /* letsencrypt emits 90-day certificates and recommends renewing 30 days
+       before expiration.  They sent notices out around 20 days before
+       expiration, so if we don't comply with their recommendations, our users
+       will receive scary warnings for no good reason. */
+    if(expiry < 30*DAY) return 0;
+    return expiry - 30*DAY;
 }
 
 static void backoff(acme_manager_t *am, time_t delay){
