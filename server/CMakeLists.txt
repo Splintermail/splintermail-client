@@ -11,7 +11,6 @@ foreach(lib ${libs})
 endforeach()
 
 sm_exe(smsql.c DEPS libsmsql)
-sm_exe(olt.c DEPS dstr)
 sm_exe(badbadbad.c DEPS badbadbad_alert dstr)
 sm_exe(migmysql.c DEPS dstr mysql_util)
 sm_exe(gc_sessions.c DEPS libsmsql badbadbad_alert)

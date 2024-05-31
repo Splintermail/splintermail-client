@@ -65,23 +65,25 @@ if("${DISABLE_ASAN}" STREQUAL "")
 endif()
 
 # include OpenSSL
-if("${BUILD_STATIC}")
-    set(OPENSSL_USE_STATIC_LIBS TRUE)
-endif()
-if(NOT "${OPENSSL_ROOT_DIR}" STREQUAL "")
-    # prepare to validate that find_package respected OPENSSL_ROOT_DIR
-    # otherwise sometimes random builds laying around will get picked up
-    get_filename_component(requested_ssl "${OPENSSL_ROOT_DIR}" ABSOLUTE)
-endif()
-find_package(OpenSSL REQUIRED)
-if(NOT "${requested_ssl}" STREQUAL "")
-    get_filename_component(chosen_ssl "${OPENSSL_INCLUDE_DIR}" ABSOLUTE)
-    string(FIND "${chosen_ssl}" "${requested_ssl}" relpath_idx)
-    if(NOT "${relpath_idx}" EQUAL "0")
-        message("for source file: ${final_sourcefile}")
-        message("chosen OPENSSL_ROOT is: ${chosen_ssl}")
-        message("requested OPENSSL_ROOT is: ${requested_ssl}")
-        message(WARNING "find_package did not respect OPENSSL_ROOT_DIR")
+if(NOT SM_TOOLS_ONLY)
+    if("${BUILD_STATIC}")
+        set(OPENSSL_USE_STATIC_LIBS TRUE)
+    endif()
+    if(NOT "${OPENSSL_ROOT_DIR}" STREQUAL "")
+        # prepare to validate that find_package respected OPENSSL_ROOT_DIR
+        # otherwise sometimes random builds laying around will get picked up
+        get_filename_component(requested_ssl "${OPENSSL_ROOT_DIR}" ABSOLUTE)
+    endif()
+    find_package(OpenSSL REQUIRED)
+    if(NOT "${requested_ssl}" STREQUAL "")
+        get_filename_component(chosen_ssl "${OPENSSL_INCLUDE_DIR}" ABSOLUTE)
+        string(FIND "${chosen_ssl}" "${requested_ssl}" relpath_idx)
+        if(NOT "${relpath_idx}" EQUAL "0")
+            message("for source file: ${final_sourcefile}")
+            message("chosen OPENSSL_ROOT is: ${chosen_ssl}")
+            message("requested OPENSSL_ROOT is: ${requested_ssl}")
+            message(WARNING "find_package did not respect OPENSSL_ROOT_DIR")
+        endif()
     endif()
 endif()
 
@@ -499,24 +501,27 @@ qwwq(
 )
 
 add_subdirectory(libdstr)
-add_subdirectory(libduv)
-add_subdirectory(libcrypto)
-add_subdirectory(libduvtls)
-add_subdirectory(libweb)
-add_subdirectory(libhttp)
-add_subdirectory(libacme)
-add_subdirectory(libimap)
-add_subdirectory(libimaildir)
-add_subdirectory(libcitm)
+if(NOT SM_TOOLS_ONLY)
+    add_subdirectory(libduv)
+    add_subdirectory(libcrypto)
+    add_subdirectory(libduvtls)
+    add_subdirectory(libweb)
+    add_subdirectory(libhttp)
+    add_subdirectory(libacme)
+    add_subdirectory(libimap)
+    add_subdirectory(libimaildir)
+    add_subdirectory(libcitm)
 
-sm_lib(api_client.c DEPS crypto http)
+    sm_lib(api_client.c DEPS crypto http)
 
-add_subdirectory(libcli)
+    add_subdirectory(libcli)
 
-sm_exe(encrypt_msg.c DEPS crypto)
-sm_exe(decrypt_msg.c DEPS crypto)
-sm_exe(inject_local_msg.c DEPS imaildir crypto TEST)
-sm_exe(splintermail.c DEPS cli)
+    sm_exe(encrypt_msg.c DEPS crypto)
+    sm_exe(decrypt_msg.c DEPS crypto)
+    sm_exe(inject_local_msg.c DEPS imaildir crypto TEST)
+    sm_exe(splintermail.c DEPS cli)
+endif()
+
 
 # decide if we are building server code
 if(BUILD_SERVER_CODE)
@@ -549,7 +554,9 @@ endif()
 #### SOURCE INSTALL
 ###############################################################################
 
-install(TARGETS splintermail DESTINATION bin)
+if(NOT SM_TOOLS_ONLY)
+    install(TARGETS splintermail DESTINATION bin)
+endif()
 
 ###############################################################################
 #### BINARY INSTALLERS

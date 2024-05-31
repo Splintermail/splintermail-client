@@ -73,3 +73,8 @@ add_subdirectory(qwwq)
 set(qwconf "${qwconf}" PARENT_SCOPE)
 set(qwbin "${qwbin}" PARENT_SCOPE)
 set(qw_os "${qw_os}" PARENT_SCOPE)
+
+# overlay tool is linux-only
+if(UNIX AND NOT APPLE)
+    sm_exe(olt.c DEPS dstr)
+endif()
