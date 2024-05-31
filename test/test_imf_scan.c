@@ -212,8 +212,11 @@ static derr_t test_overrun(void){
     }; \
     memcpy(d_##var.data, cstr, strlen(cstr))
 
-    DSTR_STUB(text1, "", done);
-    DSTR_STUB(text2, "\r", cu_text1);
+    // gcc doesn't want to compile this anymore:
+    // DSTR_STUB(text1, "", done);
+    dstr_t d_text1 = { NULL, 0, 0, true };
+
+    DSTR_STUB(text2, "\r", done);
     DSTR_STUB(text3, "\n", cu_text2);
     DSTR_STUB(text4, "\r\n", cu_text3);
 
@@ -245,8 +248,6 @@ cu_text3:
     free(text3);
 cu_text2:
     free(text2);
-cu_text1:
-    free(text1);
 done:
     return e;
 }
