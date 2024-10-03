@@ -101,7 +101,8 @@ Where "{a=0,b=1}" is the compile-time-defined keymap object.
 
 When an expression inside a lazy object is discovered by the compiler to be a
 reference to non-global parameter from outside the scope of the lazy, that lazy
-object instruction and its arg get overwritten with noops:
+object instruction and its arg get overwritten with noops.  The effect is that
+dicts containing bound variables do not get the lazy optimization:
 
 Example code:
 
@@ -146,11 +147,11 @@ so your dereference is not interpreted as a plain string literal:
 
 Example code:
 
-    func(a b c=d e=f -> z^[a b d f])
+    func(a b c=m d=n -> z^[a b c d])
 
 Example instructions:
 
-    <d> <f> func.ID.2.2.N.M a b c d <z^[a b d f]> binds...
+    <d> <f> func.ID.2.2.N.M a b c d <z^[a b c d]> binds...
 
 Where:
 - `<...>` means "instructions corresponding to `...`"
@@ -169,15 +170,15 @@ instruction is executed (which is before the function is called).
 
 Example code:
 
-     myfunc(x, b=y, e=z)
+     myfunc(x, b=y, c=z)
 
 Example instructions:
 
-    <myfunc> <x> <y> <z> call.1.2 b e
+    <myfunc> <x> <y> <z> call.1.2 b c
 
 Where:
-- `.2.1` means "one arg, two kwargs"
-- and `b e` are the kwarg names, known at compile time
+- `.1.2` means "one arg, two kwargs"
+- and `b c` are the kwarg names, known at compile time
 
 ## If expressions
 
@@ -267,15 +268,6 @@ tool interprets `path` according to its own current working directory.
 
 Returns a boolean if `path` exists.  The `qwwq` command-line tool interprets
 `path` according to its own current working directory.
-
-    // dict methods
-    void qw_method_get(qw_env_t env, qw_dict_t *dict);
-
-    // global builtins
-    extern qw_func_t qw_builtin_table;
-    extern qw_func_t qw_builtin_relpath;
-    extern qw_func_t qw_builtin_cat;
-    extern qw_func_t qw_builtin_exists;
 
 ### `load(name)`
 
