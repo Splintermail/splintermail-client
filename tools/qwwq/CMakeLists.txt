@@ -98,7 +98,7 @@ function(qwwq input output)
         COMMAND ${CMAKE_COMMAND} -E make_directory "${output_dir}"
         COMMAND ${qwbin} ${qwconf} -i ${input} -o ${output} ${mode} os=${qw_os}
         DEPENDS qwwq ${qwconf} ${input} ${QWWQ_DEPS}
-        COMMENT prepocessing ${input} VERBATIM
+        COMMENT "prepocessing ${input}" VERBATIM
     )
     if(QWWQ_TARGET)
         add_custom_target("${QWWQ_TARGET}" DEPENDS "${output}")
