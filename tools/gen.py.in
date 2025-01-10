@@ -16,10 +16,8 @@ gen.py is in beta, and may not be completely stable.
 
 TODO:
  - Python:
-   - honor prematched to avoid certain duplicate token checks
    - reject roots which don't have a concrete ending token; the user api
      doesn't support it
-   - support expr!(args)
    - support the TokenCheckOptimizer
 
  - C:
@@ -41,7 +39,7 @@ TODO:
      sequence, because the sequence's .first might be defined without the
      context of the other sequences in the parent Branch structure.
    - Check fallback as part of the initial first/first, first/follow conflict
-     detection.  This would allow lfting the single-parent requirement
+     detection.  This would allow lifting the single-parent requirement
      in place for %fallback, because instead of relying on a separate fallback
      expansion check, we could rely on the normal detection checks.
 
@@ -3687,10 +3685,15 @@ class Python:
             if isinstance(obj.defn, Token):
                 tokens = {obj.defn.name}.union(self.fallbacks[obj.defn.name])
                 token_list = self.token_list(tokens)
-                self.fprint(i + "# " + obj.summary())
+                if obj.prematched:
+                    self.fprint(i + "# prematched: " + obj.summary())
+                else:
+                    self.fprint(i + "# " + obj.summary())
+                # always consume a token, regardless of prematch
                 self.fprint(i + "val = (yield from next(tokens))")
-                self.fprint(i + "if val.type not in %s:"%token_list)
-                self.syntax_error("val.loc", i + "    ")
+                if not obj.prematched:
+                    self.fprint(i + "if val.type not in %s:"%token_list)
+                    self.syntax_error("val.loc", i + "    ")
                 if self.span_fn:
                     self.fprint(i + "out.loc = $span_fn(out.loc, val.loc)")
                 if obj.tag:
@@ -3699,8 +3702,11 @@ class Python:
 
             if isinstance(obj.defn, Expression):
                 self.fprint(i + "# " + obj.summary())
+                args = "tokens${_u}"
+                if obj.args:
+                    args += (", yy_%s"%a.argname for a in obj.args)
                 self.fprint(
-                    i + "val = (yield from _${prefix_}parse_$name(tokens${_u}))"
+                    i + "val = (yield from _${prefix_}parse_$name(%s))"%args
                 )
                 if self.span_fn:
                     self.fprint(i + "out.loc = $span_fn(out.loc, val.loc)")
@@ -3712,11 +3718,15 @@ class Python:
 
         if isinstance(obj, Repeat):
             if obj.type == "maybe":
-                self.fprint(i + "# " + obj.summary())
-                t = obj.first
-                f = self.fallbacks.all_fallbacks(t)
-                self.if_token_in(t, f, i)
-                self.gen(obj.seq, i+"    ")
+                if obj.prematched:
+                    self.fprint(i + "# prematched: " + obj.summary())
+                    self.gen(obj.seq, i)
+                else:
+                    self.fprint(i + "# " + obj.summary())
+                    t = obj.first
+                    f = self.fallbacks.all_fallbacks(t)
+                    self.if_token_in(t, f, i)
+                    self.gen(obj.seq, i+"    ")
                 return
 
             if obj.type == "zero_or_more":
@@ -3747,6 +3757,7 @@ class Python:
             return
 
         if isinstance(obj, Branches):
+            # note: no code difference when obj.prematched == True
             self.fprint(i + "# " + obj.summary())
             exclude = obj.first
             for n, seq in enumerate(obj.branches):
