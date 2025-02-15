@@ -23,10 +23,9 @@ static void plugin_close(HMODULE handle){
     FreeLibrary(handle);
 }
 static void *plugin_lookup(HMODULE handle, char *name){
-    // return (void*)GetProcAddress(handle, name);
     void *out = (void*)GetProcAddress(handle, name);
     if(!out){
-        PFMT("lookup failed: %x(): %x\n", FS(name), FWINERR);
+        LOG_DEBUG("lookup failed: %x(): %x\n", FS(name), FWINERR);
     }
     return out;
 }
@@ -42,8 +41,6 @@ static void *plugin_lookup(void *handle, char *name){
     return dlsym(handle, name);
 }
 #endif
-
-
 
 static void qw_plugin_free(qw_plugin_t *p){
     qw_plugin_free_f fn;
@@ -154,7 +151,7 @@ static bool qw_plugin_find(
             qw_error(env.engine, "stat(%x): %x", FD(*buf), FE(errno));
         }
         // found the library
-        PFMT("loaded %x\n", FD(*buf));
+        LOG_DEBUG("loaded %x\n", FD(*buf));
         return true;
     }
     return false;

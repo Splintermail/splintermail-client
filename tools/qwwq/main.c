@@ -26,6 +26,7 @@ static void print_help(void){
         "      --stack     Parser stack size.  Default: 4096\n"
         "  -p, --plugins   Specify a plugin search path.  May be provided\n"
         "                  multiple times.  Default: none.\n"
+        "  -d, --debug     Enable debug-level logs.\n"
         "\n"
         "CONFIG must be a qwwq-code file.\n"
         "\n"
@@ -62,6 +63,7 @@ int main(int argc, char **argv){
     opt_spec_t o_bound = {'b',  "boundary", true };
     opt_spec_t o_stack = {'\0', "stack",    true };
     opt_spec_t o_plug  = {'p',  "plugins",  true, path_cb, &paths};
+    opt_spec_t o_debug = {'\0', "debug",    false};
 
     opt_spec_t* spec[] = {
         &o_help,
@@ -74,6 +76,7 @@ int main(int argc, char **argv){
         &o_bound,
         &o_stack,
         &o_plug,
+        &o_debug,
     };
     size_t speclen = sizeof(spec) / sizeof(*spec);
     int newargc;
@@ -102,6 +105,11 @@ int main(int argc, char **argv){
     if(o_stack.found && !o_out.found){
         fprintf(stderr, "--stamp requires --output\n");
         return 1;
+    }
+
+    // handle --debug
+    if(o_debug.found){
+        DROP_CMD(logger_add_fileptr(LOG_LVL_DEBUG, stderr));
     }
 
     char *confpath = argv[1];
