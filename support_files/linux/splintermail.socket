@@ -1,9 +1,10 @@
+[Unit]
+PartOf=splintermail.service
+
 [Socket]
 ListenStream=/run/splintermail.sock
 ListenStream=127.0.0.1:143
 ListenStream=[::1]:143
 ListenStream=127.0.0.1:993
 ListenStream=[::1]:993
-
-[Install]
-WantedBy=sockets.target
+SocketMode=0666

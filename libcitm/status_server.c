@@ -529,6 +529,8 @@ derr_t status_server_init(
 
 #ifdef _WIN32
     PROP_GO(&e, duv_pipe_bind_path(&ss->pipe, sockpath), fail);
+    // any user should have read/write access to our pipe
+    PROP_GO(&e, duv_pipe_chmod(&ss->pipe, UV_WRITABLE | UV_READABLE), fail);
 #else
     // unix: inherit a socket or create our own
     if(sockfd && *sockfd > -1){
@@ -547,11 +549,12 @@ derr_t status_server_init(
                 &ss->pipe, sockpath, SBD(lock), &ss->lockfd
             ),
         fail);
+        // any user should have read/write access to our pipe
+        PROP_GO(&e,
+            duv_pipe_chmod(&ss->pipe, UV_WRITABLE | UV_READABLE),
+        fail);
     }
 #endif
-
-    // any user should have read/write access to our pipe
-    PROP_GO(&e, duv_pipe_chmod(&ss->pipe, UV_WRITABLE | UV_READABLE), fail);
 
     PROP_GO(&e, duv_pipe_listen(&ss->pipe, 5, on_listener), fail);
 

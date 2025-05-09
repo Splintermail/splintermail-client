@@ -1,7 +1,7 @@
 [Unit]
 Description=splintermail CITM server.
 After=network.target
-Wants=splintermail.socket
+Requires=splintermail.socket
 
 [Service]
 Type=notify

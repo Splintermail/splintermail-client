@@ -45,7 +45,7 @@ DESTDIR="%{buildroot}" cmake --build "QW build_dir WQ" --target install
 # To test the enabled behavior, you can:
 #
 #     mkdir -p /etc/systemd/system-preset
-#     echo enable splintermail.socket > \
+#     echo enable splintermail.service > \
 #         /etc/systemd/system-preset/01-splintermail.preset
 #
 # As far as I can tell, even then this will only enable the socket, not
@@ -54,7 +54,7 @@ DESTDIR="%{buildroot}" cmake --build "QW build_dir WQ" --target install
 # See also:
 #   - www.freedesktop.org/software/systemd/man/latest/systemd.preset.html
 #   - docs.fedoraproject.org/en-US/packaging-guidelines/Scriptlets
-%systemd_post splintermail.socket
+%systemd_post splintermail.service
 
 # create service user
 getent group splintermail >/dev/null || groupadd -r splintermail
@@ -73,13 +73,11 @@ exit 0
 %preun
 # upgrade if $1==1, uninstall if $1==0
 # this stops/disables the service on package removal
-%systemd_preun splintermail.socket
 %systemd_preun splintermail.service
 
 %postun
 # upgrade if $1=1, uninstall if $1==0
 # this restarts the service if it is running
-%systemd_postun_with_restart splintermail.socket
 %systemd_postun_with_restart splintermail.service
 if [ "$1" == 0 ] ; then
     # remove the splintermail directory

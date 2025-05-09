@@ -288,6 +288,7 @@ class UnixTestSuite(TestSuite):
     def __init__(self):
         self.sm_dir = '/var/lib/splintermail'
         self.config_file = '/etc/splintermail.conf'
+        self.status_socket = '/run/splintermail.sock'
         super().__init__()
 
     def assert_owner(self, f, uid):
@@ -308,22 +309,31 @@ class UnixTestSuite(TestSuite):
         # check the ownership of the splintermail citm command instead
         # cmd = ('lsof', '-i', 'TCP:143', '-F', 'cu')
 
-        # previously, we expected the service to be already started, but now
-        # that we support on-demain daemons, we allow a short retry window
-        TRIES = 3
-        for i in range(TRIES):
-            try:
-                sleep(i)
-                cmd = ('ps', 'U', self.service_username, '-o', 'pid,command')
-                p = Popen(cmd, stdout=PIPE)
-                out = p.stdout.read()
-                ret = p.wait()
-                assert ret == 0, "ps exited %d"%ret
-                assert b"splintermail citm" in out, out
-            except:
-                if i + 1 == TRIES:
-                    raise
+        # since we support on-demand daemons, we need to connect first
+        with socket() as s:
+            s.settimeout(1)
+            s.connect(('localhost', 143))
+            # Read the initial `BYE needs configuring` message to ensure
+            # citm process is actually running
+            _ = s.recv(4096)
 
+        cmd = ('ps', 'U', self.service_username, '-o', 'pid,command')
+        p = Popen(cmd, stdout=PIPE)
+        out = p.stdout.read()
+        ret = p.wait()
+        assert ret == 0, "ps exited %d"%ret
+        assert b"splintermail citm" in out, out
+
+        cmd = ('ps', 'U', self.service_username, '-o', 'pid,command')
+        p = Popen(cmd, stdout=PIPE)
+        out = p.stdout.read()
+        ret = p.wait()
+        assert ret == 0, "ps exited %d"%ret
+        assert b"splintermail citm" in out, out
+
+        # also check for world read/write on the socket
+        mode = os.stat(self.status_socket).st_mode
+        assert (mode & 0o666) == 0o666, mode
 
 
 class BSDTestSuite(UnixTestSuite):
@@ -342,6 +352,7 @@ class OSXTestSuite(BSDTestSuite):
         if "/usr/local/bin" not in os.environ["PATH"]:
             os.environ["PATH"] = os.environ["PATH"] + ":/usr/local/bin"
         super().__init__()
+        self.status_socket = '/var/run/splintermail.sock'
 
     def get_user_uid(self, username):
         cmd = ('dscl', '.', 'list', '/Users', 'UniqueID')
