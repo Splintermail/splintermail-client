@@ -2996,12 +2996,15 @@ def test_acme(cmd, maildir_root, remote):
         json.dump(resp["contents"], f)
 
     # fetch the root certificate from pebble; it's regenerated each run
-    ctx = ssl.create_default_context()
+    pctx = ssl.create_default_context()
     # trust the PEBBLE_CA so https succeeds
-    ctx.load_verify_locations(cadata=PEBBLE_CA)
+    pctx.load_verify_locations(cadata=PEBBLE_CA)
+    # disable strict x509 verification; something about an
+    # "Authority Key Identifier" that isn't right with this pebble cert.
+    pctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
     req = urllib.request.Request(f"https://{host}:15000/roots/0")
     # override hostname verification in this one request
-    xctx = override_server_hostname(ctx, "pebble")
+    xctx = override_server_hostname(pctx, "pebble")
     with urllib.request.urlopen(req, context=xctx) as f:
         root = f.read().decode('utf8')
     # trust the CA pebble generated, so imaps works
