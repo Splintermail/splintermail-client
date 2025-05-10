@@ -364,9 +364,8 @@ static void citm_preuser_cb(
 
 fail:
     DUMP(e);
-    DROP_VAR(&e);
-
 free:
+    DROP_VAR(&e);
     citm_close_server_list(citm, servers);
     citm_close_client_list(citm, clients);
     kd->free(kd);
@@ -499,8 +498,8 @@ static void citm_io_pair_cb(
 
 fail:
     DUMP(e);
-    DROP_VAR(&e);
 free:
+    DROP_VAR(&e);
     citm_close_conn(citm, conn_dn);
     citm_close_conn(citm, conn_up);
     citm_close_server(citm, s);
