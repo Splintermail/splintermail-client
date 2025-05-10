@@ -92,7 +92,12 @@ derr_t udp_send(
     // private fields, used for convenience since this is just a test
     req->cb = cb;
     req->bufsml[0].len = bufs[0].len;
-    PROP(&e, addr_copy(dst, &req->addr) );
+    /* require that the address was correctly stored on the membuf before
+       upd_send(), since the udp_send_t doesn't expose the internally stored
+       one */
+    if(!addr_eq(dst, ss2sa(&membuf->ss))){
+        ORIG(&e, E_VALUE, "dst was not stored to membuf before udp_send()\n");
+    }
 
     link_list_append(&sends, &membuf->link);
 
@@ -109,12 +114,12 @@ typedef struct {
 static derr_t peek_sentmsg(sentmsg_t *s){
     derr_t e = E_OK;
 
-    if(link_list_isempty(&sends)) ORIG(&e, E_VALUE, "no more sends");
+    if(link_list_isempty(&sends)) ORIG(&e, E_VALUE, "no more sends\n");
     link_t *link = sends.next;
 
     s->membuf = CONTAINER_OF(link, membuf_t, link);
     DSTR_WRAP(s->buf, s->membuf->resp, s->membuf->req.bufsml[0].len, false);
-    s->dst = &s->membuf->req.addr;
+    s->dst = &s->membuf->ss;
     s->udp = s->membuf->req.handle;
 
     return e;

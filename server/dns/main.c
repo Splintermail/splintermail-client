@@ -119,13 +119,13 @@ static void on_send(uv_udp_send_t *req, int status){
        destination to uv_udp_send(), we can treat this error in the wireguard
        layer as if it were silently dropped by the network. */
     if(status == UV_EDESTADDRREQ){
-        LOG_ERROR("EDESTADDRREQ: dst=%x\n", FNTOPS(&req->addr));
+        LOG_ERROR("EDESTADDRREQ: dst=%x\n", FNTOPS(&membuf->ss));
         return;
     }
 
     // similarly, don't crash the service if one wg endpoint is misconfigured
     if(status == -ENOKEY){
-        LOG_ERROR("ENOKEY: dst=%x\n", FNTOPS(&req->addr));
+        LOG_ERROR("ENOKEY: dst=%x\n", FNTOPS(&membuf->ss));
         return;
     }
 
@@ -187,9 +187,8 @@ static derr_t on_recv_dns(
     }
 
     uv_buf_t uvbuf = { .base = membuf->resp, .len = rlen };
-    PROP(&e,
-        udp_send(&membuf->req, &g->dns_udp, &uvbuf, 1, src, on_send)
-    );
+    PROP(&e, addr_copy(src, &membuf->ss) );
+    PROP(&e, udp_send(&membuf->req, &g->dns_udp, &uvbuf, 1, src, on_send) );
 
     // if we launched the write successfully, the udp_send owns membuf
     *membufp = NULL;
@@ -237,6 +236,7 @@ peer_found:
     NOFAIL(&e, E_FIXEDSIZE, kvpsync_ack_write(&ack, &wbuf));
 
     uv_buf_t uvbuf = { .base = wbuf.data, .len = wbuf.len };
+    PROP(&e, addr_copy(src, &(*membuf)->ss) );
     PROP(&e,
         udp_send(&(*membuf)->req, &g->sync_udp, &uvbuf, 1, src, on_send)
     );
@@ -428,6 +428,7 @@ static void send_initial_resyncs(uv_timer_t *timer){
 
         uv_buf_t uvbuf = { .base = membuf->resp, .len = wbuf.len };
         struct sockaddr *dst = (struct sockaddr*)&g->peers[i];
+        PROP_GO(&e, addr_copy(dst, &membuf->ss), fail);
         PROP_GO(&e,
             udp_send(&membuf->req, &g->sync_udp, &uvbuf, 1, dst, on_send),
         fail);

@@ -422,11 +422,11 @@ static void uv_sender_send_cb(uv_udp_send_t *req, int status){
         /* detect wireguard-specific failures, and log them; don't bring down
            the whole service if one endpoint is misconfigured or offline */
         if(status == UV_EDESTADDRREQ){
-            LOG_ERROR("EDESTADDRREQ: dst=%x\n", FNTOPS(&req->addr));
+            LOG_ERROR("EDESTADDRREQ: dst=%x\n", FNTOP(sender->addr));
             return;
         }
         if(status == -ENOKEY){
-            LOG_ERROR("ENOKEY: dst=%x\n", FNTOPS(&req->addr));
+            LOG_ERROR("ENOKEY: dst=%x\n", FNTOP(sender->addr));
             return;
         }
         ORIG_GO(&e,

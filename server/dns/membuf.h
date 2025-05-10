@@ -9,6 +9,8 @@ typedef struct {
     // structs for sending the response
     uv_udp_send_t req;
     uv_buf_t uvbuf;
+    // since uv_udp_t's addr field is private...
+    struct sockaddr_storage ss;
 } membuf_t;
 DEF_CONTAINER_OF(membuf_t, base, char)
 DEF_CONTAINER_OF(membuf_t, link, link_t)
