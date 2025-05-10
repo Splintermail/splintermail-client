@@ -1,10 +1,10 @@
 if(NOT WIN32)
-    cmake_minimum_required(VERSION 3.1.0...3.27.4)
+    cmake_minimum_required(VERSION 3.1.0...4.0.1)
 else()
     # Windows + cmake pukes if you can't use target_link_options (3.13.0), and
     # also CMP0091 is really nice (3.15.0).  Plus windows users would have to
     # install CMake manually, so there's no old package managers to support.
-    cmake_minimum_required(VERSION 3.15.0...3.27.4)
+    cmake_minimum_required(VERSION 3.15.0...4.0.1)
 
     # statically link against Visual C++ library
     # (because vc_redist distributing is insanity, and this "just works")
