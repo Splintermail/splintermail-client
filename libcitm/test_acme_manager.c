@@ -84,7 +84,9 @@ static char *order_stale =
     "}";
 
 // returns a cert which is loadable, but otherwise totally bogus
-static derr_t mkcert(char *key, dstr_t domain, time_t expiry, dstr_t *out){
+static derr_t mkcert(
+    char *key, dstr_t domain, time_t issue, time_t expiry, dstr_t *out
+){
     derr_t e = E_OK;
 
     EVP_PKEY *pkey = NULL;
@@ -102,8 +104,8 @@ static derr_t mkcert(char *key, dstr_t domain, time_t expiry, dstr_t *out){
     int ret = X509_set_version(cert, 0);
     if(ret != 1) ORIG_GO(&e, E_SSL, "X509_set_version: %x\n", cu, FSSL);
 
-    // set begin time to Jan 1, 1970
-    asn1time = ASN1_TIME_set(NULL, 0);
+    // set issue time
+    asn1time = ASN1_TIME_set(NULL, issue);
     if(!asn1time) ORIG_GO(&e, E_NOMEM, "nomem", cu);
     ret = X509_set1_notBefore(cert, asn1time);
     if(ret != 1) ORIG_GO(&e, E_SSL, "X509_set1_notBefore: %x\n", cu, FSSL);
@@ -1295,7 +1297,9 @@ static derr_t test_am_advance_state(void){
 
     time_t expiry = g.now + 90*DAY;
     time_t renewal = g.now + 60*DAY;
-    PROP_GO(&e, mkcert(k1, dstr_from_cstr(fulldomain), expiry, &c1), cu);
+    PROP_GO(&e,
+        mkcert(k1, dstr_from_cstr(fulldomain), g.now, expiry, &c1),
+    cu);
     EXPECT_UPDATE(&g, true);
     EXPECT_DEADLINE_CERT(&g, renewal);
     EXPECT_UNPREPARE(&g);
@@ -1365,8 +1369,8 @@ static derr_t test_acme_manager_init(void){
     time_t renewal = 60*DAY;
     DSTR_VAR(mycert, 4096);
     DSTR_VAR(notmycert, 4096);
-    PROP(&e, mkcert(k1, dstr_from_cstr(fulldomain), expiry, &mycert) );
-    PROP(&e, mkcert(k1, DSTR_LIT("wrong"), expiry, &notmycert) );
+    PROP(&e, mkcert(k1, dstr_from_cstr(fulldomain), 0, expiry, &mycert) );
+    PROP(&e, mkcert(k1, DSTR_LIT("wrong"), 0, expiry, &notmycert) );
 
     globals_t g;
     PROP_GO(&e, globals_init(&g), cu);
@@ -1671,7 +1675,9 @@ static derr_t test_advance_new_cert(void){
     PROP_GO(&e, g_keygen_done(&g, E_NONE, k1), cu);
     DSTR_VAR(c1, 4096);
     time_t expiry = g.now + 90*DAY;
-    PROP_GO(&e, mkcert(k1, dstr_from_cstr(fulldomain), expiry, &c1), cu);
+    PROP_GO(&e,
+        mkcert(k1, dstr_from_cstr(fulldomain), g.now, expiry, &c1),
+    cu);
     EXPECT_UPDATE(&g, true);
     EXPECT_DEADLINE_CERT(&g, g.now + 60*DAY);
     EXPECT_UNPREPARE(&g);
@@ -1792,7 +1798,7 @@ static derr_t test_retries(void){
     time_t expiry = 90*DAY;
     time_t renewal = 60*DAY;
     DSTR_VAR(mycert, 4096);
-    PROP(&e, mkcert(k1, dstr_from_cstr(fulldomain), expiry, &mycert) );
+    PROP(&e, mkcert(k1, dstr_from_cstr(fulldomain), 0, expiry, &mycert) );
     PROP_GO(&e, dstr_write_path2(dstr_from_cstr(k1), key), cu);
     PROP_GO(&e, dstr_write_path2(mycert, cert), cu);
 
@@ -1848,7 +1854,9 @@ static derr_t test_retries(void){
     EXPECT_STATUS(&g, TLS_RENEW, FINALIZE_ORDER, fulldomain);
     PROP_GO(&e, g_keygen_done(&g, E_NONE, k1), cu);
     DSTR_VAR(c1, 4096);
-    PROP_GO(&e, mkcert(k1, dstr_from_cstr(fulldomain), g.now + 90*DAY, &c1), cu);
+    PROP_GO(&e,
+        mkcert(k1, dstr_from_cstr(fulldomain), g.now, g.now + 90*DAY, &c1),
+    cu);
     EXPECT_UPDATE(&g, true);
     EXPECT_DEADLINE_CERT(&g, g.now + 60*DAY);
     EXPECT_UNPREPARE(&g);  // this is the key!

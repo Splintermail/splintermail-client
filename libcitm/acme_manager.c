@@ -265,7 +265,11 @@ static void am_free(acme_manager_t *am){
 }
 
 static derr_t check_cert(
-    string_builder_t path, time_t *expiry, const dstr_t name, bool *namematch
+    string_builder_t path,
+    time_t *issue,
+    time_t *expiry,
+    const dstr_t name,
+    bool *namematch
 ){
     derr_t e = E_OK;
     if(expiry) *expiry = 0;
@@ -280,6 +284,21 @@ static derr_t check_cert(
     // read the x509 cert
     x509 = PEM_read_X509(f, NULL, NULL, NULL);
     if(!x509) ORIG_GO(&e, E_SSL, "failed to read certificate: %x", cu, FSSL);
+
+    if(issue){
+        // get the asn1-encoded time
+        const ASN1_TIME *notbefore = X509_get0_notBefore(x509);
+
+        // convert to struct tm
+        struct tm tm;
+        int ret = ASN1_TIME_to_tm(notbefore, &tm);
+        if(ret != 1){
+            ORIG_GO(&e, E_PARAM, "failed to read cert notBefore time", cu);
+        }
+
+        // convert to time_t
+        PROP_GO(&e, dmktime_utc(dtm_from_tm(tm), issue), cu);
+    }
 
     if(expiry){
         // get the asn1-encoded time
@@ -308,17 +327,17 @@ cu:
     return e;
 }
 
-static derr_t check_expiry(string_builder_t path, time_t *expiry){
-    return check_cert(path, expiry, (dstr_t){0}, NULL);
+static derr_t check_expiry(
+    string_builder_t path, time_t *issue, time_t *expiry
+){
+    return check_cert(path, issue, expiry, (dstr_t){0}, NULL);
 }
 
-static time_t get_renewal(time_t expiry){
-    /* letsencrypt emits 90-day certificates and recommends renewing 30 days
-       before expiration.  They sent notices out around 20 days before
-       expiration, so if we don't comply with their recommendations, our users
-       will receive scary warnings for no good reason. */
-    if(expiry < 30*DAY) return 0;
-    return expiry - 30*DAY;
+static time_t get_renewal(time_t issue, time_t expiry){
+    // letsencrypt suggests renewing with 2/3 of the cert lifetime remaining
+    if(expiry < issue) return 0;
+    time_t lifetime = expiry - issue;
+    return issue + (2 * lifetime) / 3;
 }
 
 static void backoff(acme_manager_t *am, time_t delay){
@@ -627,7 +646,7 @@ static derr_t rename_new_key_and_cert(acme_manager_t *am, bool check){
 
     if(check){
         // load the cert to make sure we didn't crash mid-write
-        IF_PROP(&e, check_cert(certnew, NULL, (dstr_t){0}, NULL) ){
+        IF_PROP(&e, check_cert(certnew, NULL, NULL, (dstr_t){0}, NULL) ){
             // read existing key
             LOG_DEBUG(
                 "failed loading certnew @%x, will recreate; error:\n%x",
@@ -1053,12 +1072,14 @@ static derr_t am_advance_good(acme_manager_t *am){
         if(is_error(am->e)) return (derr_t){ .type = E_CANCELED };
 
         // configure our timer to wake us up when the cert expires
-        PROP(&e, check_expiry(am_cert(am), &am->expiry));
-        am->renewal = get_renewal(am->expiry);
+        time_t issue;
+        PROP(&e, check_expiry(am_cert(am), &issue, &am->expiry));
+        am->renewal = get_renewal(issue, am->expiry);
         if(ami->now(ami) >= am->renewal){
             ORIG(&e,
                 E_INTERNAL,
-                "have fresh cert with expiry time in < 15 days"
+                "have fresh cert with expiry time in < 30 days "
+                "(now=%x, expiry=%x)", FI(ami->now(ami)), FI(am->expiry)
             );
         }
         ami->deadline_cert(ami, am->renewal);
@@ -1201,14 +1222,17 @@ derr_t acme_manager_init(
 
     // check the expiration on the cert
     bool ours;
-    PROP_GO(&e, check_cert(cert, &am->expiry, am->fulldomain, &ours), fail);
+    time_t issue;
+    PROP_GO(&e,
+        check_cert(cert, &issue, &am->expiry, am->fulldomain, &ours),
+    fail);
     if(!ours){
         am->maj = STATUS_MAJ_TLS_FIRST;
         am->min = reload_min;
         am->want_cert = true;
         goto done;
     }
-    am->renewal = get_renewal(am->expiry);
+    am->renewal = get_renewal(issue, am->expiry);
     // certificate already expired?
     if(ami->now(ami) >= am->expiry){
         am->maj = STATUS_MAJ_TLS_EXPIRED;
