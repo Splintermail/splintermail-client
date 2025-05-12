@@ -2141,7 +2141,7 @@ def test_mangling(cmd, maildir_root, remote):
         enc = p.stdout.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
 
         # mess up the checksum
-        if enc[-45] == b"A":
+        if enc[-45] == ord("A"):
             enc = enc[:-45] + b"a" + enc[-45 + 1:]
         else:
             enc = enc[:-45] + b"A" + enc[-45 + 1:]

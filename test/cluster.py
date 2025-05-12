@@ -265,7 +265,7 @@ class REST(ThreadBase):
         self.tmp = tmp
         self.sqlsock = sqlsock
         self.kvpsock = kvpsock
-        self.port = 8000
+        self.port = port
 
     def run_safe(self):
         # create our api_config.py

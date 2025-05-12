@@ -214,7 +214,12 @@ static derr_t kd_add_key(keydir_i *iface, const dstr_t pem){
     // when necessary, always alert the user first
     const dstr_t fpr = *kp->fingerprint;
     bool alert = fpr_watcher_should_alert_on_new_key(&kd->fpr_watcher, fpr);
-    if(alert) PROP_GO(&e, inject_new_key_msg(kd, fpr), fail);
+    if(alert){
+        LOG_INFO(
+            "new device detected via XKEYSYNC CREATED (%x)\n", FX(fpr)
+        );
+        PROP_GO(&e, inject_new_key_msg(kd, fpr), fail);
+    }
     PROP_GO(&e, fpr_watcher_add_fpr(&kd->fpr_watcher, fpr), fail);
 
     PROP_GO(&e, _write_key(kd, pem, fpr), fail);
@@ -341,7 +346,12 @@ static derr_t decrypt_msg(
         bool alert = fpr_watcher_should_alert_on_decrypt(
             &kd->fpr_watcher, recip, *mailbox
         );
-        if(alert) PROP_GO(&e, inject_new_key_msg(kd, recip), cu);
+        if(alert){
+            LOG_INFO(
+                "new device detected during decryption (%x)\n", FX(recip)
+            );
+            PROP_GO(&e, inject_new_key_msg(kd, recip), cu);
+        }
         PROP_GO(&e, fpr_watcher_add_fpr(&kd->fpr_watcher, recip), cu);
     }
 
