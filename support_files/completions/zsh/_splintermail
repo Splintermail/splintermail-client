@@ -49,7 +49,7 @@ case "$prevargs" in
         '::citm commands:(( \
             citm\:"Run the local decrypting email server." \
             configure\:"Configure the local citm server." \
-            status\:"Report the status of the the local citm server."' \
+            status\:"Report the status of the the local citm server."))' \
         '::general commands:(( \
             QW " \\\n            "^zsh.comp_apis(apis_general) WQ))' \
         '::alias commands:(( \
