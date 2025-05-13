@@ -214,6 +214,7 @@ function(default_compile_options tgt)
         target_compile_options("${tgt}" PRIVATE "/wd4214") # ANSI compliance: non-int bitfields
         target_compile_options("${tgt}" PRIVATE "/wd4221") # ANSI compliance
         target_compile_options("${tgt}" PRIVATE "/wd4204") # ANSI compliance
+        target_compile_options("${tgt}" PRIVATE "/wd4255") # strict prototypes
         target_compile_options("${tgt}" PRIVATE "/wd4820") # byte padded structs
         target_compile_options("${tgt}" PRIVATE "/wd4668") # unknown macro in #if()
         target_compile_options("${tgt}" PRIVATE "/wd4996") # _CRT_SECURE warnings

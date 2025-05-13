@@ -1,15 +1,12 @@
 #ifdef _WIN32
     // I'm not making this up.
     #define WIN32_LEAN_AND_MEAN
-    // no point in seeing MSVC warnings in MS's own damn code
-    #pragma warning(push, 0)
     #include <windows.h>
     #include <direct.h>
     #include <io.h>
     #include <winsock2.h>
     #include <ws2ipdef.h>
     #include <ws2tcpip.h>
-    #pragma warning(pop)
 
     #define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
 
