@@ -86,6 +86,12 @@ fi
 exit 0
 
 %changelog
+* Tue May 13 2025 Splintermail Dev <dev@splintermail.com> - 0.4.2-1
+  - Fix systemd + libuv v1.51.0 behaviors.
+  - Simplify systemd service files so splintermail.socket is handled
+    automatically by controlling splintermail.service.
+  - Support 6-day certificates from LetsEncrypt.
+  - Fix a bug in the zsh command completion.
 * Sat Feb 3 2024 Splintermail Dev <dev@splintermail.com> - 0.4.1-1
   - Fix ACME timer to properly renew letsencrypt certs.
 * Tue Nov 14 2023 Splintermail Dev <dev@splintermail.com> - 0.4.0-1

@@ -1,3 +1,13 @@
+splintermail (0.4.2-1) UNRELEASED; urgency=medium
+
+  * Fix systemd + libuv v1.51.0 behaviors.
+  * Simplify systemd service files so splintermail.socket is handled
+    automatically by controlling splintermail.service.
+  * Support 6-day certificates from LetsEncrypt.
+  * Fix a bug in the zsh command completion.
+
+ -- QW maintainer.string WQ  Tue, 13 May 2025 00:00:00 +0000
+
 splintermail (0.4.1-1) UNRELEASED; urgency=medium
 
   * Fix ACME timer to properly renew letsencrypt certs.
