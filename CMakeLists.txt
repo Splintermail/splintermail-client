@@ -110,6 +110,7 @@ function(default_compile_options tgt)
     # compiler-specific flags
     if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
         # flags for gcc
+        target_compile_options("${tgt}" PRIVATE "-std=gnu99")
         target_compile_options("${tgt}" PRIVATE "-Werror")
         target_compile_options("${tgt}" PRIVATE "-Wall")
         target_compile_options("${tgt}" PRIVATE "-Wextra")
